@@ -435,17 +435,21 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     // Log token usage to SQLite and check for context warnings
     if (result.usage) {
       const activeSessionId = result.newSessionId ?? sessionId;
-      saveTokenUsage(
-        chatIdStr,
-        activeSessionId,
-        result.usage.inputTokens,
-        result.usage.outputTokens,
-        result.usage.lastCallCacheRead,
-        result.usage.lastCallInputTokens,
-        result.usage.totalCostUsd,
-        result.usage.didCompact,
-        AGENT_ID,
-      );
+      try {
+        saveTokenUsage(
+          chatIdStr,
+          activeSessionId,
+          result.usage.inputTokens,
+          result.usage.outputTokens,
+          result.usage.lastCallCacheRead,
+          result.usage.lastCallInputTokens,
+          result.usage.totalCostUsd,
+          result.usage.didCompact,
+          AGENT_ID,
+        );
+      } catch (dbErr) {
+        logger.error({ err: dbErr }, 'Failed to save token usage');
+      }
 
       const warning = checkContextWarning(chatIdStr, activeSessionId, result.usage);
       if (warning) {
@@ -1126,17 +1130,21 @@ export async function processMessageFromDashboard(
     // Log token usage
     if (result.usage) {
       const activeSessionId = result.newSessionId ?? sessionId;
-      saveTokenUsage(
-        chatIdStr,
-        activeSessionId,
-        result.usage.inputTokens,
-        result.usage.outputTokens,
-        result.usage.lastCallCacheRead,
-        result.usage.lastCallInputTokens,
-        result.usage.totalCostUsd,
-        result.usage.didCompact,
-        AGENT_ID,
-      );
+      try {
+        saveTokenUsage(
+          chatIdStr,
+          activeSessionId,
+          result.usage.inputTokens,
+          result.usage.outputTokens,
+          result.usage.lastCallCacheRead,
+          result.usage.lastCallInputTokens,
+          result.usage.totalCostUsd,
+          result.usage.didCompact,
+          AGENT_ID,
+        );
+      } catch (dbErr) {
+        logger.error({ err: dbErr }, 'Failed to save token usage');
+      }
     }
   } catch (err) {
     setActiveAbort(chatIdStr, null);

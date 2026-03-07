@@ -96,9 +96,11 @@ async function main(): Promise<void> {
 
   if (ALLOWED_CHAT_ID) {
     initScheduler(
-      (text) => bot.api.sendMessage(ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).then(() => {}),
+      (text) => bot.api.sendMessage(ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).then(() => {}).catch((err) => logger.error({ err }, 'Scheduler failed to send message')),
       AGENT_ID,
     );
+  } else {
+    logger.warn('ALLOWED_CHAT_ID not set — scheduler disabled (no destination for results)');
   }
 
   const shutdown = async () => {

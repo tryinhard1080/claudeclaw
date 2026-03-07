@@ -39,7 +39,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // Token auth middleware
   app.use('*', async (c, next) => {
     const token = c.req.query('token');
-    if (token !== DASHBOARD_TOKEN) {
+    if (!DASHBOARD_TOKEN || !token || token !== DASHBOARD_TOKEN) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
     await next();

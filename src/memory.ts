@@ -72,17 +72,26 @@ export function saveConversationTurn(
   sessionId?: string,
   agentId = 'main',
 ): void {
-  // Always log full conversation to conversation_log (for /respin)
-  logConversationTurn(chatId, 'user', userMessage, sessionId, agentId);
-  logConversationTurn(chatId, 'assistant', claudeResponse, sessionId, agentId);
+  try {
+    // Always log full conversation to conversation_log (for /respin)
+    logConversationTurn(chatId, 'user', userMessage, sessionId, agentId);
+    logConversationTurn(chatId, 'assistant', claudeResponse, sessionId, agentId);
+  } catch (err) {
+    // DB write failure should not crash the bot
+    console.error('Failed to log conversation turn:', err);
+  }
 
   // Skip short or command-like messages for memory extraction
   if (userMessage.length <= 20 || userMessage.startsWith('/')) return;
 
-  if (SEMANTIC_SIGNALS.test(userMessage)) {
-    saveMemory(chatId, userMessage, 'semantic');
-  } else {
-    saveMemory(chatId, userMessage, 'episodic');
+  try {
+    if (SEMANTIC_SIGNALS.test(userMessage)) {
+      saveMemory(chatId, userMessage, 'semantic');
+    } else {
+      saveMemory(chatId, userMessage, 'episodic');
+    }
+  } catch (err) {
+    console.error('Failed to save memory:', err);
   }
 }
 
