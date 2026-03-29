@@ -1,8 +1,24 @@
+import { existsSync } from 'fs';
+import { join } from 'path';
+
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { PROJECT_ROOT, agentCwd } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+
+/**
+ * Resolve the full path to the `claude` executable.
+ * On Windows, Node's `spawn` without `shell: true` cannot find binaries
+ * by name alone from PATH -- it needs the .exe extension or full path.
+ */
+function resolveClaudeExecutable(): string | undefined {
+  if (process.platform !== 'win32') return undefined; // Let SDK find it
+  const home = process.env.USERPROFILE || process.env.HOME || '';
+  const candidate = join(home, '.local', 'bin', 'claude.exe');
+  if (existsSync(candidate)) return candidate;
+  return undefined;
+}
 
 export interface UsageInfo {
   inputTokens: number;
@@ -123,6 +139,14 @@ export async function runAgent(
     sdkEnv.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;
   }
 
+  // Ensure claude CLI is findable even when launched from a detached process
+  // (e.g. Windows Start-Process) that doesn't inherit the shell profile PATH.
+  const homedir = process.env.HOME || process.env.USERPROFILE || '';
+  const localBin = `${homedir}/.local/bin`;
+  if (sdkEnv.PATH && !sdkEnv.PATH.includes(localBin)) {
+    sdkEnv.PATH = `${localBin}${process.platform === 'win32' ? ';' : ':'}${sdkEnv.PATH}`;
+  }
+
   let newSessionId: string | undefined;
   let resultText: string | null = null;
   let usage: UsageInfo | null = null;
@@ -152,8 +176,10 @@ export async function runAgent(
         // Resume the previous session for this chat (persistent context)
         resume: sessionId,
 
-        // 'project' loads CLAUDE.md from cwd; 'user' loads ~/.claude/skills/ and user settings
-        settingSources: ['project', 'user'],
+        // 'project' loads CLAUDE.md from cwd only. Excluding 'user' prevents the
+        // subprocess from loading installed plugins (e.g. Telegram) which would
+        // conflict with the bot's own Telegram poller (409 getUpdates conflict).
+        settingSources: ['project'],
 
         // Skip all permission prompts — this is a trusted personal bot on your own machine
         permissionMode: 'bypassPermissions',
@@ -167,6 +193,9 @@ export async function runAgent(
 
         // Model override (e.g. 'claude-haiku-4-5', 'claude-sonnet-4-5')
         ...(model ? { model } : {}),
+
+        // Windows: full path to claude.exe (Node's spawn can't resolve it from PATH alone)
+        ...(resolveClaudeExecutable() ? { pathToClaudeCodeExecutable: resolveClaudeExecutable()! } : {}),
 
         // Abort support — signals the SDK to kill the subprocess
         ...(abortController ? { abortController } : {}),

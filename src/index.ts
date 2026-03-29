@@ -204,6 +204,13 @@ async function main(): Promise<void> {
   logger.info({ agentId: AGENT_ID }, 'Starting ClaudeClaw...');
 
   await bot.start({
+    // Explicitly request all update types including topic/forum messages.
+    // Without this, Telegram's defaults may exclude topic DM messages.
+    allowed_updates: [
+      'message', 'edited_message', 'channel_post', 'edited_channel_post',
+      'message_reaction', 'callback_query', 'inline_query',
+    ],
+    // Do NOT drop pending updates -- topic DMs need immediate processing.
     onStart: (botInfo) => {
       setTelegramConnected(true);
       setBotInfo(botInfo.username ?? '', botInfo.first_name ?? 'ClaudeClaw');
