@@ -1,29 +1,40 @@
 # Handoff -- ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-03-29
+- **Date**: 2026-03-30
 - **Model**: Claude Opus 4.6 (1M context)
+- **Previous session**: 2026-03-29 (initial setup, bug fixes, first boot)
 
-## What Changed
+## What Changed (2026-03-30)
+- Created full implementation plan at `~/.claude/plans/reflective-floating-floyd.md`
+- Reviewed and compared project against YouTube blueprint (tryinhard1080/claudeclawrobo)
+- No code changes this session -- planning only
+
+## What Changed (2026-03-29)
 - Installed npm dependencies and compiled TypeScript (`npm install && npm run build`)
 - Created `.env` with bot token, chat ID, Gemini key, dashboard token, DB encryption key
-- Fixed Windows spawn issue: added `pathToClaudeCodeExecutable` in `src/agent.ts` so the Agent SDK can find `claude.exe` on Windows (Node's `spawn` can't resolve it from PATH alone)
-- Fixed Telegram plugin conflict: changed `settingSources` from `['project', 'user']` to `['project']` in `src/agent.ts` so the SDK subprocess doesn't load the Telegram plugin and fight over `getUpdates`
-- Removed `drop_pending_updates: true` from `src/index.ts` -- was silently discarding all messages on startup
-- Added explicit `allowed_updates` array in `src/index.ts` for topic DM compatibility
-- Stopped OpenClaw pm2 processes (`bot-manager`, `botman-gateway`) and deleted them from pm2 to free the bot token
+- Fixed Windows spawn issue: added `pathToClaudeCodeExecutable` in `src/agent.ts`
+- Fixed Telegram plugin conflict: `settingSources` from `['project', 'user']` to `['project']` in `src/agent.ts`
+- Removed `drop_pending_updates: true` from `src/index.ts`
+- Added explicit `allowed_updates` array in `src/index.ts`
+- Stopped OpenClaw pm2 processes and deleted them from pm2
 
 ## Current State
-- **Working**: Bot online as `@CCbot1080bot`, responds to DMs, Claude Agent SDK queries succeed, memory extraction via Gemini, scheduler running, dashboard at localhost:3141
+- **Working**: Bot online as `@CCbot1080bot`, responds to DMs, Agent SDK working, memory + scheduler active, dashboard at localhost:3141
 - **Running in**: A cmd window (`node dist/index.js`) -- must stay open
-- **Not configured yet**: ElevenLabs voice, Slack, WhatsApp, sub-agents (comms/research/content/ops)
+- **Not configured yet**: pm2, CLAUDE.md personalization, user skills, voice, crons, OneDrive safety
+
+## Approved Plan (execute next session)
+**Plan file**: `~/.claude/plans/reflective-floating-floyd.md`
+**Execution order**: Step 4 (OneDrive fix) -> 1 (pm2) -> 2 (CLAUDE.md) -> 3 (skills fix) -> 9 (skill registration) -> 6 (crons) -> 7 (dashboard docs)
+**Removed**: Slack, WhatsApp (not needed). Voice deferred (no API keys yet).
 
 ## Next Steps
-1. Set up persistent process management (pm2 or Windows Task Scheduler) so bot survives reboots
-2. Configure sub-agents (research, comms, content, ops) with separate bot tokens
-3. Add ElevenLabs for voice responses
-4. Customize `CLAUDE.md` personality and system prompt for the bot
-5. Test dashboard at `http://localhost:3141?token=<DASHBOARD_TOKEN>`
+1. Execute the approved plan (7 steps, see plan file)
+2. Move `store/` off OneDrive to `C:\claudeclaw-store\`
+3. Set up pm2 for persistent process management
+4. Personalize CLAUDE.md (replace [YOUR NAME] -> Richard, vault path, etc.)
+5. Fix settingSources to re-enable user skills without Telegram conflict
 
 ## Gotchas & Notes
 - OpenClaw pm2 processes were auto-respawning and stealing the bot token -- deleted from pm2, but may return if OpenClaw is reinstalled or pm2 dump is restored
