@@ -4,6 +4,7 @@ import yaml from 'js-yaml';
 
 import { CLAUDECLAW_CONFIG, PROJECT_ROOT } from './config.js';
 import { readEnvFile } from './env.js';
+import { ToolPermissionContext } from './permissions.js';
 
 export interface AgentConfig {
   name: string;
@@ -11,6 +12,8 @@ export interface AgentConfig {
   botTokenEnv: string;
   botToken: string;
   model?: string;
+  /** Tool permission restrictions for this agent. */
+  permissions: ToolPermissionContext;
   obsidian?: {
     vault: string;
     folders: string[];
@@ -71,6 +74,13 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     throw new Error(`Bot token not found: set ${botTokenEnv} in .env`);
   }
 
+  // Parse tool permission restrictions (optional)
+  const denyTools = raw['deny_tools'] as string[] | undefined;
+  const denyPrefixes = raw['deny_prefixes'] as string[] | undefined;
+  const permissions = (denyTools || denyPrefixes)
+    ? ToolPermissionContext.fromIterables(denyTools, denyPrefixes)
+    : ToolPermissionContext.ALLOW_ALL;
+
   let obsidian: AgentConfig['obsidian'];
   const obsRaw = raw['obsidian'] as Record<string, unknown> | undefined;
   if (obsRaw) {
@@ -87,7 +97,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     };
   }
 
-  return { name, description, botTokenEnv, botToken, model, obsidian };
+  return { name, description, botTokenEnv, botToken, model, permissions, obsidian };
 }
 
 /** Update the model field in an agent's agent.yaml file. */

@@ -8,6 +8,7 @@ import { PROJECT_ROOT } from './config.js';
 import { logToHiveMind, createInterAgentTask, completeInterAgentTask } from './db.js';
 import { logger } from './logger.js';
 import { buildMemoryContext } from './memory.js';
+import { ToolPermissionContext } from './permissions.js';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ export interface AgentInfo {
   id: string;
   name: string;
   description: string;
+  permissions: ToolPermissionContext;
 }
 
 // ── Registry ─────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ export function initOrchestrator(): void {
         id,
         name: config.name,
         description: config.description,
+        permissions: config.permissions,
       });
     } catch (err) {
       // Agent config is broken (e.g. missing token) — skip it but warn
@@ -170,10 +173,19 @@ export async function delegateToAgent(
     // Build memory context for the delegated agent
     const { contextText: memCtx } = await buildMemoryContext(chatId, prompt, agentId);
 
-    // Build the delegated prompt with agent role context + memory
+    // Build the delegated prompt with agent role context + memory + permissions
     const contextParts: string[] = [];
     if (systemPrompt) {
       contextParts.push(`[Agent role — follow these instructions]\n${systemPrompt}\n[End agent role]`);
+    }
+    if (agent.permissions.hasRestrictions) {
+      const denied = [...agent.permissions.denyNames].join(', ');
+      const prefixes = [...agent.permissions.denyPrefixes].join(', ');
+      const parts: string[] = [];
+      if (denied) parts.push(`Blocked tools: ${denied}`);
+      if (prefixes) parts.push(`Blocked prefixes: ${prefixes}`);
+      contextParts.push(`[Tool restrictions — DO NOT use these tools]\n${parts.join('\n')}\n[End restrictions]`);
+      logger.info({ agentId, denied, prefixes }, 'Delegation with tool restrictions');
     }
     if (memCtx) {
       contextParts.push(memCtx);

@@ -1,5 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Parse the .env file and return values for the requested keys.
@@ -8,7 +12,9 @@ import path from 'path';
  * so they don't leak to child processes.
  */
 export function readEnvFile(keys: string[]): Record<string, string> {
-  const envFile = path.join(process.cwd(), '.env');
+  // Resolve from project root (parent of src/), not process.cwd()
+  // which can differ when launched via launchd, systemd, or scripts.
+  const envFile = path.join(__dirname, '..', '.env');
   let content: string;
   try {
     content = fs.readFileSync(envFile, 'utf-8');

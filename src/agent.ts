@@ -166,6 +166,8 @@ export async function runAgent(
       'Starting agent query',
     );
 
+    const claudeExe = resolveClaudeExecutable();
+
     for await (const event of query({
       prompt: singleTurn(message),
       options: {
@@ -195,7 +197,7 @@ export async function runAgent(
         ...(model ? { model } : {}),
 
         // Windows: full path to claude.exe (Node's spawn can't resolve it from PATH alone)
-        ...(resolveClaudeExecutable() ? { pathToClaudeCodeExecutable: resolveClaudeExecutable()! } : {}),
+        ...(claudeExe ? { pathToClaudeCodeExecutable: claudeExe } : {}),
 
         // Abort support — signals the SDK to kill the subprocess
         ...(abortController ? { abortController } : {}),

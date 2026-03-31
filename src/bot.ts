@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
 
 import { runAgent, UsageInfo, AgentProgressEvent } from './agent.js';
+import { buildRuntimeContext, renderContextForAgent } from './context-builder.js';
 import {
   AGENT_ID,
   ALLOWED_CHAT_ID,
@@ -27,6 +27,7 @@ import { setHighImportanceCallback } from './memory-ingest.js';
 import { messageQueue } from './message-queue.js';
 import { parseDelegation, delegateToAgent, getAvailableAgents } from './orchestrator.js';
 import { emitChatEvent, setProcessing, setActiveAbort, abortActiveQuery } from './state.js';
+import { getTelegramCommands, getSkillCommands, isOwnCommand } from './registry.js';
 import {
   isLocked,
   lock,
@@ -38,6 +39,15 @@ import {
   getSecurityStatus,
   audit,
 } from './security.js';
+import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
+import {
+  downloadTelegramFile,
+  transcribeAudio,
+  synthesizeSpeech,
+  voiceCapabilities,
+  UPLOADS_DIR,
+} from './voice.js';
+import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
 
 // ── Streaming rate limiter ───────────────────────────────────────────
 const globalStreamLastEdit = new Map<string, number>();
@@ -51,7 +61,7 @@ const GLOBAL_STREAM_INTERVAL_MS = 2500;
 // On a fresh session the base overhead (system prompt, skills, CLAUDE.md,
 // MCP tools) can be 200-400k+ tokens. We track that baseline per session
 // so the warning reflects conversation growth, not fixed overhead.
-const CONTEXT_WARN_PCT = 0.75; // Warn when conversation fills 75% of available space
+const CONTEXT_WARN_THRESHOLD = 75; // Warn when conversation fills 75% of available space
 const lastUsage = new Map<string, UsageInfo>();
 const sessionBaseline = new Map<string, number>(); // sessionId -> first turn's input_tokens
 
@@ -84,21 +94,12 @@ function checkContextWarning(chatId: string, sessionId: string | undefined, usag
   const conversationTokens = contextTokens - baseline;
   const pct = Math.round((conversationTokens / available) * 100);
 
-  if (pct >= Math.round(CONTEXT_WARN_PCT * 100)) {
+  if (pct >= CONTEXT_WARN_THRESHOLD) {
     return `⚠️ Context window at ~${pct}% of available space (~${Math.round(conversationTokens / 1000)}k / ${Math.round(available / 1000)}k conversation tokens). Consider /newchat + /respin soon.`;
   }
 
   return null;
 }
-import {
-  downloadTelegramFile,
-  transcribeAudio,
-  synthesizeSpeech,
-  voiceCapabilities,
-  UPLOADS_DIR,
-} from './voice.js';
-import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
-import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
 
 // Per-chat voice mode toggle (in-memory, resets on restart)
 const voiceEnabledChats = new Set<string>();
@@ -437,6 +438,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   const { contextText: memCtx, surfacedMemoryIds, surfacedMemorySummaries } = await buildMemoryContext(chatIdStr, message, AGENT_ID);
   const parts: string[] = [];
   if (agentSystemPrompt && !sessionId) parts.push(`[Agent role — follow these instructions]\n${agentSystemPrompt}\n[End agent role]`);
+  if (!sessionId) parts.push(renderContextForAgent(buildRuntimeContext()));
   if (memCtx) parts.push(memCtx);
 
   // Inject recent scheduled task outputs so the user can reply to them naturally.
@@ -682,54 +684,6 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
  * Auto-discover user-invocable skills from ~/.claude/skills/.
  * Reads SKILL.md frontmatter for name + description when user_invocable: true.
  */
-function discoverSkillCommands(): Array<{ command: string; description: string }> {
-  const skillsDir = path.join(os.homedir(), '.claude', 'skills');
-  const commands: Array<{ command: string; description: string }> = [];
-
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(skillsDir);
-  } catch {
-    return commands;
-  }
-
-  for (const entry of entries) {
-    const skillFile = path.join(skillsDir, entry, 'SKILL.md');
-    if (!fs.existsSync(skillFile)) continue;
-
-    try {
-      const content = fs.readFileSync(skillFile, 'utf-8');
-
-      // Parse YAML frontmatter between --- delimiters
-      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      if (!fmMatch) continue;
-
-      const fm = fmMatch[1];
-
-      // Check user_invocable: true
-      if (!/user_invocable:\s*true/i.test(fm)) continue;
-
-      // Extract name
-      const nameMatch = fm.match(/^name:\s*(.+)$/m);
-      if (!nameMatch) continue;
-      const name = nameMatch[1].trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
-      if (!name) continue;
-
-      // Extract description (truncate to 256 chars for Telegram limit)
-      const descMatch = fm.match(/^description:\s*(.+)$/m);
-      const desc = descMatch
-        ? descMatch[1].trim().slice(0, 256)
-        : `Run the ${name} skill`;
-
-      commands.push({ command: name, description: desc });
-    } catch {
-      // Skip malformed skill files
-    }
-  }
-
-  return commands.sort((a, b) => a.command.localeCompare(b.command));
-}
-
 export function createBot(): Bot {
   const token = activeBotToken;
   if (!token) {
@@ -759,29 +713,11 @@ export function createBot(): Bot {
     });
   }
 
-  // Register commands in the Telegram menu (built-in + auto-discovered skills)
-  const builtInCommands = [
-    { command: 'start', description: 'Start the bot' },
-    { command: 'help', description: 'Help -- list available commands' },
-    { command: 'newchat', description: 'Start a new Claude session' },
-    { command: 'respin', description: 'Reload recent context' },
-    { command: 'voice', description: 'Toggle voice mode on/off' },
-    { command: 'model', description: 'Switch model (opus/sonnet/haiku)' },
-    { command: 'memory', description: 'View recent memories' },
-    { command: 'forget', description: 'Clear session' },
-    { command: 'wa', description: 'Recent WhatsApp messages' },
-    { command: 'slack', description: 'Recent Slack messages' },
-    { command: 'dashboard', description: 'Open web dashboard' },
-    { command: 'stop', description: 'Stop current processing' },
-    { command: 'agents', description: 'List available agents' },
-    { command: 'delegate', description: 'Delegate task to agent' },
-    { command: 'lock', description: 'Lock session (requires PIN to unlock)' },
-    { command: 'status', description: 'Show security status' },
-  ];
-  const skillCommands = discoverSkillCommands();
-  const allCommands = [...builtInCommands, ...skillCommands].slice(0, 100); // Telegram limit: 100 commands
+  // Register commands in the Telegram menu (built-in + auto-discovered skills via registry)
+  const allCommands = getTelegramCommands();
+  const skillCount = getSkillCommands().length;
   bot.api.setMyCommands(allCommands)
-    .then(() => logger.info({ count: skillCommands.length }, 'Registered %d skill commands with Telegram', skillCommands.length))
+    .then(() => logger.info({ count: skillCount }, 'Registered %d skill commands with Telegram', skillCount))
     .catch((err) => logger.warn({ err }, 'Failed to register bot commands with Telegram'));
 
   // /help — list available commands
@@ -834,7 +770,9 @@ export function createBot(): Bot {
     // Auto-commit session summary to hive mind (async, don't block the user)
     if (oldSessionId) {
       const sessionToSummarize = oldSessionId;
+      // Clean both possible baseline keys (session ID and chat ID)
       sessionBaseline.delete(oldSessionId);
+      sessionBaseline.delete(chatIdStr);
 
       // Fire-and-forget: ask the agent to produce a one-liner summary
       (async () => {
@@ -877,6 +815,7 @@ export function createBot(): Bot {
 
     clearSession(chatIdStr, AGENT_ID);
     sessionBaseline.delete(chatIdStr);
+    lastUsage.delete(chatIdStr);
     await ctx.reply('Session cleared. Starting fresh.');
     logger.info({ chatId: ctx.chat!.id }, 'Session cleared by user');
   });
@@ -1165,14 +1104,13 @@ export function createBot(): Bot {
   });
 
   // Text messages — and any slash commands not owned by this bot (skills, e.g. /todo /gmail)
-  const OWN_COMMANDS = new Set(['/start', '/help', '/newchat', '/respin', '/voice', '/model', '/memory', '/forget', '/pin', '/unpin', '/chatid', '/wa', '/slack', '/dashboard', '/stop', '/agents', '/delegate', '/lock', '/status']);
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     const chatIdStr = ctx.chat!.id.toString();
 
     if (text.startsWith('/')) {
       const cmd = text.split(/[\s@]/)[0].toLowerCase();
-      if (OWN_COMMANDS.has(cmd)) return; // already handled by bot.command() above
+      if (isOwnCommand(cmd)) return; // already handled by bot.command() above
     }
 
     // ── Security: kill phrase + lock check (before any state machines) ──
@@ -1511,6 +1449,7 @@ async function processDashboardMessage(
     const { contextText: memCtx, surfacedMemoryIds: dashSurfacedIds, surfacedMemorySummaries: dashSummaries } = await buildMemoryContext(chatIdStr, text, AGENT_ID);
     const dashParts: string[] = [];
     if (agentSystemPrompt && !sessionId) dashParts.push(`[Agent role — follow these instructions]\n${agentSystemPrompt}\n[End agent role]`);
+    if (!sessionId) dashParts.push(renderContextForAgent(buildRuntimeContext()));
     if (memCtx) dashParts.push(memCtx);
 
     const recentDashTasks = getRecentTaskOutputs(AGENT_ID, 30);

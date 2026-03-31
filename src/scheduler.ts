@@ -139,64 +139,73 @@ async function runDueTasks(): Promise<void> {
 }
 
 async function runDueMissionTasks(): Promise<void> {
-  const mission = claimNextMissionTask(schedulerAgentId);
-  if (!mission) return;
-
-  const missionKey = 'mission-' + mission.id;
-  if (runningTaskIds.has(missionKey)) return;
-  runningTaskIds.add(missionKey);
-
-  logger.info({ missionId: mission.id, title: mission.title }, 'Running mission task');
-
-  const chatId = ALLOWED_CHAT_ID || 'mission';
-  messageQueue.enqueue(chatId, async () => {
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
-
-    try {
-      const result = await runAgent(mission.prompt, undefined, () => {}, undefined, undefined, abortController);
-      clearTimeout(timeout);
-
-      if (result.aborted) {
-        completeMissionTask(mission.id, null, 'failed', 'Timed out after 10 minutes');
-        logger.warn({ missionId: mission.id }, 'Mission task timed out');
-        try { await sender('Mission task timed out: "' + mission.title + '"'); } catch {}
-      } else {
-        const text = result.text?.trim() || 'Task completed with no output.';
-        completeMissionTask(mission.id, text, 'completed');
-        logger.info({ missionId: mission.id }, 'Mission task completed');
-
-        // Send result to Telegram
-        for (const chunk of splitMessage(formatForTelegram(text))) {
-          await sender(chunk);
-        }
-
-        // Inject into conversation context so agent can reference it
-        if (ALLOWED_CHAT_ID) {
-          const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId);
-          logConversationTurn(ALLOWED_CHAT_ID, 'user', '[Mission task: ' + mission.title + ']: ' + mission.prompt, activeSession ?? undefined, schedulerAgentId);
-          logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
-        }
-      }
-
-      emitChatEvent({
-        type: 'mission_update' as 'progress',
-        chatId,
-        content: JSON.stringify({
-          id: mission.id,
-          status: result.aborted ? 'failed' : 'completed',
-          title: mission.title,
-        }),
-      });
-    } catch (err) {
-      clearTimeout(timeout);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      completeMissionTask(mission.id, null, 'failed', errMsg.slice(0, 500));
-      logger.error({ err, missionId: mission.id }, 'Mission task failed');
-    } finally {
-      runningTaskIds.delete(missionKey);
+  // Drain all queued mission tasks per tick, not just one
+  let claimed = claimNextMissionTask(schedulerAgentId);
+  while (claimed) {
+    // Capture as const so the async callback closure has a stable reference
+    const mission = claimed;
+    const missionKey = 'mission-' + mission.id;
+    if (runningTaskIds.has(missionKey)) {
+      claimed = claimNextMissionTask(schedulerAgentId);
+      continue;
     }
-  });
+    runningTaskIds.add(missionKey);
+
+    logger.info({ missionId: mission.id, title: mission.title }, 'Running mission task');
+
+    const chatId = ALLOWED_CHAT_ID || 'mission';
+    messageQueue.enqueue(chatId, async () => {
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
+
+      try {
+        const result = await runAgent(mission.prompt, undefined, () => {}, undefined, undefined, abortController);
+        clearTimeout(timeout);
+
+        if (result.aborted) {
+          completeMissionTask(mission.id, null, 'failed', 'Timed out after 10 minutes');
+          logger.warn({ missionId: mission.id }, 'Mission task timed out');
+          try { await sender('Mission task timed out: "' + mission.title + '"'); } catch {}
+        } else {
+          const text = result.text?.trim() || 'Task completed with no output.';
+          completeMissionTask(mission.id, text, 'completed');
+          logger.info({ missionId: mission.id }, 'Mission task completed');
+
+          // Send result to Telegram
+          for (const chunk of splitMessage(formatForTelegram(text))) {
+            await sender(chunk);
+          }
+
+          // Inject into conversation context so agent can reference it
+          if (ALLOWED_CHAT_ID) {
+            const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId);
+            logConversationTurn(ALLOWED_CHAT_ID, 'user', '[Mission task: ' + mission.title + ']: ' + mission.prompt, activeSession ?? undefined, schedulerAgentId);
+            logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
+          }
+        }
+
+        emitChatEvent({
+          type: 'mission_update',
+          chatId,
+          content: JSON.stringify({
+            id: mission.id,
+            status: result.aborted ? 'failed' : 'completed',
+            title: mission.title,
+          }),
+        });
+      } catch (err) {
+        clearTimeout(timeout);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        completeMissionTask(mission.id, null, 'failed', errMsg.slice(0, 500));
+        logger.error({ err, missionId: mission.id }, 'Mission task failed');
+      } finally {
+        runningTaskIds.delete(missionKey);
+      }
+    });
+
+    // Claim next mission task for the next iteration
+    claimed = claimNextMissionTask(schedulerAgentId);
+  }
 }
 
 export function computeNextRun(cronExpression: string): number {

@@ -29,7 +29,7 @@ export function setTelegramConnected(v: boolean): void {
 // ── Chat event bus (SSE broadcasting) ────────────────────────────────
 
 export interface ChatEvent {
-  type: 'user_message' | 'assistant_message' | 'processing' | 'progress' | 'error' | 'hive_mind';
+  type: 'user_message' | 'assistant_message' | 'processing' | 'progress' | 'error' | 'hive_mind' | 'mission_update';
   chatId: string;
   agentId?: string;
   content?: string;

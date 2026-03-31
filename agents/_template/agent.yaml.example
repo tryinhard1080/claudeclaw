@@ -18,6 +18,16 @@ telegram_bot_token_env: MYAGENT_BOT_TOKEN
 # Users can override per-chat with /model in Telegram.
 model: claude-sonnet-4-6
 
+# Tool restrictions (optional).
+# Deny specific tools or tool prefixes for this agent.
+# Agents without these fields have full access (default).
+# deny_tools:
+#   - Bash            # Block shell access entirely
+#   - Write           # Block file creation
+# deny_prefixes:
+#   - mcp__slack      # Block all Slack MCP tools
+#   - mcp__gmail      # Block all Gmail MCP tools
+
 # Obsidian integration (optional).
 # Assign folders from your vault so this agent auto-loads relevant context.
 # obsidian:

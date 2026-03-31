@@ -6,6 +6,7 @@ import { serve } from '@hono/node-server';
 import fs from 'fs';
 import path from 'path';
 import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
+import { buildRuntimeContext, renderContextForDashboard } from './context-builder.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -660,6 +661,12 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     if (!chatId) return c.json({ ok: false, reason: 'not_processing' });
     const aborted = abortActiveQuery(chatId);
     return c.json({ ok: aborted });
+  });
+
+  // Runtime context snapshot
+  app.get('/api/context', (c) => {
+    const ctx = buildRuntimeContext();
+    return c.json(renderContextForDashboard(ctx));
   });
 
   serve({ fetch: app.fetch, port: DASHBOARD_PORT }, () => {

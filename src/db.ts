@@ -743,6 +743,7 @@ export function getRecentHighImportanceMemories(chatId: string, limit = 5): Memo
   return db
     .prepare(
       `SELECT * FROM memories WHERE chat_id = ? AND importance >= 0.5
+       AND superseded_by IS NULL
        ORDER BY accessed_at DESC LIMIT ?`,
     )
     .all(chatId, limit) as Memory[];
