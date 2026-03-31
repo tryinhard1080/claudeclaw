@@ -203,15 +203,17 @@ async function main(): Promise<void> {
 
   logger.info({ agentId: AGENT_ID }, 'Starting ClaudeClaw...');
 
-  await bot.start({
+  const startOptions = {
     // Explicitly request all update types including topic/forum messages.
     // Without this, Telegram's defaults may exclude topic DM messages.
     allowed_updates: [
       'message', 'edited_message', 'channel_post', 'edited_channel_post',
       'message_reaction', 'callback_query', 'inline_query',
-    ],
-    // Do NOT drop pending updates -- topic DMs need immediate processing.
-    onStart: (botInfo) => {
+    ] as const,
+    // Lower timeout so 409 recovery only needs to wait ~15s instead of ~35s.
+    // grammy defaults to 30s; 10s is responsive enough for a personal bot.
+    timeout: 10,
+    onStart: (botInfo: { username?: string; first_name?: string }) => {
       setTelegramConnected(true);
       setBotInfo(botInfo.username ?? '', botInfo.first_name ?? 'ClaudeClaw');
       logger.info({ username: botInfo.username }, 'ClaudeClaw is running');
@@ -225,7 +227,9 @@ async function main(): Promise<void> {
         console.log(`\n  ClaudeClaw agent [${AGENT_ID}] online: @${botInfo.username}\n`);
       }
     },
-  });
+  };
+
+  await bot.start(startOptions);
 }
 
 main().catch((err: unknown) => {
