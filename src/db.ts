@@ -349,6 +349,9 @@ function runMigrations(database: Database.Database): void {
   if (!taskColNames.includes('last_status')) {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN last_status TEXT`);
   }
+  if (!taskColNames.includes('routine_type')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN routine_type TEXT`);
+  }
 
   // ── Memory V2 migration ──────────────────────────────────────────────
   // Detect old schema (has 'sector' column but no 'importance') and migrate.

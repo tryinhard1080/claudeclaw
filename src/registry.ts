@@ -49,6 +49,7 @@ const BUILTIN_COMMANDS: readonly CommandEntry[] = Object.freeze([
   { command: 'status', description: 'Show security status', source: 'builtin' },
   { command: 'pin', description: 'Pin a memory', source: 'builtin' },
   { command: 'unpin', description: 'Unpin a memory', source: 'builtin' },
+  { command: 'profile', description: 'View or edit your user profile', source: 'builtin' },
 ]);
 
 // ── Skill discovery ─────────────────────────────────────────────────

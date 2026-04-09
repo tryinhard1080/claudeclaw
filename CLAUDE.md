@@ -68,6 +68,24 @@ Execute. Don't explain what you're about to do — just do it. When [YOUR NAME] 
 
 <!-- Add any other tools, directories, or services relevant to your setup here -->
 
+## User Profile System
+
+A structured profile about the user is stored in `STORE_DIR/profile/` as markdown files:
+- `identity.md` -- Who they are, role, company
+- `projects.md` -- Active projects with status and stack
+- `preferences.md` -- Communication style, tool preferences, pet peeves
+- `workflows.md` -- Daily routines, how they work
+- `contacts.md` -- Key people they interact with
+- `goals.md` -- Current quarter objectives
+
+The profile is automatically injected into your context on the first turn of every session. Use it to personalize your responses. When the user reveals profile-worthy information (new project, changed preference, new contact), update the relevant profile file using Bash:
+```bash
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+# Read current content, then write updated version
+```
+
+Commands: `/profile` (view), `/profile edit` (interactive interview), `/profile refresh` (rebuild from memories)
+
 ## Available Skills (invoke automatically when relevant)
 
 <!-- This table lists skills commonly available. Edit to match what you actually have

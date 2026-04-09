@@ -13,6 +13,7 @@ import { cleanupOldUploads } from './media.js';
 import { runConsolidation } from './memory-consolidate.js';
 import { runDecaySweep } from './memory.js';
 import { initOrchestrator } from './orchestrator.js';
+import { initNotifications } from './notifications.js';
 import { initScheduler } from './scheduler.js';
 import { setTelegramConnected, setBotInfo } from './state.js';
 
@@ -176,20 +177,17 @@ async function main(): Promise<void> {
   }
 
   if (ALLOWED_CHAT_ID) {
-    initScheduler(
-      async (text) => {
-        // Split long messages to respect Telegram's 4096 char limit.
-        // The scheduler's splitMessage handles chunking, but the sender
-        // callback is also called directly for status messages which may exceed the limit.
-        const { splitMessage } = await import('./bot.js');
-        for (const chunk of splitMessage(text)) {
-          await bot.api.sendMessage(ALLOWED_CHAT_ID, chunk, { parse_mode: 'HTML' }).catch((err) =>
-            logger.error({ err }, 'Scheduler failed to send message'),
-          );
-        }
-      },
-      AGENT_ID,
-    );
+    const telegramSender = async (text: string) => {
+      const { splitMessage } = await import('./bot.js');
+      for (const chunk of splitMessage(text)) {
+        await bot.api.sendMessage(ALLOWED_CHAT_ID, chunk, { parse_mode: 'HTML' }).catch((err) =>
+          logger.error({ err }, 'Failed to send message'),
+        );
+      }
+    };
+
+    initScheduler(telegramSender, AGENT_ID);
+    initNotifications(telegramSender);
   } else {
     logger.warn('ALLOWED_CHAT_ID not set — scheduler disabled (no destination for results)');
   }

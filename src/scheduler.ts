@@ -16,6 +16,7 @@ import { logger } from './logger.js';
 import { messageQueue } from './message-queue.js';
 import { runAgent } from './agent.js';
 import { formatForTelegram, splitMessage } from './bot.js';
+import { getRoutine, isSystemRoutine } from './routines.js';
 import { emitChatEvent } from './state.js';
 
 type Sender = (text: string) => Promise<void>;
@@ -89,10 +90,18 @@ async function runDueTasks(): Promise<void> {
       const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
 
       try {
-        await sender(`Scheduled task running: "${task.prompt.slice(0, 80)}${task.prompt.length > 80 ? '...' : ''}"`);
+        // For system routines, rebuild the prompt dynamically so it gets
+        // fresh profile data instead of stale content from seed time.
+        let taskPrompt = task.prompt;
+        if (isSystemRoutine(task.id)) {
+          const routine = getRoutine(task.id);
+          if (routine) taskPrompt = routine.buildPrompt();
+        }
+
+        await sender(`Scheduled task running: "${taskPrompt.slice(0, 80)}${taskPrompt.length > 80 ? '...' : ''}"`);
 
         // Run as a fresh agent call (no session — scheduled tasks are autonomous)
-        const result = await runAgent(task.prompt, undefined, () => {}, undefined, undefined, abortController);
+        const result = await runAgent(taskPrompt, undefined, () => {}, undefined, undefined, abortController);
         clearTimeout(timeout);
 
         if (result.aborted) {

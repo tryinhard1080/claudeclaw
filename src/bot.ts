@@ -4,7 +4,7 @@ import path from 'path';
 import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
 
 import { runAgent, UsageInfo, AgentProgressEvent } from './agent.js';
-import { buildRuntimeContext, renderContextForAgent } from './context-builder.js';
+import { buildRuntimeContext, renderContextForAgent, buildEnhancedContext } from './context-builder.js';
 import {
   AGENT_ID,
   ALLOWED_CHAT_ID,
@@ -29,6 +29,9 @@ import { setHighImportanceCallback } from './memory-ingest.js';
 import { messageQueue } from './message-queue.js';
 import { parseDelegation, delegateToAgent, getAvailableAgents } from './orchestrator.js';
 import { emitChatEvent, setProcessing, setActiveAbort, abortActiveQuery } from './state.js';
+import { extractLesson, formatLessonsForContext } from './learning.js';
+import { initNotifications } from './notifications.js';
+import { loadProfile, getProfileSummary, formatProfileForTelegram } from './profile.js';
 import { getTelegramCommands, getSkillCommands, isOwnCommand } from './registry.js';
 import {
   isLocked,
@@ -465,6 +468,23 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   const parts: string[] = [];
   if (agentSystemPrompt && !sessionId) parts.push(`[Agent role — follow these instructions]\n${agentSystemPrompt}\n[End agent role]`);
   if (!sessionId) parts.push(renderContextForAgent(buildRuntimeContext()));
+
+  // Inject user profile on first turn (new session) — gives the agent baseline
+  // knowledge about who the user is without requiring memory retrieval.
+  if (!sessionId) {
+    const profileCtx = loadProfile();
+    if (profileCtx) parts.push(profileCtx);
+  }
+
+  // Enhanced context: time awareness, conversation momentum, active project detection.
+  // Injected every turn (not just first) since time and focus change constantly.
+  const enhancedCtx = buildEnhancedContext(chatIdStr, message);
+  if (enhancedCtx) parts.push(enhancedCtx);
+
+  // Inject learned behaviors from past corrections
+  const lessonsCtx = formatLessonsForContext(5);
+  if (lessonsCtx) parts.push(lessonsCtx);
+
   if (memCtx) parts.push(memCtx);
 
   // Inject recent scheduled task outputs so the user can reply to them naturally.
@@ -609,6 +629,8 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       if (surfacedMemoryIds.length > 0) {
         void evaluateMemoryRelevance(surfacedMemoryIds, surfacedMemorySummaries, message, rawResponse).catch(() => {});
       }
+      // Fire-and-forget: extract lessons from corrections
+      void extractLesson(message, rawResponse).catch(() => {});
     }
 
     // Emit assistant response to SSE clients
@@ -805,7 +827,8 @@ export function createBot(): Bot {
       '/agents — List available agents\n' +
       '/delegate — Delegate task to agent\n' +
       '/lock — Lock session (PIN required to unlock)\n' +
-      '/status — Security status\n\n' +
+      '/status — Security status\n' +
+      '/profile — View your profile (edit/refresh)\n\n' +
       'Delegation: @agentId: prompt or /delegate agentId prompt\n\n' +
       'You can also send voice notes, photos, files, and videos.'
     );
@@ -1170,6 +1193,31 @@ export function createBot(): Bot {
     messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, `/delegate ${args}`));
   });
 
+  // /profile — view or manage user profile
+  bot.command('profile', async (ctx) => {
+    if (await replyIfLocked(ctx)) return;
+    const args = ctx.match?.trim().toLowerCase();
+
+    if (args === 'edit') {
+      // Route through message queue so Claude can run an interactive profile interview
+      const chatIdStr = ctx.chat!.id.toString();
+      messageQueue.enqueue(chatIdStr, () =>
+        handleMessage(ctx, 'Run a profile interview. Ask me questions about my role, projects, preferences, goals, workflows, and key contacts. After each answer, update the relevant profile section. Start with what you already know from my profile and ask about gaps.'),
+      );
+      return;
+    }
+
+    if (args === 'refresh') {
+      const chatIdStr = ctx.chat!.id.toString();
+      messageQueue.enqueue(chatIdStr, () =>
+        handleMessage(ctx, 'Review my recent memories and conversation history. Update my user profile sections (identity, projects, preferences, workflows, contacts, goals) with any new information you find. Show me what you updated.'),
+      );
+      return;
+    }
+
+    await ctx.reply(formatProfileForTelegram());
+  });
+
   // Text messages — and any slash commands not owned by this bot (skills, e.g. /todo /gmail)
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
@@ -1522,6 +1570,16 @@ async function processDashboardMessage(
     const dashParts: string[] = [];
     if (agentSystemPrompt && !sessionId) dashParts.push(`[Agent role — follow these instructions]\n${agentSystemPrompt}\n[End agent role]`);
     if (!sessionId) dashParts.push(renderContextForAgent(buildRuntimeContext()));
+
+    // Inject user profile on first turn (dashboard path)
+    if (!sessionId) {
+      const profileCtx = loadProfile();
+      if (profileCtx) dashParts.push(profileCtx);
+    }
+
+    const dashEnhancedCtx = buildEnhancedContext(chatIdStr, text);
+    if (dashEnhancedCtx) dashParts.push(dashEnhancedCtx);
+
     if (memCtx) dashParts.push(memCtx);
 
     const recentDashTasks = getRecentTaskOutputs(AGENT_ID, 30);

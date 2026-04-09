@@ -13,6 +13,9 @@ import path from 'path';
 
 import { listAgentIds } from './agent-config.js';
 import { AGENT_ID, CONTEXT_LIMIT, DASHBOARD_PORT, PROJECT_ROOT, STORE_DIR, agentDefaultModel } from './config.js';
+import { getRecentConversation } from './db.js';
+import { logger } from './logger.js';
+import { getSection } from './profile.js';
 import { getAllCommands, getSkillCommands } from './registry.js';
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -119,4 +122,128 @@ function formatUptime(seconds: number): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+}
+
+// ── Enhanced Context: Time Awareness ────────────────────────────────
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * Build time-aware context: current date/time, day of week.
+ * Helps the agent reason about urgency and scheduling.
+ */
+export function buildTimeContext(): string {
+  const now = new Date();
+  const day = DAYS[now.getDay()];
+  const hour = now.getHours();
+  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  let period = 'morning';
+  if (hour >= 12 && hour < 17) period = 'afternoon';
+  else if (hour >= 17 && hour < 21) period = 'evening';
+  else if (hour >= 21 || hour < 6) period = 'night';
+
+  return `[Time context]\n${dateStr}, ${timeStr} (${period})\n[End time context]`;
+}
+
+// ── Enhanced Context: Conversation Momentum ─────────────────────────
+
+/**
+ * Build a 1-line summary of what the user has been focused on today.
+ * Scans recent conversation_log for topic patterns.
+ */
+export function buildMomentumContext(chatId: string): string | null {
+  try {
+    const turns = getRecentConversation(chatId, 20);
+    if (turns.length === 0) return null;
+
+    // Filter to today's turns only
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEpoch = Math.floor(todayStart.getTime() / 1000);
+
+    const todayTurns = turns.filter((t) => t.created_at >= todayEpoch && t.role === 'user');
+    if (todayTurns.length === 0) return null;
+
+    // Extract short topic indicators from user messages
+    const topics: string[] = [];
+    for (const turn of todayTurns.slice(0, 10)) {
+      const content = turn.content.slice(0, 200);
+      // Skip commands and very short messages
+      if (content.startsWith('/') || content.length < 20) continue;
+      // Take first meaningful phrase (up to 50 chars)
+      const phrase = content.split(/[.!?\n]/)[0].trim().slice(0, 50);
+      if (phrase.length >= 10) topics.push(phrase);
+    }
+
+    if (topics.length === 0) return null;
+
+    const unique = [...new Set(topics)].slice(0, 3);
+    return `[Today's focus]\n${unique.join(' | ')}\n[End focus]`;
+  } catch (err) {
+    logger.debug({ err }, 'Failed to build momentum context');
+    return null;
+  }
+}
+
+// ── Enhanced Context: Active Project Detection ──────────────────────
+
+interface ProjectKeyword {
+  readonly project: string;
+  readonly keywords: readonly string[];
+}
+
+/**
+ * Detect which project the user is likely discussing based on message keywords.
+ * Returns a hint string or null.
+ */
+export function detectActiveProject(userMessage: string): string | null {
+  const projectsText = getSection('projects');
+  if (!projectsText) return null;
+
+  // Parse project names from the profile (lines starting with - **)
+  const projectKeywords: ProjectKeyword[] = [];
+  for (const line of projectsText.split('\n')) {
+    const match = line.match(/^-\s+\*\*([^*]+)\*\*\s*--\s*(.+)/);
+    if (!match) continue;
+    const name = match[1].trim();
+    const desc = match[2].trim().toLowerCase();
+    // Generate keywords from project name and first few words of description
+    const kw = [
+      name.toLowerCase(),
+      ...name.toLowerCase().split(/[\s-]+/),
+      ...desc.split(/\s+/).slice(0, 5),
+    ].filter((w) => w.length >= 3);
+    projectKeywords.push({ project: name, keywords: kw });
+  }
+
+  const msgLower = userMessage.toLowerCase();
+  for (const { project, keywords } of projectKeywords) {
+    for (const kw of keywords) {
+      if (msgLower.includes(kw)) {
+        return `[Active project context: ${project}]`;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Build the full enhanced context block for injection.
+ * Combines time, momentum, and project detection.
+ */
+export function buildEnhancedContext(chatId: string, userMessage: string): string | null {
+  const parts: string[] = [];
+
+  parts.push(buildTimeContext());
+
+  const momentum = buildMomentumContext(chatId);
+  if (momentum) parts.push(momentum);
+
+  const project = detectActiveProject(userMessage);
+  if (project) parts.push(project);
+
+  return parts.length > 0 ? parts.join('\n') : null;
 }
