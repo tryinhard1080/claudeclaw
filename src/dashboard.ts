@@ -101,25 +101,34 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   const app = new Hono();
 
-  // CORS headers for cross-origin access (Cloudflare tunnel, mobile browsers)
+  // Security headers + CORS (restrict to same-origin; override DASHBOARD_CORS_ORIGIN in .env for tunnel)
   app.use('*', async (c, next) => {
-    c.header('Access-Control-Allow-Origin', '*');
+    const allowedOrigin = process.env.DASHBOARD_CORS_ORIGIN || 'http://localhost:' + DASHBOARD_PORT;
+    c.header('Access-Control-Allow-Origin', allowedOrigin);
     c.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, PATCH, OPTIONS');
-    c.header('Access-Control-Allow-Headers', 'Content-Type');
+    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    c.header('X-Content-Type-Options', 'nosniff');
+    c.header('X-Frame-Options', 'DENY');
+    c.header('Referrer-Policy', 'no-referrer');
     if (c.req.method === 'OPTIONS') return c.body(null, 204);
     await next();
   });
 
-  // Global error handler — prevents unhandled throws from killing the server
+  // Global error handler -- prevents unhandled throws from killing the server
   app.onError((err, c) => {
     logger.error({ err: err.message }, 'Dashboard request error');
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  // Token auth middleware
+  // Token auth middleware (timing-safe comparison to prevent side-channel attacks)
   app.use('*', async (c, next) => {
-    const token = c.req.query('token');
-    if (!DASHBOARD_TOKEN || !token || token !== DASHBOARD_TOKEN) {
+    const token = c.req.query('token') || c.req.header('Authorization')?.replace('Bearer ', '');
+    if (!DASHBOARD_TOKEN || !token) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const a = Buffer.from(token);
+    const b = Buffer.from(DASHBOARD_TOKEN);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
     await next();
@@ -669,7 +678,8 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json(renderContextForDashboard(ctx));
   });
 
-  serve({ fetch: app.fetch, port: DASHBOARD_PORT }, () => {
-    logger.info({ port: DASHBOARD_PORT }, 'Dashboard server running');
+  // Bind to localhost only. Use a reverse proxy or Cloudflare Tunnel for remote access.
+  serve({ fetch: app.fetch, port: DASHBOARD_PORT, hostname: '127.0.0.1' }, () => {
+    logger.info({ port: DASHBOARD_PORT, hostname: '127.0.0.1' }, 'Dashboard server running');
   });
 }

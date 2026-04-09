@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
 
@@ -18,6 +19,7 @@ import {
   TYPING_REFRESH_MS,
   AGENT_TIMEOUT_MS,
   STREAM_STRATEGY,
+  PROJECT_ROOT,
 } from './config.js';
 import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage } from './db.js';
 import { logger } from './logger.js';
@@ -265,15 +267,34 @@ export interface ExtractResult {
  *
  * Returns the cleaned text (markers stripped) and an array of file descriptors.
  */
+// Allowed directories for file sending. Paths outside these are rejected.
+const FILE_SEND_ALLOWLIST = [
+  path.resolve(PROJECT_ROOT),
+  os.tmpdir(),
+  '/tmp',
+  'C:\\Temp',
+];
+
+/** Check if a file path resolves to within an allowed directory. */
+function isAllowedFilePath(filePath: string): boolean {
+  const resolved = path.resolve(filePath);
+  return FILE_SEND_ALLOWLIST.some((dir) => resolved.startsWith(path.resolve(dir)));
+}
+
 export function extractFileMarkers(text: string): ExtractResult {
   const files: FileMarker[] = [];
 
   const pattern = /\[SEND_(FILE|PHOTO):([^\]\|]+)(?:\|([^\]]*))?\]/g;
 
   const cleaned = text.replace(pattern, (_, kind: string, filePath: string, caption?: string) => {
+    const trimmedPath = filePath.trim();
+    if (!isAllowedFilePath(trimmedPath)) {
+      logger.warn({ filePath: trimmedPath }, 'Blocked file send: path outside allowlist');
+      return '';
+    }
     files.push({
       type: kind === 'PHOTO' ? 'photo' : 'document',
-      filePath: filePath.trim(),
+      filePath: trimmedPath,
       caption: caption?.trim() || undefined,
     });
     return '';
@@ -365,14 +386,19 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   // ── PIN lock check ─────────────────────────────────────────────
   if (isLocked()) {
     // Try to unlock with the message as a PIN
-    if (unlock(message)) {
+    const unlockResult = unlock(message);
+    if (unlockResult.success) {
       audit({ agentId: AGENT_ID, chatId: chatIdStr, action: 'unlock', detail: 'PIN accepted', blocked: false });
       await ctx.reply('Unlocked. Session active.');
       return;
     }
-    // Wrong PIN or not a PIN
+    // Wrong PIN or locked out
     audit({ agentId: AGENT_ID, chatId: chatIdStr, action: 'blocked', detail: 'Session locked, message rejected', blocked: true });
-    await ctx.reply('Session locked. Send your PIN to unlock.');
+    if (unlockResult.locked_out) {
+      await ctx.reply(`Too many failed attempts. Locked out for ${Math.ceil((unlockResult.remaining_lockout_s ?? 300) / 60)} minutes.`);
+    } else {
+      await ctx.reply('Session locked. Send your PIN to unlock.');
+    }
     return;
   }
 
@@ -465,6 +491,10 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   setProcessing(chatIdStr, true);
 
   try {
+    // Declare streamingEnabled before onProgress closure to avoid temporal dead zone.
+    // The closure references this variable, so it must be initialized first.
+    const streamingEnabled = STREAM_STRATEGY !== 'off';
+
     // Progress callback: surface agent activity to Telegram + SSE.
     // Tool activity is throttled to one Telegram update per 30s to avoid spam.
     let lastToolNotifyTime = 0;
@@ -505,7 +535,6 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     // Streaming: send a placeholder message and edit it as text arrives
     let streamMsgId: number | undefined;
     let lastEditLength = 0;
-    const streamingEnabled = STREAM_STRATEGY !== 'off';
 
     const onStreamText = streamingEnabled ? (accumulated: string) => {
       const now = Date.now();
@@ -691,6 +720,44 @@ export function createBot(): Bot {
   }
 
   const bot = new Bot(token);
+
+  // --- Forum topic threading support ---
+  // When Telegram "Topics in Private Chats" is enabled, every reply without
+  // message_thread_id creates a new topic. We capture the thread ID from
+  // incoming messages and auto-inject it into all outgoing API calls.
+  const chatThreadId = new Map<number, number>();
+
+  // Middleware: capture message_thread_id from incoming messages
+  bot.use(async (ctx, next) => {
+    const threadId = ctx.msg?.message_thread_id;
+    if (threadId && ctx.chat?.id) {
+      chatThreadId.set(ctx.chat.id, threadId);
+    }
+    await next();
+  });
+
+  // API transformer: inject message_thread_id into all outgoing send calls
+  const THREAD_METHODS = new Set([
+    'sendMessage', 'sendPhoto', 'sendDocument', 'sendVoice', 'sendVideo',
+    'sendAudio', 'sendAnimation', 'sendSticker', 'sendVideoNote',
+    'sendMediaGroup', 'sendLocation', 'sendContact', 'sendPoll',
+    'copyMessage', 'forwardMessage',
+  ]);
+  bot.api.config.use((prev, method, payload, signal) => {
+    if (THREAD_METHODS.has(method) && payload && 'chat_id' in payload) {
+      const p = payload as Record<string, unknown>;
+      if (!p['message_thread_id']) {
+        const chatId = typeof p['chat_id'] === 'number'
+          ? p['chat_id'] as number
+          : parseInt(String(p['chat_id']), 10);
+        const threadId = chatThreadId.get(chatId);
+        if (threadId) {
+          p['message_thread_id'] = threadId;
+        }
+      }
+    }
+    return prev(method, payload, signal);
+  });
 
   // Reject group chats. ClaudeClaw only works in private (1-on-1) chats.
   // This prevents message leakage if the bot is added to a group.
@@ -1121,12 +1188,17 @@ export function createBot(): Bot {
       return;
     }
     if (isLocked()) {
-      if (unlock(text)) {
+      const unlockResult = unlock(text);
+      if (unlockResult.success) {
         audit({ agentId: AGENT_ID, chatId: chatIdStr, action: 'unlock', detail: 'PIN accepted', blocked: false });
         await ctx.reply('Unlocked. Session active.');
       } else {
         audit({ agentId: AGENT_ID, chatId: chatIdStr, action: 'blocked', detail: 'Session locked, wrong PIN or message rejected', blocked: true });
-        await ctx.reply('Session locked. Send your PIN to unlock.');
+        if (unlockResult.locked_out) {
+          await ctx.reply(`Too many failed attempts. Locked out for ${Math.ceil((unlockResult.remaining_lockout_s ?? 300) / 60)} minutes.`);
+        } else {
+          await ctx.reply('Session locked. Send your PIN to unlock.');
+        }
       }
       return;
     }

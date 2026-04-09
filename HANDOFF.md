@@ -1,47 +1,64 @@
 # Handoff -- ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-03-31
+- **Date**: 2026-04-09
 - **Model**: Claude Opus 4.6 (1M context)
-- **Previous session**: 2026-03-30 (planning only), 2026-03-29 (initial setup)
+- **Previous session**: 2026-04-08 (deployment, pm2 setup, CLAUDE.md personalization)
 
-## What Changed (2026-03-31)
-- Set up pm2 process management for ClaudeClaw (Step 1 of approved plan)
-- Diagnosed and fixed 409 Telegram polling conflict: root cause was `telegram@claude-plugins-official` plugin spawning 6+ bun zombie pollers per Claude Code session, all competing for the same bot token
-- Disabled Claude Code Telegram plugin in `~/.claude/settings.json` (`"telegram@claude-plugins-official": false`)
-- Killed 6 zombie bun processes that were holding the token
-- Reduced grammy long-poll timeout from 30s to 10s in `src/index.ts` for faster 409 recovery
-- Extracted `bot.start()` options to `startOptions` const with explicit types
-- Registered ClaudeClaw in pm2 with `--exp-backoff-restart-delay=3000 --max-restarts=10`
-- Saved pm2 state (`pm2 save`)
+## What Changed (2026-04-09)
 
-## What Changed (2026-03-30)
-- Created full implementation plan at `~/.claude/plans/reflective-floating-floyd.md`
+### Infrastructure (carried from 2026-04-08 work)
+- STORE_DIR configurable via .env (`C:/claudeclaw-store`), off OneDrive
+- settingSources reverted to `['project']` (Telegram plugin keeps re-enabling)
+- Registry scans project `skills/` + user `~/.claude/skills/`
+- Personalized `~/.claudeclaw/CLAUDE.md` created (Richard, Claw, vault path)
+- 10 zombie bun Telegram plugin processes killed
+- Telegram plugin disabled in `~/.claude/settings.json`
 
-## What Changed (2026-03-29)
-- Initial setup: npm install, .env, Windows spawn fix, Telegram polling fix, first boot
+### Security Fixes (from 5-agent ultrathink audit)
+- **PIN brute-force lockout**: 5 failed attempts triggers 5min cooldown (`security.ts`)
+- **AES key validation**: Fixed `hex.length < 64` (was `< 32`, would accept 16-byte keys) (`db.ts`)
+- **Dashboard timing-safe auth**: `crypto.timingSafeEqual` + Bearer header support (`dashboard.ts`)
+- **Dashboard hardened**: Localhost-only bind, restricted CORS, security headers (`dashboard.ts`)
+- **SEND_FILE path validation**: Allowlist check (project root + /tmp/) prevents traversal (`bot.ts`)
+
+### Bug Fixes
+- **Atomics.wait crash**: Replaced with safe busy-wait in PID lock (`index.ts`)
+- **streamingEnabled TDZ**: Moved declaration before `onProgress` closure (`bot.ts`)
+- **Embedding model mismatch**: Uses `EMBEDDING_MODEL` constant, not hardcoded `'embedding-001'` (`db.ts`, `embeddings.ts`)
+- **ESM __dirname crash**: Added `fileURLToPath` to `registry.ts`
+
+### Test Fixes
+- `env.test.ts`: Rewritten to mock `fs.readFileSync` (old tests mocked `process.cwd()` but code uses `__dirname`)
+- `scheduler.test.ts`: Fixed truncation test (4000 chars, not 500)
+- `bot.test.ts`: Updated file send test paths to use `/tmp/` (allowlist)
 
 ## Current State
-- **Working**: Bot online via pm2, 0 restarts, responds to DMs, dashboard at localhost:3141
-- **Running in**: pm2 (persistent, auto-restart on crash with exponential backoff)
-- **Telegram plugin**: Disabled globally -- ClaudeClaw owns the bot token exclusively
-- **Not configured yet**: CLAUDE.md personalization, user skills, voice, crons, OneDrive safety
+- **Bot**: Online as @CCbot1080bot via pm2, 0 restarts, responding to Telegram DMs
+- **Dashboard**: localhost:3141 (hardened: localhost-only, timing-safe auth)
+- **Scheduler**: Active (60s polling)
+- **Memory**: Consolidation enabled (30min cycle), Gemini model verified working
+- **Store**: `C:/claudeclaw-store/claudeclaw.db` (off OneDrive)
+- **Tests**: 223/223 passing (14 test files)
 
-## Approved Plan (remaining steps)
-**Plan file**: `~/.claude/plans/reflective-floating-floyd.md`
-**Completed**: Step 1 (pm2)
-**Remaining**: Step 4 (OneDrive fix) -> 2 (CLAUDE.md) -> 3 (skills fix) -> 9 (skill registration) -> 6 (crons) -> 7 (dashboard docs)
+## Ultrathink Audit Summary
+5 specialist agents analyzed the full 14.5k LOC codebase:
+- **Architecture**: Sound design, few coupling issues (bot.ts god module, scheduler<->bot circular dep)
+- **Security**: 2 critical + 5 high + 8 medium findings. Top 5 fixed this session.
+- **Code Quality**: 4 real bugs found and fixed (Atomics.wait, TDZ, key validation, embedding model)
+- **Tests**: Critical gaps in security.ts (0 tests), message-queue.ts (0 tests), formatForTelegram (untested)
+- **Performance**: ~$0.01/message, O(n) embedding scan needs limiting, consolidation runs too often
 
 ## Next Steps
-1. Move `store/` off OneDrive to `C:\claudeclaw-store\` (Step 4)
-2. Personalize CLAUDE.md -- replace [YOUR NAME] -> Richard, vault path, etc. (Step 2)
-3. Fix settingSources to re-enable user skills without Telegram conflict (Step 3)
-4. Register installed skills with the bot (Step 9)
+1. Write tests for `security.ts` (PIN lock, brute-force lockout, kill phrase)
+2. Write tests for `message-queue.ts` (FIFO ordering, error isolation)
+3. Limit `getMemoriesWithEmbeddings()` to recent 50 memories
+4. Add `user_invocable: true` to project skill SKILL.md files
+5. Split `bot.ts` into smaller modules (formatting, commands, handlers)
+6. FTS5 query injection fix (escape `"` in keywords, `db.ts:691`)
 
 ## Gotchas & Notes
-- **Claude Code Telegram plugin is the #1 409 source**: Each CC session spawns a bun process that polls the same TELEGRAM_BOT_TOKEN. Plugin is now disabled globally. If re-enabled, ClaudeClaw will crash-loop with 409s.
-- OpenClaw pm2 processes were auto-respawning and stealing the bot token -- deleted from pm2
-- Windows `Start-Process` strips PATH, so `claude.exe` needs full path via `pathToClaudeCodeExecutable`
-- `settingSources: ['project']` means the bot's Claude subprocess won't load user-level skills/plugins -- only project CLAUDE.md
-- Project lives on OneDrive -- if SQLite lock errors appear, move `store/` to a local path outside OneDrive
-- grammy long-poll timeout reduced to 10s (from 30s default) so pm2 backoff recovers faster from transient 409s
+- **Telegram plugin auto-re-enables**: Between sessions, `telegram@claude-plugins-official` keeps getting set back to `true` in `~/.claude/settings.json`. Must stay `false` or ClaudeClaw 409s.
+- **settingSources must stay `['project']`**: Cannot include `'user'` while Telegram plugin exists. Skills must be discovered via project `skills/` directory or registry scan.
+- **`gemini-3-flash-preview` IS valid**: Code reviewer flagged it as nonexistent (stale training data). Verified working via real API call.
+- **Dashboard queue bypass was already fixed**: `processMessageFromDashboard` already routes through `messageQueue.enqueue()`.

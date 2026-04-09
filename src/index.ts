@@ -90,7 +90,10 @@ function acquireLock(): void {
       if (!isNaN(old) && old !== process.pid) {
         try {
           process.kill(old, 'SIGTERM');
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+          // Brief synchronous wait for old process to die before we take the lock.
+          // Atomics.wait throws on main thread in some Node versions, so use a busy wait.
+          const deadline = Date.now() + 1000;
+          while (Date.now() < deadline) { /* spin */ }
         } catch { /* already dead */ }
       }
     }

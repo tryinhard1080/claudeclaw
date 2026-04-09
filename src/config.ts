@@ -24,6 +24,7 @@ const envConfig = readEnvFile([
   'IDLE_LOCK_MINUTES',
   'EMERGENCY_KILL_PHRASE',
   'STREAM_STRATEGY',
+  'STORE_DIR',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -77,7 +78,13 @@ const __dirname = path.dirname(__filename);
 // The SDK uses this as cwd, which causes Claude Code to load our CLAUDE.md
 // and all global skills from ~/.claude/skills/ via settingSources.
 export const PROJECT_ROOT = path.resolve(__dirname, '..');
-export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
+
+// Store directory: configurable via STORE_DIR env var to move SQLite off OneDrive.
+// OneDrive's sync causes WAL/SHM lock errors under load.
+const rawStoreDir = process.env.STORE_DIR || envConfig.STORE_DIR || '';
+export const STORE_DIR = rawStoreDir
+  ? path.resolve(rawStoreDir)
+  : path.resolve(PROJECT_ROOT, 'store');
 
 // ── External config directory ────────────────────────────────────────
 // Personal config files (CLAUDE.md, agent.yaml, agent CLAUDE.md) can live

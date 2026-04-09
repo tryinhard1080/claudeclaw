@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DB_ENCRYPTION_KEY, STORE_DIR } from './config.js';
-import { cosineSimilarity } from './embeddings.js';
+import { cosineSimilarity, EMBEDDING_MODEL } from './embeddings.js';
 import { logger } from './logger.js';
 
 // ── Field-Level Encryption (AES-256-GCM) ────────────────────────────
@@ -16,7 +16,7 @@ let encryptionKey: Buffer | null = null;
 function getEncryptionKey(): Buffer {
   if (encryptionKey) return encryptionKey;
   const hex = DB_ENCRYPTION_KEY;
-  if (!hex || hex.length < 32) {
+  if (!hex || hex.length < 64) {
     throw new Error(
       'DB_ENCRYPTION_KEY is missing or too short. Run: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))" and add to .env',
     );
@@ -846,13 +846,13 @@ export function saveConsolidation(
 
 export function saveConsolidationEmbedding(consolidationId: number, embedding: number[]): void {
   db.prepare('UPDATE consolidations SET embedding = ?, embedding_model = ? WHERE id = ?')
-    .run(JSON.stringify(embedding), 'embedding-001', consolidationId);
+    .run(JSON.stringify(embedding), EMBEDDING_MODEL, consolidationId);
 }
 
 export function getConsolidationsWithEmbeddings(chatId: string): Array<{ id: number; embedding: number[]; summary: string; insight: string }> {
   const rows = db
     .prepare('SELECT id, embedding, summary, insight FROM consolidations WHERE chat_id = ? AND embedding IS NOT NULL AND embedding_model = ?')
-    .all(chatId, 'embedding-001') as Array<{ id: number; embedding: string; summary: string; insight: string }>;
+    .all(chatId, EMBEDDING_MODEL) as Array<{ id: number; embedding: string; summary: string; insight: string }>;
   return rows.map((r) => ({ ...r, embedding: JSON.parse(r.embedding) as number[] }));
 }
 

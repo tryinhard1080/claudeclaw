@@ -181,6 +181,8 @@ export async function runAgent(
         // 'project' loads CLAUDE.md from cwd only. Excluding 'user' prevents the
         // subprocess from loading installed plugins (e.g. Telegram) which would
         // conflict with the bot's own Telegram poller (409 getUpdates conflict).
+        // The Telegram plugin keeps getting re-enabled in ~/.claude/settings.json,
+        // so 'user' CANNOT be included here safely.
         settingSources: ['project'],
 
         // Skip all permission prompts — this is a trusted personal bot on your own machine

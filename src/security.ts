@@ -62,6 +62,12 @@ export function isSecurityEnabled(): boolean {
 let _locked = false;
 let _lastActivity = Date.now();
 
+// Brute-force protection: lock out after MAX_PIN_ATTEMPTS failures
+const MAX_PIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+let _failedAttempts = 0;
+let _lockoutUntil = 0;
+
 export function isLocked(): boolean {
   if (!_pinHash) return false;
   // Check idle timeout on every lock query (simpler than setInterval)
@@ -81,16 +87,37 @@ export function lock(): void {
   logger.info('Security: session locked');
 }
 
-export function unlock(pin: string): boolean {
-  if (!_pinHash) return true;
+export function unlock(pin: string): { success: boolean; locked_out?: boolean; remaining_lockout_s?: number } {
+  if (!_pinHash) return { success: true };
+
+  // Check if currently in lockout period
+  const now = Date.now();
+  if (_lockoutUntil > now) {
+    const remainingSec = Math.ceil((_lockoutUntil - now) / 1000);
+    logger.warn({ remainingSec }, 'Security: PIN attempt during lockout');
+    return { success: false, locked_out: true, remaining_lockout_s: remainingSec };
+  }
+
   if (verifyPin(pin, _pinHash)) {
     _locked = false;
     _lastActivity = Date.now();
+    _failedAttempts = 0;
+    _lockoutUntil = 0;
     logger.info('Security: session unlocked');
-    return true;
+    return { success: true };
   }
-  logger.warn('Security: incorrect PIN attempt');
-  return false;
+
+  _failedAttempts++;
+  logger.warn({ attempt: _failedAttempts, max: MAX_PIN_ATTEMPTS }, 'Security: incorrect PIN attempt');
+
+  if (_failedAttempts >= MAX_PIN_ATTEMPTS) {
+    _lockoutUntil = now + LOCKOUT_DURATION_MS;
+    logger.warn({ lockoutMinutes: 5 }, 'Security: PIN lockout activated after too many failed attempts');
+    _failedAttempts = 0; // Reset counter; lockout timer is the guard now
+    return { success: false, locked_out: true, remaining_lockout_s: Math.ceil(LOCKOUT_DURATION_MS / 1000) };
+  }
+
+  return { success: false };
 }
 
 /** Record activity to reset idle timeout. */

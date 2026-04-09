@@ -227,7 +227,7 @@ describe('extractFileMarkers', () => {
   });
 
   it('preserves text around multiple markers on separate lines', () => {
-    const input = 'Line 1\n[SEND_FILE:/a.pdf]\nLine 2\n[SEND_FILE:/b.pdf]\nLine 3';
+    const input = 'Line 1\n[SEND_FILE:/tmp/a.pdf]\nLine 2\n[SEND_FILE:/tmp/b.pdf]\nLine 3';
     const result = extractFileMarkers(input);
     expect(result.files).toHaveLength(2);
     expect(result.text).toContain('Line 1');

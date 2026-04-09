@@ -1,100 +1,89 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'fs';
-import path from 'path';
 import { readEnvFile } from './env.js';
 
-const TMP_DIR = '/tmp/claudeclaw-env-test';
-const TMP_ENV = path.join(TMP_DIR, '.env');
+/**
+ * readEnvFile resolves .env from __dirname (the compiled file's directory),
+ * NOT process.cwd(). We mock fs.readFileSync to intercept the read.
+ */
 
-function writeEnv(content: string): void {
-  fs.mkdirSync(TMP_DIR, { recursive: true });
-  fs.writeFileSync(TMP_ENV, content, 'utf-8');
-}
-
-function cleanup(): void {
-  try {
-    fs.rmSync(TMP_DIR, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
+function mockEnvContent(content: string): void {
+  const original = fs.readFileSync;
+  vi.spyOn(fs, 'readFileSync').mockImplementation(((
+    filePath: fs.PathOrFileDescriptor,
+    options?: BufferEncoding | { encoding?: BufferEncoding | null; flag?: string } | null,
+  ) => {
+    if (typeof filePath === 'string' && filePath.endsWith('.env')) {
+      return content;
+    }
+    return original.call(fs, filePath, options as BufferEncoding);
+  }) as typeof fs.readFileSync);
 }
 
 describe('readEnvFile', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    cleanup();
   });
 
-  function mockCwd(): void {
-    vi.spyOn(process, 'cwd').mockReturnValue(TMP_DIR);
-  }
-
   it('parses KEY=value correctly', () => {
-    writeEnv('FOO=bar\nBAZ=qux\n');
-    mockCwd();
+    mockEnvContent('FOO=bar\nBAZ=qux\n');
     const result = readEnvFile(['FOO', 'BAZ']);
     expect(result).toEqual({ FOO: 'bar', BAZ: 'qux' });
   });
 
   it('handles double-quoted values', () => {
-    writeEnv('GREETING="hello world"\n');
-    mockCwd();
+    mockEnvContent('GREETING="hello world"\n');
     const result = readEnvFile(['GREETING']);
     expect(result).toEqual({ GREETING: 'hello world' });
   });
 
   it('handles single-quoted values', () => {
-    writeEnv("NAME='John Doe'\n");
-    mockCwd();
+    mockEnvContent("NAME='John Doe'\n");
     const result = readEnvFile(['NAME']);
     expect(result).toEqual({ NAME: 'John Doe' });
   });
 
   it('ignores comment lines', () => {
-    writeEnv('# This is a comment\nKEY=value\n# Another comment\n');
-    mockCwd();
+    mockEnvContent('# This is a comment\nKEY=value\n# Another comment\n');
     const result = readEnvFile(['KEY']);
     expect(result).toEqual({ KEY: 'value' });
   });
 
   it('ignores blank lines', () => {
-    writeEnv('\n\nKEY=value\n\n\n');
-    mockCwd();
+    mockEnvContent('\n\nKEY=value\n\n\n');
     const result = readEnvFile(['KEY']);
     expect(result).toEqual({ KEY: 'value' });
   });
 
   it('returns empty object if .env does not exist', () => {
-    vi.spyOn(process, 'cwd').mockReturnValue('/tmp/nonexistent-dir-xyz');
+    vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
     const result = readEnvFile(['FOO']);
     expect(result).toEqual({});
   });
 
   it('only returns requested keys', () => {
-    writeEnv('A=1\nB=2\nC=3\n');
-    mockCwd();
+    mockEnvContent('A=1\nB=2\nC=3\n');
     const result = readEnvFile(['A', 'C']);
     expect(result).toEqual({ A: '1', C: '3' });
     expect(result).not.toHaveProperty('B');
   });
 
   it('strips surrounding whitespace from keys and values', () => {
-    writeEnv('  MY_KEY  =  my_value  \n');
-    mockCwd();
+    mockEnvContent('  MY_KEY  =  my_value  \n');
     const result = readEnvFile(['MY_KEY']);
     expect(result).toEqual({ MY_KEY: 'my_value' });
   });
 
   it('handles values containing = sign', () => {
-    writeEnv('URL=https://example.com?a=1&b=2\n');
-    mockCwd();
+    mockEnvContent('URL=https://example.com?a=1&b=2\n');
     const result = readEnvFile(['URL']);
     expect(result).toEqual({ URL: 'https://example.com?a=1&b=2' });
   });
 
   it('skips lines without = sign', () => {
-    writeEnv('NOEQUALS\nKEY=value\n');
-    mockCwd();
+    mockEnvContent('NOEQUALS\nKEY=value\n');
     const result = readEnvFile(['KEY', 'NOEQUALS']);
     expect(result).toEqual({ KEY: 'value' });
   });

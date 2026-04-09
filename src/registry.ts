@@ -10,8 +10,12 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { logger } from './logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -49,8 +53,8 @@ const BUILTIN_COMMANDS: readonly CommandEntry[] = Object.freeze([
 
 // ── Skill discovery ─────────────────────────────────────────────────
 
-function discoverSkills(): CommandEntry[] {
-  const skillsDir = path.join(os.homedir(), '.claude', 'skills');
+/** Scan a single skills directory and return discovered CommandEntry items. */
+function scanSkillsDir(skillsDir: string): CommandEntry[] {
   const commands: CommandEntry[] = [];
 
   let entries: string[];
@@ -91,6 +95,31 @@ function discoverSkills(): CommandEntry[] {
       commands.push({ command: name, description: desc, source: 'skill' });
     } catch {
       // Skip malformed skill files
+    }
+  }
+
+  return commands;
+}
+
+function discoverSkills(): CommandEntry[] {
+  const seen = new Set<string>();
+  const commands: CommandEntry[] = [];
+
+  // Scan project-local skills/ first (higher priority)
+  const projectSkillsDir = path.join(path.resolve(__dirname, '..'), 'skills');
+  for (const cmd of scanSkillsDir(projectSkillsDir)) {
+    if (!seen.has(cmd.command)) {
+      seen.add(cmd.command);
+      commands.push(cmd);
+    }
+  }
+
+  // Then scan user-global ~/.claude/skills/
+  const globalSkillsDir = path.join(os.homedir(), '.claude', 'skills');
+  for (const cmd of scanSkillsDir(globalSkillsDir)) {
+    if (!seen.has(cmd.command)) {
+      seen.add(cmd.command);
+      commands.push(cmd);
     }
   }
 

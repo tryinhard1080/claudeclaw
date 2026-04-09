@@ -3,7 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import { GOOGLE_API_KEY } from './config.js';
 import { logger } from './logger.js';
 
-const EMBEDDING_MODEL = 'gemini-embedding-001';
+export const EMBEDDING_MODEL = 'gemini-embedding-001';
 
 let client: GoogleGenAI | null = null;
 
