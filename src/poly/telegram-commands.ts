@@ -51,7 +51,7 @@ function renderMarkets(db: Database.Database): string {
     rows.map((r, i) => {
       const outcomes = JSON.parse(r.outcomes_json) as Array<{ label: string; price: number }>;
       const yes = outcomes.find(o => o.label.toLowerCase() === 'yes') ?? outcomes[0]!;
-      return `${i + 1}. ${truncateQuestion(r.question)} — ${yes.label} ${fmtPrice(yes.price)} — ${fmtUsd(r.volume_24h)}`;
+      return `${i + 1}. ${truncateQuestion(r.question)} — ${yes.label} ${fmtPrice(yes.price)} — ${fmtUsd(r.volume_24h)}\n   /poly market ${r.slug}`;
     }),
   ).join('\n');
 }
