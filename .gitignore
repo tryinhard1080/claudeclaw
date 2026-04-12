@@ -24,6 +24,9 @@ migrations/.applied.json
 *.log
 /tmp/claudeclaw.*
 
+# Claude Code local settings (user-specific permissions, not for repo)
+.claude/settings.local.json
+
 # macOS
 .DS_Store
 
