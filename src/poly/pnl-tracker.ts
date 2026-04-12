@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
 import { POLY_TIMEZONE } from '../config.js';
 import { fetchMidpoint } from './clob-client.js';
-import { fetchMarketById } from './gamma-client.js';
+import { fetchMarketBySlug } from './gamma-client.js';
 import type { Market } from './types.js';
 
 export type ResolutionStatus = 'won' | 'lost' | 'voided' | 'open';
@@ -51,21 +51,14 @@ export function classifyResolution(
 export type MarketFetcher = (slug: string) => Promise<Market | null>;
 
 /**
- * Default market fetcher: reads the cached `poly_markets` row for slug,
- * then queries Gamma by numeric market id for fresh `closed`/`outcomePrices`.
- * Prefers fresh data over stale cache because outcomePrices only becomes a
- * resolved 1/0 vector AFTER `closed=1`.
+ * Default market fetcher: queries Gamma's list endpoint filtered by slug
+ * (no `closed=` filter, so resolved markets are visible). Resolution only
+ * becomes a 1/0 outcomePrice vector AFTER closed=1, so we always want fresh
+ * data here. `db` is intentionally unused — kept in the signature so callers
+ * can swap in a cache-backed fetcher without changing construction sites.
  */
-export function makeDefaultMarketFetcher(db: Database.Database): MarketFetcher {
-  return async (slug: string) => {
-    const row = db.prepare(`SELECT condition_id FROM poly_markets WHERE slug = ?`).get(slug) as
-      | { condition_id: string } | undefined;
-    if (!row) return null;
-    // Gamma's market-by-slug endpoint is unreliable (422); use the id path.
-    // We don't store numeric id — fall back to the conditionId-based lookup.
-    // If that's also unsupported, callers can inject a smarter fetcher.
-    return fetchMarketById(row.condition_id);
-  };
+export function makeDefaultMarketFetcher(_db: Database.Database): MarketFetcher {
+  return async (slug: string) => fetchMarketBySlug(slug);
 }
 
 type OpenTradeRow = {

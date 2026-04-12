@@ -9,24 +9,41 @@ describe('ai-probability helpers', () => {
   });
 
   describe('computeCacheKey', () => {
+    const base = { ask: 0.5, volume: 10000, spreadPct: 2, askDepthUsd: 500 };
+
     it('is stable for inputs that round to the same quantization bucket', () => {
-      // ask: 0.421 → 42, 0.419 → 42 (both round to 42% bucket)
-      // volume: 12300 → 12, 12400 → 12 (both round to $12k bucket)
-      const k1 = computeCacheKey('slug', 'tok', { ask: 0.421, volume: 12300 });
-      const k2 = computeCacheKey('slug', 'tok', { ask: 0.419, volume: 12400 });
+      const k1 = computeCacheKey('slug', 'tok', { ...base, ask: 0.421, volume: 12300 });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, ask: 0.419, volume: 12400 });
       expect(k1).toBe(k2);
     });
 
     it('differs when token_id changes (cache is per-token)', () => {
-      const k1 = computeCacheKey('slug', 'tokA', { ask: 0.5, volume: 10000 });
-      const k2 = computeCacheKey('slug', 'tokB', { ask: 0.5, volume: 10000 });
+      const k1 = computeCacheKey('slug', 'tokA', base);
+      const k2 = computeCacheKey('slug', 'tokB', base);
       expect(k1).not.toBe(k2);
     });
 
     it('differs when ask rounds to a different 1% bucket', () => {
-      // 0.42 → 42, 0.43 → 43 — different buckets.
-      const k1 = computeCacheKey('slug', 'tok', { ask: 0.42, volume: 10000 });
-      const k2 = computeCacheKey('slug', 'tok', { ask: 0.43, volume: 10000 });
+      const k1 = computeCacheKey('slug', 'tok', { ...base, ask: 0.42 });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, ask: 0.43 });
+      expect(k1).not.toBe(k2);
+    });
+
+    it('differs when spread changes materially (no stale cache on wider book)', () => {
+      const k1 = computeCacheKey('slug', 'tok', { ...base, spreadPct: 2 });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, spreadPct: 8 });
+      expect(k1).not.toBe(k2);
+    });
+
+    it('differs when ask depth changes materially', () => {
+      const k1 = computeCacheKey('slug', 'tok', { ...base, askDepthUsd: 500 });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, askDepthUsd: 5000 });
+      expect(k1).not.toBe(k2);
+    });
+
+    it('treats null spread distinctly from 0% spread', () => {
+      const k1 = computeCacheKey('slug', 'tok', { ...base, spreadPct: null });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, spreadPct: 0 });
       expect(k1).not.toBe(k2);
     });
   });

@@ -71,3 +71,20 @@ export async function fetchMarketById(id: string | number): Promise<Market | nul
     return null;
   }
 }
+
+/**
+ * Fetch a single market by slug via the list endpoint's `slug=` filter.
+ * This is the resolution-safe lookup path used by the P&L tracker: it works
+ * without a numeric market id cached locally, and it returns closed markets
+ * too (we explicitly do NOT pass closed=false so resolved markets are visible).
+ */
+export async function fetchMarketBySlug(slug: string): Promise<Market | null> {
+  try {
+    const raw = await getJson(`${BASE}/markets?slug=${encodeURIComponent(slug)}&limit=1`);
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    return normalizeMarket(raw[0]);
+  } catch (err) {
+    logger.warn({ slug, err: String(err) }, 'fetchMarketBySlug failed');
+    return null;
+  }
+}

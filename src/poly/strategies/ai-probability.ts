@@ -58,14 +58,18 @@ export const PROMPT_TEMPLATE_HASH = crypto
 export function computeCacheKey(
   slug: string,
   tokenId: string,
-  params: { ask: number; volume: number }
+  params: { ask: number; volume: number; spreadPct: number | null; askDepthUsd: number }
 ): string {
-  // Quantize ask to nearest 1%, volume to nearest $1k — boosts cache hit rate.
+  // Quantize: ask 1%, volume $1k, spread 1% (null→-1), ask depth $100.
+  // Every quantized input appears in the prompt, so two books that differ
+  // materially on any of these cannot collide on the same cache entry.
   const ask = Math.round(params.ask * 100);
   const vol = Math.round(params.volume / 1000);
+  const spread = params.spreadPct === null ? -1 : Math.round(params.spreadPct);
+  const depth = Math.round(params.askDepthUsd / 100);
   return crypto
     .createHash('sha256')
-    .update(`${PROMPT_TEMPLATE_HASH}|${slug}|${tokenId}|${ask}|${vol}`)
+    .update(`${PROMPT_TEMPLATE_HASH}|${slug}|${tokenId}|${ask}|${vol}|${spread}|${depth}`)
     .digest('hex');
 }
 
@@ -83,6 +87,8 @@ export async function evaluateMarket(args: EvaluateArgs): Promise<ProbabilityEst
   const key = computeCacheKey(args.market.slug, args.outcome.tokenId, {
     ask: args.bestAsk,
     volume: args.market.volume24h,
+    spreadPct: args.spreadPct,
+    askDepthUsd: args.askDepthUsd,
   });
   const cached = args.db
     .prepare(
