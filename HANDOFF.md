@@ -1,11 +1,35 @@
 # Handoff -- ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-11 (Polymarket trading bot research + blueprint)
+- **Date**: 2026-04-11 (trading research deep dive, code review, regime-trader integration went live, Polymarket blueprint)
 - **Model**: Claude Opus 4.6 (1M context)
 - **Previous session**: 2026-04-09 (user profile + autonomous routines + learning loop)
 
-## What Changed (2026-04-11)
+## What Changed (2026-04-11, trading integration session)
+
+### Equity Trading Research + Review + Integration (committed in ab4b6ce)
+- **`docs/trading-research-2025-2026.md`**: Perplexity Deep Research across 245 sources. 20+ validated strategies (Oct 2025-Apr 2026), tier ranking, regime analysis, combinability matrix, implementation priority, 10 red flags.
+- **`docs/mega-prompt-trading-bot.md`**: 3-phase mega prompt for integrating regime-trader with ClaudeClaw via file-based IPC.
+- **Code review findings fixed** (7 items):
+  - P0: busy-wait spin lock replaced with execSync (`src/index.ts`)
+  - P0: Graceful shutdown aborts in-flight queries + drains queue (`src/index.ts`, `src/state.ts`, `src/message-queue.ts`)
+  - P1: Scheduler replaced 60s polling with precision setTimeout (`src/scheduler.ts`)
+  - P1: Idempotency guard via `claimTaskExecution` (`src/scheduler.ts`, `src/db.ts`)
+  - P1: Dashboard rate limiter (60 req/min/IP, in-memory token bucket)
+  - P1: pm2 ecosystem config + headless start scripts
+  - P2: Decryption no longer silently returns ciphertext on format-matching failures
+  - Bonus: `extractKeywords` now preserves hyphens (was breaking "stop-loss", "take-profit" in FTS5)
+- **`src/trading/`** (6 files, ~600 LOC): Hub-and-spoke integration bridge to regime-trader
+  - `types.ts` -- TS types mirroring state.json
+  - `state-poller.ts` -- polls instances/*/data/state.json every 5s
+  - `instance-control.ts` -- subprocess wrapper for instance_manager.py
+  - `alerts.ts` -- rate-limited Telegram alert manager (15min/type/instance)
+  - `telegram-commands.ts` -- 10 /trade subcommands
+  - `index.ts` -- init + event wiring
+- **`/health` endpoint**: DB quick_check + Telegram connection status (no auth)
+- **Live confirmation**: Bot restarted via pm2, logs show "Trading integration initialized" + "Trading commands registered" for spy-aggressive and spy-conservative instances.
+
+### Polymarket Trading Bot Blueprint
 
 ### Polymarket Trading Bot Blueprint
 - **`docs/mega-prompt-polymarket-bot.md`** (new, 836 lines): Complete blueprint for multi-strategy Polymarket prediction market trading bot. 7 sections: Context/Calibration, Strategy Portfolio, Multi-Agent Architecture, Risk Management (hard rules), ClaudeClaw Integration, Implementation Phases, Reference Library
@@ -57,13 +81,14 @@
 - **`skills/quick-capture/SKILL.md`**: Fast Obsidian note capture
 
 ## Current State
-- **Bot**: Online as @CCbot1080bot via pm2, stable (PID 78608)
-- **Dashboard**: localhost:3141 (hardened)
-- **Scheduler**: Active (60s polling). Routines NOT yet seeded -- need to run seed script.
+- **Bot**: Online as @CCbot1080bot via pm2 (restarted this session with trading integration active)
+- **Dashboard**: localhost:3141 (hardened + rate-limited + /health endpoint)
+- **Scheduler**: Active (precision timer, was 60s polling). Routines NOT yet seeded -- need to run seed script.
+- **Trading integration**: LIVE. Polling `C:\Projects\regime-trader\instances\spy-aggressive` and `spy-conservative` state.json every 5s. `/trade` commands registered (status, regime, pnl, halt, resume, start, stop, backtest, alerts).
 - **Memory**: Consolidation working (verified in logs: memory ingested + consolidation complete)
 - **Profile**: 6 sections populated at C:/claudeclaw-store/profile/
-- **Tests**: 223/223 passing (14 test files)
-- **Telegram plugin**: Disabled in settings.json. 3 zombie bun processes killed this session.
+- **Tests**: 223/223 passing (14 test files) after all Phase 1 + 2 changes
+- **Telegram plugin**: Disabled in settings.json. 3 zombie bun processes killed in prior session.
 
 ## Context Injection Stack (per message)
 1. Agent system prompt (CLAUDE.md) -- first turn only
@@ -76,8 +101,10 @@
 8. User message -- always last
 
 ## Next Steps
-1. **Polymarket bot Phase 0**: Clone `Polymarket/agents`, `Polymarket/py-clob-client`, `dylanpersonguy/Fully-Autonomous-Polymarket-AI-Trading-Bot` for study. Set up Polymarket account + dedicated wallet ($100-200 test funds). Install Bullpen CLI for prototyping.
-2. **Seed routines** (still pending from last session): `STORE_DIR=C:/claudeclaw-store npx tsx scripts/seed-routines.ts`
+1. **Smoke test /trade commands**: Send `/trade status`, `/trade regime`, `/trade pnl` in Telegram. Confirm state.json reads are working. Verify alerts fire on next regime change in regime-trader.
+2. **Start a regime-trader instance in paper mode** (if not already running): `cd C:\Projects\regime-trader && python instance_manager.py start spy-aggressive --mode paper`. Then `/trade status` in Telegram should show live equity.
+3. **Polymarket bot Phase 0**: Clone `Polymarket/agents`, `Polymarket/py-clob-client`, `dylanpersonguy/Fully-Autonomous-Polymarket-AI-Trading-Bot` for study. Set up Polymarket account + dedicated wallet ($100-200 test funds). Install Bullpen CLI for prototyping.
+4. **Seed routines** (still pending from last session): `STORE_DIR=C:/claudeclaw-store npx tsx scripts/seed-routines.ts`
 3. Wire profile auto-update from memory-ingest.ts (detect profile-worthy info in conversations)
 4. Write tests for security.ts, message-queue.ts (critical gaps from audit)
 5. Limit getMemoriesWithEmbeddings() to recent 50 (O(n) scan)
@@ -86,6 +113,9 @@
 8. Implement SDK Engine (RFC at docs/rfc-sdk-engine.md)
 
 ## Gotchas & Notes
+- **Trading integration is file-based**: ClaudeClaw does NOT have trading logic. It polls `regime-trader/instances/*/data/state.json` and shells out to `instance_manager.py`. This keeps crash domains isolated -- either process can die without taking down the other.
+- **Codex --full scope fails on OneDrive paths**: `node codex-review.js --full` errors out because of how PowerShell escapes paths with spaces. Works fine on commit/branch modes. For full-codebase reviews, dispatch Explore + code-reviewer agents manually.
+- **Scheduler is no longer 60s polling**: It's a precision setTimeout that sleeps exactly until next due time (capped at 60s max). Tests in `src/scheduler.test.ts` still pass but mental model needs updating.
 - **Telegram plugin auto-re-enables**: Must kill zombie bun processes AND set plugin to false in settings.json. This session had 3 zombie processes at PIDs 175872, 105492, 141624.
 - **Profile lives off-repo**: Profile files at C:/claudeclaw-store/profile/ (same STORE_DIR as DB), NOT in project store/. This keeps them off OneDrive.
 - **Routines rebuild prompts dynamically**: Even though seed script writes a prompt to DB, the scheduler rebuilds it at execution time for system routines (isSystemRoutine check). This ensures fresh profile data.
