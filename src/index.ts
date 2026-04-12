@@ -7,7 +7,7 @@ import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
 import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, REGIME_TRADER_PATH, REGIME_TRADER_INSTANCES } from './config.js';
 import { startDashboard } from './dashboard.js';
-import { initDatabase, cleanupOldMissionTasks, insertAuditLog } from './db.js';
+import { initDatabase, cleanupOldMissionTasks, insertAuditLog, getDb } from './db.js';
 import { initSecurity, setAuditCallback } from './security.js';
 import { logger } from './logger.js';
 import { cleanupOldUploads } from './media.js';
@@ -199,6 +199,13 @@ async function main(): Promise<void> {
         REGIME_TRADER_INSTANCES,
       );
       registerTradingCommands(bot, poller, controller, alertManager, REGIME_TRADER_INSTANCES);
+    }
+
+    // Polymarket integration: scan markets, register /poly commands, run daily digest.
+    // Dynamic import matches the trading pattern — non-main agents never load the module.
+    if (AGENT_ID === 'main') {
+      const { initPoly } = await import('./poly/index.js');
+      initPoly({ bot, sender: telegramSender, db: getDb() });
     }
   } else {
     logger.warn('ALLOWED_CHAT_ID not set — scheduler disabled (no destination for results)');

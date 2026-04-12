@@ -1993,3 +1993,9 @@ export function getRecentBlockedActions(limit = 10): AuditLogEntry[] {
     `SELECT * FROM audit_log WHERE blocked = 1 ORDER BY created_at DESC LIMIT ?`,
   ).all(limit) as AuditLogEntry[];
 }
+
+// Raw DB handle — used by modules that need prepared statements outside the
+// helper API (e.g. the poly module's scanner, digest, and kv store).
+export function getDb(): Database.Database {
+  return db;
+}
