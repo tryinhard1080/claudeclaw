@@ -4,7 +4,7 @@
 
 **Goal:** Ship Phase A (read-only Polymarket intel via Telegram) and Phase C (autonomous paper trading with Claude Opus 4.6 probability estimation and Kelly sizing) inside the existing ClaudeClaw bot.
 
-**Architecture:** New in-process module `src/poly/` mirroring the boundaries of `src/trading/`. HTTP-only integration with Polymarket Gamma + CLOB APIs (no wallet, no CLI). Four recurring loops driven by `setInterval` (not the Claude-task scheduler): scanner (15m), evaluator (chained to scanner), P&L tracker (1h), digest (5m tick with daily guard). SQLite persistence via a new migration file. Single-writer discipline on `poly_paper_trades` transitions.
+**Architecture:** New in-process module `src/poly/` mirroring the boundaries of `src/trading/`. HTTP-only integration with Polymarket Gamma + CLOB APIs (no wallet, no CLI). Recurring loops driven by `setInterval` (the existing `src/scheduler.ts` is for Claude-prompt scheduled tasks and is not appropriate for internal module ticks — `src/trading/state-poller.ts` uses the same raw-`setInterval` pattern we adopt here): scanner (15m), evaluator (chained to scanner via events), P&L tracker (1h), digest (5m tick with daily guard), scan-stale watchdog (5m tick). SQLite persistence via a new migration file. Single-writer discipline on `poly_paper_trades` transitions.
 
 **Tech Stack:** TypeScript, grammy (Telegram), better-sqlite3, pino, Zod (NEW), `@anthropic-ai/sdk` (NEW — direct client for strategy calls, distinct from the existing `@anthropic-ai/claude-agent-sdk` used for chat), luxon (NEW — timezone-aware boundaries), vitest.
 
@@ -275,38 +275,68 @@ Edit `migrations/version.json`:
 }
 ```
 
-- [ ] **Step 3: Write an idempotency test**
+- [ ] **Step 3: Refactor migration to take a db path argument (so it's unit-testable)**
+
+Export two functions from `migrations/v1.2.0-poly.ts`:
+```typescript
+export async function run(): Promise<void> { return runAt(path.join(STORE_DIR, 'claudeclaw.db')); }
+export async function runAt(dbPath: string): Promise<void> { /* body previously in run() */ }
+```
+
+- [ ] **Step 4: Write an idempotency + schema test**
 
 ```typescript
 // src/poly/migration.test.ts
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
-import { run } from '../../migrations/v1.2.0-poly.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { runAt } from '../../migrations/v1.2.0-poly.js';
 
 describe('poly migration', () => {
-  it('creates all 6 tables and is idempotent', async () => {
-    await run();
-    await run(); // second run must not throw
-    // verify by opening the db and checking sqlite_master
-    // (use STORE_DIR-aware path or mock config)
-    expect(true).toBe(true); // placeholder — fill in with real table-existence assertions
+  it('creates 6 tables, 3 expected indexes, and is idempotent', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'polymigr-'));
+    const dbPath = path.join(dir, 'test.db');
+    await runAt(dbPath);
+    await runAt(dbPath); // second run must not throw
+
+    const db = new Database(dbPath);
+    const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'poly_%' ORDER BY name`).all().map((r: any) => r.name);
+    expect(tables).toEqual([
+      'poly_eval_cache', 'poly_markets', 'poly_paper_trades',
+      'poly_positions', 'poly_price_history', 'poly_signals',
+    ]);
+
+    const idx = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_poly_%' ORDER BY name`).all().map((r: any) => r.name);
+    expect(idx).toContain('idx_poly_markets_volume');
+    expect(idx).toContain('idx_poly_signals_created');
+    expect(idx).toContain('idx_poly_paper_trades_status');
+
+    // Spot-check poly_paper_trades schema has voided_reason column
+    const cols = db.prepare(`PRAGMA table_info(poly_paper_trades)`).all().map((r: any) => r.name);
+    expect(cols).toContain('voided_reason');
+    expect(cols).toContain('status');
+
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 ```
 
-Note: depending on how `config.ts` resolves STORE_DIR in tests, you may need to run this test against a temp-dir-scoped DB. Prefer a thin wrapper that accepts a db path argument over mocking.
+Note: this plan uses the existing `migrations/` infrastructure (`scripts/migrate.ts`, `migrations/version.json`, `.applied.json`) — this is the first migration to land there. Fresh installs bootstrap tables via `src/db.ts::createSchema`; since poly tables are additive and the existing bot ships without them today, fresh installs must run `npm run migrate` once (same contract as any existing migration).
 
-- [ ] **Step 4: Run the migration**
+- [ ] **Step 5: Run the migration**
 
 Run: `npm run migrate`
 Expected: no errors, `migrations/.applied.json` now shows `"lastApplied": "v1.2.0"`.
 
-- [ ] **Step 5: Verify tables exist**
+- [ ] **Step 6: Verify tables exist**
 
 Run: `sqlite3 store/claudeclaw.db ".tables" | grep poly_`
 Expected: six `poly_*` tables listed.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add migrations/ src/poly/migration.test.ts
@@ -409,7 +439,7 @@ The probe from Task 0 is authoritative for field names. Adjust the Zod schemas b
 ```typescript
 // src/poly/types.test.ts
 import { describe, it, expect } from 'vitest';
-import { GammaMarketSchema, ClobBookSchema, SignalSchema } from './types.js';
+import { GammaMarketSchema, ClobBookSchema } from './types.js';
 
 describe('GammaMarketSchema', () => {
   it('parses a minimal valid market', () => {
@@ -543,8 +573,6 @@ export interface Signal {
   reasoning: string;
   contrarian?: string;
 }
-
-export const SignalSchema = z.custom<Signal>();
 
 export interface PaperTrade {
   id: number;
@@ -922,6 +950,15 @@ export function pruneOldPrices(db: Database.Database): void {
   db.prepare(`DELETE FROM poly_price_history WHERE captured_at < ?`).run(cutoff);
 }
 
+// (getPriceApproxHoursAgo moved to price-history.ts — see below)
+```
+
+Split the price-history helpers into their own file so `telegram-commands.ts` doesn't have to import from `market-scanner.ts`:
+
+```typescript
+// src/poly/price-history.ts
+import type Database from 'better-sqlite3';
+
 export function getPriceApproxHoursAgo(db: Database.Database, tokenId: string, hoursAgo: number, toleranceHours = 1): number | null {
   const target = Math.floor(Date.now() / 1000) - hoursAgo * 3600;
   const tolSec = toleranceHours * 3600;
@@ -1005,7 +1042,7 @@ import type { Bot, Context } from 'grammy';
 import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
 import { fetchBook } from './clob-client.js';
-import { getPriceApproxHoursAgo } from './market-scanner.js';
+import { getPriceApproxHoursAgo } from './price-history.js';
 import { truncateForTelegram, fmtUsd, fmtPrice, truncateQuestion } from './format.js';
 
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
@@ -1351,15 +1388,39 @@ import { logger } from '../../logger.js';
 const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 const PROMPT_VERSION = 'v1';
 
+const SYSTEM_PROMPT = `You are a prediction-market probability estimator. Given a market question and context, return a JSON object:
+{"probability": 0.0-1.0, "confidence": "low"|"medium"|"high", "reasoning": "1-3 sentences", "contrarian": "1-2 sentences"}
+Output ONLY the JSON object. No prose, no markdown fences, no commentary.`;
+
+const USER_PROMPT_SKELETON = `{question, category, end_date, ask, spread, depth, volume}`;
+
+function extractJson(text: string): string {
+  // Strip code fences if Claude adds them despite instructions.
+  const fenced = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  if (fenced) return fenced[1]!;
+  // Fallback: first {...} block.
+  const bare = text.match(/\{[\s\S]*\}/);
+  if (bare) return bare[0];
+  return text;
+}
+
 export function computeEdgePct(estimated: number, marketAsk: number): number {
   return (estimated - marketAsk) * 100;
 }
+
+// PROMPT_TEMPLATE_HASH captures both the template version AND the literal template text —
+// any edit to the prompt invalidates the cache automatically.
+export const PROMPT_TEMPLATE_HASH = crypto
+  .createHash('sha256')
+  .update(`${PROMPT_VERSION}|${SYSTEM_PROMPT}|${USER_PROMPT_SKELETON}`)
+  .digest('hex')
+  .slice(0, 16);
 
 export function computeCacheKey(slug: string, tokenId: string, params: { ask: number; volume: number }): string {
   // quantize ask to nearest 1%, volume to nearest $1k, to hit cache more often
   const ask = Math.round(params.ask * 100);
   const vol = Math.round(params.volume / 1000);
-  return crypto.createHash('sha256').update(`${PROMPT_VERSION}|${slug}|${tokenId}|${ask}|${vol}`).digest('hex');
+  return crypto.createHash('sha256').update(`${PROMPT_TEMPLATE_HASH}|${slug}|${tokenId}|${ask}|${vol}`).digest('hex');
 }
 
 interface EvaluateArgs { market: Market; outcome: Market['outcomes'][number]; bestAsk: number; bestBid: number | null; spreadPct: number | null; askDepthUsd: number; db: Database.Database; }
@@ -1372,9 +1433,7 @@ export async function evaluateMarket(args: EvaluateArgs): Promise<ProbabilityEst
     return { probability: cached.probability, confidence: cached.confidence as ProbabilityEstimate['confidence'], reasoning: cached.reasoning, contrarian: cached.contrarian ?? undefined };
   }
 
-  const system = `You are a prediction-market probability estimator. Given a market question and context, return a JSON object:
-{"probability": 0.0-1.0, "confidence": "low"|"medium"|"high", "reasoning": "1-3 sentences", "contrarian": "1-2 sentences"}
-Output JSON only, no prose.`;
+  const SYSTEM_PROMPT_RT = SYSTEM_PROMPT; // use constant below so hash matches
   const user = [
     `Question: ${args.market.question}`,
     `Category: ${args.market.category ?? 'unknown'}`,
@@ -1389,12 +1448,15 @@ Output JSON only, no prose.`;
     const resp = await client.messages.create({
       model: POLY_MODEL,
       max_tokens: 400,
-      system,
+      system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: user }],
     });
     const block = resp.content.find(b => b.type === 'text');
     if (!block || block.type !== 'text') return null;
-    const parsed = ProbabilityEstimateSchema.safeParse(JSON.parse(block.text));
+    const json = extractJson(block.text);
+    let obj: unknown;
+    try { obj = JSON.parse(json); } catch { logger.warn({ raw: block.text.slice(0, 200) }, 'probability estimate JSON parse failed'); return null; }
+    const parsed = ProbabilityEstimateSchema.safeParse(obj);
     if (!parsed.success) { logger.warn({ errors: parsed.error.issues }, 'probability estimate failed zod'); return null; }
     args.db.prepare(`INSERT OR REPLACE INTO poly_eval_cache (cache_key, slug, outcome_token_id, created_at, probability, confidence, reasoning, contrarian) VALUES (?,?,?,?,?,?,?,?)`)
       .run(key, args.market.slug, args.outcome.tokenId, now, parsed.data.probability, parsed.data.confidence, parsed.data.reasoning, parsed.data.contrarian ?? null);
@@ -1427,20 +1489,39 @@ git commit -m "feat(poly): ai-probability strategy with persistent eval cache"
 
 Pure functions. Each gate returns `{ passed, reason? }`. Unit-testable without DB.
 
-- [ ] **Step 1: Write exhaustive gate tests**
+- [ ] **Step 1: Write exhaustive gate tests — one `it()` per rule**
 
 ```typescript
 import { describe, it, expect } from 'vitest';
-import { gate1PositionLimits, gate2PortfolioHealth, gate3SignalQuality } from './risk-gates.js';
+import { gate1PositionLimits, gate2PortfolioHealth, gate3SignalQuality, runAllGates } from './risk-gates.js';
 
 describe('gate1PositionLimits', () => {
-  // test each rule: max positions, max deployed %, dup position, max per-trade
+  it('passes when all limits satisfied', () => { /* baseline happy-path */ });
+  it('rejects when open_position_count >= max', () => { /* set count=10, max=10 */ });
+  it('rejects when deployed + size > max_deployed_pct * capital', () => {});
+  it('rejects when an open position already exists on same (slug, tokenId)', () => {});
+  it('rejects when size_usd > POLY_MAX_TRADE_USD', () => {});
 });
+
 describe('gate2PortfolioHealth', () => {
-  // daily loss breach, halt drawdown, free capital
+  it('rejects (pause) when daily_realized_pnl <= -daily_loss_pct * capital', () => {});
+  it('rejects (halt) when total_drawdown_pct >= halt_dd_pct', () => {});
+  it('rejects when free_capital < size_usd', () => {});
+  it('passes within healthy bounds', () => {});
 });
+
 describe('gate3SignalQuality', () => {
-  // min edge, min TTR, depth, 3% drift
+  it('rejects when edge_pct < POLY_MIN_EDGE_PCT', () => {});
+  it('rejects when end_date - now < MIN_TTR_HOURS', () => {});
+  it('rejects when ask depth (shares × price) < size_usd', () => {});
+  it('rejects when best-ask side empty', () => {});
+  it('rejects when |current_ask - signal_ask| / signal_ask > 0.03', () => {});
+  it('accepts when 3% drift boundary exactly', () => {});
+});
+
+describe('runAllGates', () => {
+  it('collects all rejection reasons when multiple gates fail', () => {});
+  it('returns passed=true only when all three gates pass', () => {});
 });
 ```
 
@@ -1465,9 +1546,19 @@ git commit -m "feat(poly): three deterministic risk gates"
 - Create: `src/poly/paper-broker.ts`
 - Test: `src/poly/paper-broker.test.ts`
 
-- [ ] **Step 1: Test execute path (signal → trade + position + signal update, all in txn)**
+- [ ] **Step 1: Test execute path — one `it()` per scenario**
 
-Use `:memory:` DB with the poly schema. Assert that on success three rows exist (trade, position, signal.paper_trade_id set). Assert rollback on stale-orderbook abort (no trade row).
+Use `:memory:` DB with the poly schema (copy DDL from the migration). Scenarios:
+
+```typescript
+describe('paper broker execute', () => {
+  it('happy-path: inserts poly_paper_trades, poly_positions, updates poly_signals.paper_trade_id', () => {});
+  it('aborts and writes no trade row when current best ask drifted >3% from signal price', () => {});
+  it('aborts when orderbook returned empty asks', () => {});
+  it('rolls back all three writes if any single insert throws (simulate with a UNIQUE violation on poly_positions)', () => {});
+  it('marks the original poly_signals row with rejection reason "orderbook_changed_at_exec" on abort', () => {});
+});
+```
 
 - [ ] **Step 2: Implement** `execute(signal, currentBestAsk, askDepthShares) → { status: 'filled' | 'aborted'; tradeId?: number; reason?: string }`
 
@@ -1490,17 +1581,34 @@ git commit -m "feat(poly): paper broker with transactional execution"
 - Create: `src/poly/pnl-tracker.ts`
 - Test: `src/poly/pnl-tracker.test.ts`
 
-- [ ] **Step 1: Test resolution math**
+- [ ] **Step 1: Test resolution + daily-pnl-by-timezone**
 
-- won: `realized_pnl = shares * (1 - entry_price)`
-- lost: `realized_pnl = -shares * entry_price`
-- voided: `realized_pnl = 0`
+```typescript
+describe('pnl-tracker', () => {
+  it('won: realized_pnl = shares * (1 - entry_price) and status=won', () => {});
+  it('lost: realized_pnl = -shares * entry_price and status=lost', () => {});
+  it('voided (market delisted / resolution=null): realized_pnl=0 and status=voided with voided_reason set', () => {});
+  it('updates poly_positions.unrealized_pnl on each tick for open trades', () => {});
+  it('removes poly_positions row on resolution', () => {});
+  it('emits position_resolved event exactly once per trade', () => {});
+  it('computes dailyRealizedPnl using POLY_TIMEZONE day boundary (not UTC)', () => {
+    // e.g. a trade resolved at 2026-04-12T03:00Z (23:00 America/New_York Apr 11)
+    // counts toward Apr 11's P&L, not Apr 12's.
+  });
+});
+```
 
 - [ ] **Step 2: Implement** hourly loop that:
-  1. Iterates open trades
-  2. Fetches midpoint for `current_price`, updates `poly_positions.unrealized_pnl`
-  3. Checks Gamma `closed` + `resolution`; on closed, determines win/lose/void, updates `poly_paper_trades.status`, removes row from `poly_positions`
-  4. Emits `position_resolved` event
+  1. Iterates `poly_paper_trades WHERE status='open'`
+  2. For each: fetch midpoint (via `clob-client.fetchMidpoint`), update `poly_positions.current_price` + `unrealized_pnl`
+  3. Fetch `poly_markets` row; if `closed=1`, fetch Gamma detail to read `resolution`:
+     - Resolution string matches winning outcome label → `status='won'`, `realized_pnl = shares * (1 - entry_price)`
+     - Resolution exists but does not match → `status='lost'`, `realized_pnl = -shares * entry_price`
+     - Resolution null/"invalid"/"unresolved" after `closed=1` → `status='voided'`, `realized_pnl=0`, `voided_reason` set
+  4. Delete from `poly_positions`
+  5. Emit `position_resolved`
+
+Also expose `getDailyRealizedPnl(db, now): number` — sums `realized_pnl` where `resolved_at >= startOfDay(now, POLY_TIMEZONE)`. Gate 2 in the strategy engine calls this to build `PortfolioState.dailyRealizedPnl`.
 
 - [ ] **Step 3: Commit**
 
@@ -1519,15 +1627,21 @@ git commit -m "feat(poly): hourly pnl tracker with resolution"
 
 Orchestrates: on `scan_complete`, iterate fresh markets → for each candidate (passes pre-filter) → check halt flag → fetch orderbook → run strategy → run risk gates → on approved, call broker. Writes signal row either way (approved or with rejection_reasons).
 
-- [ ] **Step 1: Test halt-flag blocks execution**
+- [ ] **Step 1: Test halt-flag blocks execution** (kv `poly.halt=1` → engine bails before evaluating any market)
 
-- [ ] **Step 2: Test rejection writes row with reasons and no trade**
+- [ ] **Step 2: Test rejection writes row with reasons and no trade** (Gate 3 min-edge fail → `poly_signals.approved=0`, `rejection_reasons` JSON non-empty, no `poly_paper_trades` row)
 
-- [ ] **Step 3: Test approval writes row with paper_trade_id**
+- [ ] **Step 3: Test approval writes row with paper_trade_id** (happy-path → signal row has `paper_trade_id` populated)
 
-- [ ] **Step 4: Implement with clear logging at each step**
+- [ ] **Step 4: Test 2h per-market-outcome throttle**
 
-- [ ] **Step 5: Commit**
+Seed `poly_eval_cache` with a row created 30min ago for `(slug, tokenId)`. Run evaluator. Assert Anthropic SDK was NOT called (spy/mock the client) — the cached estimate is reused. Then seed another row 3h old and assert the SDK IS called (cache expired).
+
+- [ ] **Step 5: Test pre-filter skips markets under $10k volume and <24h TTR**
+
+- [ ] **Step 6: Implement with clear logging at each step**
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/poly/strategy-engine.ts src/poly/strategy-engine.test.ts
@@ -1542,13 +1656,17 @@ git commit -m "feat(poly): strategy engine orchestrator"
 - Create: `src/poly/alerts.ts`
 - Test: `src/poly/alerts.test.ts`
 
-Mirrors `src/trading/alerts.ts`: constructor takes `sender`, has `.toggle(bool)`, `.isEnabled()`. Methods: `signalApproved(signal, trade)`, `riskBreach(gate, reason)`, `positionResolved(trade)`, `scanStale(minutesStale)`.
+Mirrors `src/trading/alerts.ts`: constructor takes `sender`, has `.toggle(bool)`, `.isEnabled()` (backed by kv `poly.alerts_enabled`). Methods: `signalApproved(signal, trade)`, `riskBreach(gate, reason)`, `positionResolved(trade)`, `scanStale(minutesStale)`.
 
-- [ ] **Step 1: Test format strings** (exact text) and on/off toggle.
+**scan_stale wiring**: the watchdog lives in `src/poly/index.ts` as a third `setInterval` (fires every 5m). It reads `MAX(last_scan_at)` from `poly_markets`; if `now - last > 60min`, call `alertManager.scanStale()` once (guarded by kv `poly.scan_stale_flag=1`). When a successful scan completes and the flag is set, clear it.
 
-- [ ] **Step 2: Implement; persist `poly.alerts_enabled` in kv**
+- [ ] **Step 1: Test format strings** (exact text) and on/off toggle — toggle persists across restart (write kv, reinstantiate, assert).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Test scan_stale fires exactly once** (call `scanStale()` twice with flag set → sender called only first time).
+
+- [ ] **Step 3: Implement**
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/poly/alerts.ts src/poly/alerts.test.ts
@@ -1571,10 +1689,10 @@ Add these sub-commands:
 | `/poly pnl` | sum realized + unrealized, win rate (last 30d), count vs 200-trade threshold |
 | `/poly halt` | set `poly.halt=1` in kv |
 | `/poly resume` | set `poly.halt=0` |
-| `/poly mode [paper\|live]` | shows current; refuses `live` with: `"Live mode unlocks after 200+ paper trades; separate design required."` |
+| `/poly mode [paper\|live]` | shows current. Flipping to `live` requires BOTH: (a) SHA-256 of the optional third arg matches `SECURITY_PIN_HASH`, AND (b) the exact literal confirmation string `"CONFIRM LIVE"` as the fourth arg. Even with both correct, Phase C refuses with: `"Live mode unlocks after 200+ paper trades; separate design required."` — wiring is defensive so the handler is never a surprise footgun in Phase D. |
 | `/poly alerts on\|off` | toggle via alertManager |
 
-- [ ] Each sub-command gets a renderer function + test if logic exists (rendering vs kv toggles).
+- [ ] Each sub-command gets a renderer function + a unit test that exercises the kv side-effect (for `halt`/`resume`/`alerts`) or a fixture-driven render (for `signals`/`positions`/`pnl`). `/poly halt` and `/poly resume` tests assert `kv.poly.halt` flips between '0' and '1'. `/poly mode live <badpin> CONFIRM LIVE` test asserts rejection due to PIN mismatch.
 
 - [ ] Commit:
 
@@ -1592,9 +1710,11 @@ git commit -am "feat(poly): phase C /poly commands"
 - [ ] Add to `initPoly`:
   - Construct `alertManager`, `pnlTracker`, `strategyEngine`
   - Subscribe `strategyEngine` to `scanner.on('scan_complete', ...)`
-  - Subscribe `alertManager.signalApproved` to `strategyEngine.on('signal_approved', ...)`, etc.
+  - Subscribe `alertManager.signalApproved` to `strategyEngine.on('signal_approved', ...)`, and `alertManager.riskBreach` to `strategyEngine.on('risk_breach', ...)`
   - Subscribe `alertManager.positionResolved` to `pnlTracker.on('position_resolved', ...)`
   - Start `pnlTracker` (`setInterval` every hour)
+  - Start scan-stale watchdog (`setInterval` every 5m): read `MAX(last_scan_at)`; if >60min old and `kv.poly.scan_stale_flag != '1'`, call `alertManager.scanStale()` and set the flag. On `scanner.on('scan_complete')`, clear the flag.
+  - Build `PortfolioState` at each strategy-engine tick via `pnl-tracker.getDailyRealizedPnl(db, now)` so Gate 2 sees a correctly-timezoned daily figure
   - Pass `alertManager` into `registerPolyCommands` so `/poly alerts` can toggle it
 
 - [ ] Stop hook: ensure all timers clear on the existing SIGTERM shutdown path.
@@ -1616,7 +1736,10 @@ git commit -am "feat(poly): wire phase C — strategy engine, pnl tracker, alert
 
 Runbook. Execute after Task 18 and let it run for 48h before declaring Phase C done.
 
+- [ ] Re-run `npm run migrate` on a fresh DB path; assert it's idempotent (exit code 0, no "table exists" error)
 - [ ] Restart the bot and confirm `poly.halt` state survives (set to 1, restart, check it's still 1)
+- [ ] Restart the bot with 5+ open paper trades; assert all 5 still appear in `/poly positions` afterward (spec §5 Phase C item 2)
+- [ ] Grep for writers of `poly_paper_trades.status` — only `paper-broker.ts` (status='open') and `pnl-tracker.ts` (status IN won|lost|voided) should show up (single-writer discipline, spec §4.5)
 - [ ] `/poly markets` → 10 rows
 - [ ] `/poly market <slug>` with a known good slug → full detail with orderbook
 - [ ] `/poly market does-not-exist` → clean "no market" message
