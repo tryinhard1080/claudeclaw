@@ -58,18 +58,25 @@ export const PROMPT_TEMPLATE_HASH = crypto
 export function computeCacheKey(
   slug: string,
   tokenId: string,
-  params: { ask: number; volume: number; spreadPct: number | null; askDepthUsd: number }
+  params: {
+    ask: number; volume: number; spreadPct: number | null; askDepthUsd: number;
+    question: string; category: string | null; endDateSec: number;
+  }
 ): string {
-  // Quantize: ask 1%, volume $1k, spread 1% (null→-1), ask depth $100.
-  // Every quantized input appears in the prompt, so two books that differ
-  // materially on any of these cannot collide on the same cache entry.
+  // Quantize: ask 1%, volume $1k, spread 1% (null→-1), ask depth $100,
+  // endDate to day. Question and category are hashed verbatim — a reworded
+  // question or recategorized market must not reuse an old probability.
   const ask = Math.round(params.ask * 100);
   const vol = Math.round(params.volume / 1000);
   const spread = params.spreadPct === null ? -1 : Math.round(params.spreadPct);
   const depth = Math.round(params.askDepthUsd / 100);
+  const endDay = Math.floor(params.endDateSec / 86400);
+  const cat = params.category ?? '';
   return crypto
     .createHash('sha256')
-    .update(`${PROMPT_TEMPLATE_HASH}|${slug}|${tokenId}|${ask}|${vol}|${spread}|${depth}`)
+    .update(
+      `${PROMPT_TEMPLATE_HASH}|${slug}|${tokenId}|${ask}|${vol}|${spread}|${depth}|${endDay}|${cat}|${params.question}`,
+    )
     .digest('hex');
 }
 
@@ -89,6 +96,9 @@ export async function evaluateMarket(args: EvaluateArgs): Promise<ProbabilityEst
     volume: args.market.volume24h,
     spreadPct: args.spreadPct,
     askDepthUsd: args.askDepthUsd,
+    question: args.market.question,
+    category: args.market.category ?? null,
+    endDateSec: args.market.endDate,
   });
   const cached = args.db
     .prepare(

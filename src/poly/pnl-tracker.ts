@@ -125,10 +125,13 @@ export class PnlTracker extends EventEmitter {
       }
 
       // Resolution transition: open -> won/lost/voided.
+      // The UPDATE is guarded `WHERE status='open'` so a concurrent caller
+      // that already flipped the row sees changes=0; we only count + emit
+      // when THIS call actually wrote, preventing duplicate alerts.
       const realized = realizedFor(classification.status, t.shares, t.entry_price);
       const resolvedAt = Math.floor(nowMs / 1000);
-      const tx = this.db.transaction(() => {
-        this.db.prepare(
+      const tx = this.db.transaction((): number => {
+        const update = this.db.prepare(
           `UPDATE poly_paper_trades
              SET status = ?, realized_pnl = ?, resolved_at = ?, voided_reason = ?
            WHERE id = ? AND status = 'open'`,
@@ -139,19 +142,23 @@ export class PnlTracker extends EventEmitter {
           classification.voidedReason ?? null,
           t.id,
         );
+        if (update.changes !== 1) return 0;
         this.db.prepare(`DELETE FROM poly_positions WHERE paper_trade_id = ?`).run(t.id);
+        return 1;
       });
       try {
-        tx();
-        resolved++;
-        this.emit('position_resolved', {
-          tradeId: t.id,
-          slug: t.market_slug,
-          outcomeLabel: t.outcome_label,
-          status: classification.status,
-          realizedPnl: realized,
-          voidedReason: classification.voidedReason,
-        } satisfies PositionResolvedEvent);
+        const changed = tx();
+        if (changed === 1) {
+          resolved++;
+          this.emit('position_resolved', {
+            tradeId: t.id,
+            slug: t.market_slug,
+            outcomeLabel: t.outcome_label,
+            status: classification.status,
+            realizedPnl: realized,
+            voidedReason: classification.voidedReason,
+          } satisfies PositionResolvedEvent);
+        }
       } catch (err) {
         logger.error({ err: String(err), tradeId: t.id }, 'pnl resolution txn failed');
       }

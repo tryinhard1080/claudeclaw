@@ -9,7 +9,11 @@ describe('ai-probability helpers', () => {
   });
 
   describe('computeCacheKey', () => {
-    const base = { ask: 0.5, volume: 10000, spreadPct: 2, askDepthUsd: 500 };
+    const base = {
+      ask: 0.5, volume: 10000, spreadPct: 2, askDepthUsd: 500,
+      question: 'Will X happen by Y?', category: 'politics',
+      endDateSec: 1_700_000_000,
+    };
 
     it('is stable for inputs that round to the same quantization bucket', () => {
       const k1 = computeCacheKey('slug', 'tok', { ...base, ask: 0.421, volume: 12300 });
@@ -44,6 +48,24 @@ describe('ai-probability helpers', () => {
     it('treats null spread distinctly from 0% spread', () => {
       const k1 = computeCacheKey('slug', 'tok', { ...base, spreadPct: null });
       const k2 = computeCacheKey('slug', 'tok', { ...base, spreadPct: 0 });
+      expect(k1).not.toBe(k2);
+    });
+
+    it('differs when the market question is reworded (reused slug, new prompt)', () => {
+      const k1 = computeCacheKey('slug', 'tok', { ...base, question: 'Will X happen?' });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, question: 'Will X happen by 2027?' });
+      expect(k1).not.toBe(k2);
+    });
+
+    it('differs when the market category changes', () => {
+      const k1 = computeCacheKey('slug', 'tok', { ...base, category: 'politics' });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, category: 'sports' });
+      expect(k1).not.toBe(k2);
+    });
+
+    it('differs when endDate moves to a new day bucket', () => {
+      const k1 = computeCacheKey('slug', 'tok', { ...base, endDateSec: 1_700_000_000 });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, endDateSec: 1_700_000_000 + 2 * 86400 });
       expect(k1).not.toBe(k2);
     });
   });

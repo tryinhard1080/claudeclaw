@@ -10,7 +10,9 @@ import { POLY_PAPER_CAPITAL } from '../config.js';
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
   bot.command('poly', async (ctx) => {
     const text = ctx.message?.text ?? '';
-    const parts = text.replace(/^\/poly\s*/, '').trim().split(/\s+/);
+    // Strip `/poly` with an optional `@BotName` suffix — Telegram appends
+    // the mention in group chats (e.g. `/poly@CCbot1080bot markets`).
+    const parts = text.replace(/^\/poly(?:@\w+)?\s*/, '').trim().split(/\s+/);
     const sub = parts[0]?.toLowerCase() || 'help';
     const arg = parts[1] || '';
     try {

@@ -66,8 +66,15 @@ export function initPoly(opts: {
   registerPolyCommands(opts.bot, opts.db);
 
   // Digest tick — every 5 minutes, fires at most once per target-tz day.
+  // `digestInFlight` + explicit .catch() guard against two failure modes:
+  //   (1) A slow/hung sender would otherwise let subsequent 5-min ticks see
+  //       the same unwritten last_digest_ymd and fire the digest again.
+  //   (2) A sender rejection would bypass the outer try/catch (it's inside
+  //       a promise chain), causing unhandled rejections to accumulate.
+  let digestInFlight = false;
   const digestTimer = setInterval(() => {
     try {
+      if (digestInFlight) return;
       const lastYmd = polyKvGet(opts.db, 'poly.last_digest_ymd');
       if (
         shouldRunDigest({
@@ -78,9 +85,12 @@ export function initPoly(opts: {
         })
       ) {
         const { text, ymd } = composeDigest(opts.db);
-        void opts
+        digestInFlight = true;
+        opts
           .sender(text)
-          .then(() => polyKvSet(opts.db, 'poly.last_digest_ymd', ymd));
+          .then(() => polyKvSet(opts.db, 'poly.last_digest_ymd', ymd))
+          .catch(err => logger.error({ err: String(err) }, 'digest send failed'))
+          .finally(() => { digestInFlight = false; });
       }
     } catch (err) {
       logger.error({ err: String(err) }, 'digest tick failed');
