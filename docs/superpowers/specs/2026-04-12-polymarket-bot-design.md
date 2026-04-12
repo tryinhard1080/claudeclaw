@@ -62,11 +62,11 @@ src/poly/
 | Existing module | How `src/poly/` uses it |
 |-----------------|------------------------|
 | `src/config.ts` | Add `POLY_*` env vars (see §6). Follow existing `readEnvFile` pattern. |
-| `src/scheduler.ts` | Register four cron jobs: market scan (every 15m), digest (6am daily), P&L reconciliation (every 1h), signal evaluation (every 15m, same tick as scan but after it completes). |
+| `src/scheduler.ts` | Register four recurring jobs (the existing scheduler uses setInterval-based ticks per `src/scheduler.ts`; follow the same pattern — no new cron lib). Jobs: market scan (15m), digest (checked every 5m, fires once per day at the configured hour with a `last_digest_yyyymmdd` guard in `kv`), P&L reconciliation (1h), signal evaluation (15m, chained after scan completes — scan emits `scan_complete`, evaluator subscribes). Registrations are idempotent on reboot. Any job in flight at shutdown is allowed to finish (hooked into existing SIGTERM graceful-shutdown path). |
 | `src/db.ts` | Add four tables via migration. Reuse existing encryption machinery. |
 | `src/index.ts` | One call to `initPoly(bot, sender, db, scheduler)` after trading init. |
 | `src/dashboard.ts` | New `/api/poly/*` endpoints for positions, signals, P&L (follow-up, not blocking Phase A/C ship). |
-| Claude Opus 4.6 via Agent SDK | Reuse the same Anthropic client path the bot already uses for chat. One focused system prompt for probability estimation, no tool use, JSON output. |
+| Anthropic SDK | Construct a fresh `@anthropic-ai/sdk` client inside `strategies/ai-probability.ts`, reading `ANTHROPIC_API_KEY` from env. Do **not** go through the Agent SDK / agent runner — probability estimation is a stateless single-completion call with no tool use, JSON-only output, parsed with Zod. This is a deliberate departure from the chat path because we need deterministic, fast, cacheable calls. |
 | `SECURITY_PIN_HASH` | Guards `/poly mode live` — unreachable in this spec but wired defensively. |
 
 ### 2.3 Data flow
@@ -98,7 +98,7 @@ src/poly/
 
 ### 2.4 Persistence schema
 
-Four new SQLite tables. All writes go through a single migration in `src/db.ts` following existing migration patterns.
+Five new SQLite tables plus one kv flag. The migration runs inside a single `BEGIN IMMEDIATE` / `COMMIT` transaction via better-sqlite3 so partial failure rolls back cleanly. Migration is idempotent (uses `CREATE TABLE IF NOT EXISTS`) so reboot is safe.
 
 ```sql
 -- Cached market metadata; refreshed on each scan.
@@ -152,12 +152,19 @@ CREATE TABLE poly_paper_trades (
   strategy          TEXT NOT NULL,       -- 'ai-probability' for Phase C
   status            TEXT NOT NULL,       -- open|won|lost|voided
   resolved_at       INTEGER,
-  realized_pnl      REAL                 -- null while open
+  realized_pnl      REAL,                -- null while open
+  voided_reason     TEXT                 -- set when status='voided'
 );
+
+-- status='voided' applies when: (a) Gamma reports market resolution
+-- ambiguous/invalid (condition resolver flags it) or (b) market is
+-- delisted. Voided trades refund size_usd to free_capital with
+-- realized_pnl=0. pnl-tracker is the only writer for this transition.
 CREATE INDEX idx_poly_paper_trades_status ON poly_paper_trades(status);
 
--- Denormalized view of open positions for fast dashboard queries.
--- Rebuilt from poly_paper_trades on write. One row per open trade.
+-- Denormalized view of open positions. Maintained by paper-broker on
+-- trade execution/close and by pnl-tracker on each hourly tick — the
+-- two are the only writers. No DB triggers; app-level reconciliation.
 CREATE TABLE poly_positions (
   paper_trade_id    INTEGER PRIMARY KEY REFERENCES poly_paper_trades(id),
   market_slug       TEXT NOT NULL,
@@ -165,7 +172,33 @@ CREATE TABLE poly_positions (
   unrealized_pnl    REAL NOT NULL,
   updated_at        INTEGER NOT NULL
 );
+
+-- Rolling 24h price history for /poly trending deltas.
+-- One row per (token_id, scan_tick). Rows >36h old pruned on each scan.
+CREATE TABLE poly_price_history (
+  token_id          TEXT NOT NULL,
+  captured_at       INTEGER NOT NULL,
+  price             REAL NOT NULL,
+  PRIMARY KEY (token_id, captured_at)
+);
+
+-- Persisted per-market evaluation cache so Opus tokens aren't re-burned
+-- on every restart. Keyed by (slug, outcome, prompt_hash). TTL 2h —
+-- rows older than 2h are ignored and eventually pruned.
+CREATE TABLE poly_eval_cache (
+  cache_key         TEXT PRIMARY KEY,       -- sha256(slug|outcome|prompt_hash)
+  slug              TEXT NOT NULL,
+  outcome_token_id  TEXT NOT NULL,
+  created_at        INTEGER NOT NULL,
+  probability       REAL NOT NULL,
+  confidence        TEXT NOT NULL,
+  reasoning         TEXT NOT NULL,
+  contrarian        TEXT
+);
+CREATE INDEX idx_poly_eval_cache_created ON poly_eval_cache(created_at);
 ```
+
+Runtime flags (halt, alerts on/off, last-scan-stale-alerted) live in the existing `kv` table under keys `poly.halt`, `poly.alerts_enabled`, `poly.scan_stale_flag`. These are runtime state, not config — see §4.1.
 
 ## 3. Phase A — Read-only intel
 
@@ -173,28 +206,33 @@ CREATE TABLE poly_positions (
 
 All routed through a single `/poly` command handler mirroring the `/trade` pattern in `src/trading/telegram-commands.ts`.
 
+**Message length policy**: Telegram caps at 4096 characters. Every command output is truncated at ~3800 chars with a trailing `"… (truncated, N more)"` footer indicating how many items were omitted. List commands (`/poly markets`, `/poly signals`, `/poly positions`) cap at 20 rows; rows with long strings (questions, reasoning) truncate each string to a per-row budget computed so the full message stays under the cap. Detail commands (`/poly market <slug>`) that can't fit send only the essential fields and hint `"/poly market <slug> full"` as a future affordance (not implemented in Phase A).
+
 | Command | Behavior |
 |---------|----------|
 | `/poly markets` | Top 10 markets by 24h volume from `poly_markets` cache. Format: rank, question (truncated 80 chars), current YES price, 24h volume. |
-| `/poly market <slug>` | Full detail: question, category, outcomes table (label, price, implied prob), 24h volume, liquidity, orderbook depth (top 3 levels both sides), end date, time to close. |
+| `/poly market <slug>` | Full detail: question, category, outcomes table (label, price, implied prob), 24h volume, liquidity, orderbook depth (top 3 levels both sides), end date, time to close. If slug not in cache, reply `"No market '<slug>'. Try /poly markets to see active markets."` (no fuzzy match in Phase A). |
 | `/poly trending` | Top 10 by absolute 24h price delta. Requires tracking price history — see §3.3. |
 | `/poly closing` | Markets resolving in next 24h with volume ≥ $10k, ordered by close time. |
 | `/poly status` | Bot health: last scan timestamp, markets cached, signals last 24h (approved/rejected counts), active paper positions, mode (paper/live), halt status. |
 | `/poly help` | Command list. |
 
-### 3.2 Gamma API usage
+### 3.2 Gamma and CLOB API usage
 
-Base URL: `https://gamma-api.polymarket.com`. No auth. Endpoints used:
+Base URL: `https://gamma-api.polymarket.com`. No auth. Endpoints used (field names subject to verification — see below):
 
 - `GET /markets?active=true&closed=false&limit=500&offset=N` — paginate to fetch full active-market set (~1000-2000 markets at steady state)
-- `GET /markets/<slug>` — single-market detail
+- `GET /markets/<slug>` — single-market detail (or `?slug=<slug>` if path form is unsupported)
 - `GET /events/<slug>` — event grouping (for multi-outcome markets)
 
-Rate limits are generous (unauthenticated ~60 req/min observed). Scanner batches with 200ms spacing to stay comfortably under.
-
-CLOB base URL: `https://clob.polymarket.com`. For orderbook depth used in `/poly market <slug>`:
+CLOB base URL: `https://clob.polymarket.com`:
 
 - `GET /book?token_id=<id>` — best bids/asks
+- `GET /midpoint?token_id=<id>` — midpoint price
+
+**API-shape verification is task 0 of implementation.** Before any code is written, a throwaway script hits both endpoints against a known live market and dumps the raw JSON. Real Gamma is known to use camelCase (`conditionId`, `endDate`, `outcomeTokenIds`), return `outcomes` as a stringified JSON array, and put some volume fields on the parent `event` rather than the market. The types in `src/poly/types.ts` must be written against the actual JSON, not the spec's field names. Zod schemas with `.passthrough()` decode the raw response; a small adapter layer in `gamma-client.ts` normalizes into the internal shape used everywhere else.
+
+Rate limits are generous (unauthenticated ~60 req/min observed). Scanner paces requests at 200ms minimum spacing and backs off exponentially on 429. A single scan completing in under 90s against 1500 markets is the target.
 
 ### 3.3 Scan loop
 
@@ -202,7 +240,7 @@ CLOB base URL: `https://clob.polymarket.com`. For orderbook depth used in `/poly
 
 1. Fetch all active markets via Gamma paginated endpoint
 2. For each market: upsert into `poly_markets` (slug is PK)
-3. Compute 24h price delta: compare current YES price vs price from scan exactly ~24h ago (stored in a separate `poly_price_history` table not shown above — addendum: add it). For first 24h of operation, delta is null and `/poly trending` degrades to "insufficient history".
+3. Compute 24h price delta: insert current YES price into `poly_price_history`, then look up the row with `captured_at` closest to `now - 24h` (within ±1h tolerance). If no row in range, delta is null and `/poly trending` degrades to "insufficient history" until the table fills. Prune rows older than 36h.
 4. Update `last_scan_at`
 5. Emit `scan_complete` event; strategy engine subscribes
 
@@ -234,7 +272,11 @@ Phase A ships without any strategy or broker code. It proves the API integration
 
 ## 4. Phase C — Autonomous paper trading
 
-### 4.1 Configuration constants
+### 4.1 Configuration vs runtime state
+
+**Configuration** = immutable for a process lifetime, read once from env at boot (the constants table below). Changing requires restart.
+
+**Runtime state** = mutable during a run, persisted in the `kv` table so it survives restart: halt flag (`poly.halt`), alerts-on-off (`poly.alerts_enabled`), last-digest date (`poly.last_digest_yyyymmdd`), scan-stale-already-alerted (`poly.scan_stale_flag`). `/poly halt` / `/poly resume` / `/poly alerts on|off` are runtime-state toggles, not config changes.
 
 Defaults set at module load; all overridable via env:
 
@@ -251,23 +293,21 @@ Defaults set at module load; all overridable via env:
 | Portfolio halt drawdown | 20% of capital | `POLY_HALT_DD_PCT` |
 | Kelly fraction | 0.25 | `POLY_KELLY_FRACTION` |
 | Evaluation model | `claude-opus-4-6` | `POLY_MODEL` |
+| Timezone (digest + daily P&L boundary) | `America/New_York` | `POLY_TIMEZONE` |
 
-All constants read once at startup. Changes require restart.
+All constants read once at startup. Changes require restart. A single timezone governs both the 6am digest and the daily-loss rollover so the two always agree. Stored as an IANA zone name; `luxon` (already a transitive dep of grammy? if not, add it) handles DST correctly.
 
 ### 4.2 Strategy: AI-probability
 
-For each candidate market (passes scanner filters: binary outcome, ≥$10k volume, ≥24h to resolution), evaluate at most once per 2 hours (tracked via in-memory cache keyed by slug + outcome).
+For each candidate market (passes scanner filters: binary outcome, ≥$10k volume, ≥24h to resolution), evaluate at most once per 2 hours per (slug, outcome) pair. Cache lookup hits `poly_eval_cache` (see §2.4); cache key is `sha256(slug|outcome_token_id|prompt_hash)` where `prompt_hash` is a hash of the prompt-template version plus all dynamic fields rounded to the nearest 1% (price) / $1k (volume). Persistent cache survives restart.
 
 Prompt skeleton for Claude Opus 4.6 (final prompt lives in `strategies/ai-probability.ts`):
 
 ```
 System: You are a prediction-market probability estimator. Given a market
-question, its metadata, current price, and the context below, return a JSON
-object with your estimate of the true probability of YES, a confidence level,
-your key reasoning, and the strongest contrarian evidence you can find.
-
-You are NOT told what the market price is until after your estimate. Estimate
-first, then reason about mispricing.
+question and the context below, return a JSON object with your estimate of
+the true probability of YES, a confidence level, your key reasoning, and
+the strongest contrarian evidence you can find.
 
 Output schema (JSON only, no prose):
 {
@@ -282,11 +322,12 @@ Context:
   Category: <market.category>
   End date: <market.end_date ISO>
   Description: <market.description, if present>
+  Current YES ask: $<ask>
   Orderbook summary: best bid $X / best ask $Y, spread Z%, depth $N each side
   Recent activity: 24h volume $V, price 24h ago $P_old vs now $P_now
 ```
 
-Edge calculation:
+Edge calculation (always uses the ask — that's what we'd pay to enter):
 
 ```
 edge_pct = (estimated_probability - market_ask_price) * 100
@@ -294,7 +335,7 @@ edge_pct = (estimated_probability - market_ask_price) * 100
 
 Only `BUY YES` in Phase C. Short/sell-to-close is reserved for Phase D.
 
-Claude is called via the Anthropic SDK directly (not through the agent runner loop) — single completion, no tools, JSON-only output, parsed with Zod. Response is cached against `(slug, outcome, prompt_hash)` for 2 hours so re-evaluation on the next 15m tick doesn't spend tokens unnecessarily.
+Claude is called via a direct Anthropic SDK client as described in §2.2 — single completion, no tools, JSON-only output, parsed with Zod. If parsing fails, the signal is discarded (logged at warn level); never execute on malformed output.
 
 ### 4.3 Risk gates (all three must pass)
 
@@ -307,15 +348,15 @@ Gate evaluation is pure-functional in `risk-gates.ts` — each gate takes `(sign
 - Trade size ≤ `POLY_MAX_TRADE_USD`
 
 **Gate 2: Portfolio health**
-- `portfolio.daily_realized_pnl > -POLY_DAILY_LOSS_PCT × paper_capital` (else pause new entries until UTC midnight)
-- `portfolio.total_drawdown_pct < POLY_HALT_DD_PCT` (else halt all; emit `risk_breach` alert)
+- `portfolio.daily_realized_pnl > -POLY_DAILY_LOSS_PCT × paper_capital` (else pause new entries until next midnight in `POLY_TIMEZONE`)
+- `portfolio.total_drawdown_pct < POLY_HALT_DD_PCT` (else set `poly.halt=1` in kv, emit `risk_breach` alert — requires manual `/poly resume`)
 - `portfolio.free_capital ≥ trade_size_usd`
 
 **Gate 3: Signal quality**
 - `signal.edge_pct ≥ POLY_MIN_EDGE_PCT`
 - `market.end_date - now ≥ POLY_MIN_TTR_HOURS`
-- Orderbook depth at best ask ≥ `trade_size_usd` (no simulated fills through thin books)
-- Current market price within 3% of the price observed at signal generation (prevents stale-signal execution)
+- Orderbook depth summed across ask levels ≥ `trade_size_usd` AND best-ask level is non-empty (reject if orderbook returns no asks — treated as unpriced)
+- `abs(current_ask - signal_ask) / signal_ask ≤ 0.03` — relative 3% drift check, not 3 percentage points
 
 ### 4.4 Position sizing (Fractional Kelly)
 
@@ -337,12 +378,12 @@ Edge-case guards: if `full_kelly ≤ 0`, skip. If `size_usd < $1`, skip (not wor
 
 `paper-broker.ts` simulates fills. On `execute(signal)`:
 
-1. Re-fetch current best ask for the outcome
+1. Re-fetch current best ask for the outcome. If the orderbook returned is empty OR the best ask has moved >3% from `signal_ask` (Gate 3 re-validation), abort execution, mark the `poly_signals` row rejected with reason `"orderbook_changed_at_exec"`, and return.
 2. Compute `shares = size_usd / entry_price`
-3. Insert row into `poly_paper_trades` with `status='open'`
-4. Insert/update corresponding row in `poly_positions`
-5. Update the originating `poly_signals` row with `paper_trade_id`
-6. Emit `trade_executed` event → alerts → Telegram
+3. In a single DB transaction: insert row into `poly_paper_trades` with `status='open'`; insert row into `poly_positions`; update the originating `poly_signals` row with `paper_trade_id`
+4. Emit `trade_executed` event → alerts → Telegram
+
+Paper-broker is the only writer of `poly_paper_trades` for `status='open'`. pnl-tracker is the only writer of transitions to `won | lost | voided`. This single-writer discipline prevents the race called out in review.
 
 No slippage model in MVP: assumes fill at observed best ask. This is optimistic; the blueprint's Phase D work will replace with a proper orderbook-walk simulator.
 
@@ -368,8 +409,8 @@ A final daily summary alert (part of the 6am digest the next morning) reports th
 | `/poly signals` | Last 20 signals from `poly_signals` with approved/rejected status and reasons |
 | `/poly positions` | All open paper positions with live unrealized P&L |
 | `/poly pnl` | Realized + unrealized totals, win rate (last 30 days), count toward 200-trade paper threshold |
-| `/poly halt` | Sets `POLY_HALT=1` flag in SQLite `kv` table; evaluator skips all ticks until cleared |
-| `/poly resume` | Clears halt flag |
+| `/poly halt` | Sets `poly.halt=1` in kv; evaluator and paper-broker both check this flag at the start of every tick/execute and bail. Any Anthropic call already in flight completes (its result goes to cache but no trade executes). Scanner and P&L tracker are unaffected — halt only stops new entries. |
+| `/poly resume` | Clears `poly.halt` |
 | `/poly mode [paper\|live]` | Shows current mode. Flipping to `live` requires `SECURITY_PIN_HASH` match AND explicit confirmation string — deliberately awkward to prevent accidents. In Phase C the handler refuses `live` entirely with the message "Live mode unlocks after 200+ paper trades; separate design required." |
 
 ### 4.8 Alerts
@@ -388,20 +429,20 @@ Alerts respect an on/off toggle (`/poly alerts on|off`) persisted in the existin
 ## 5. Verification criteria
 
 Phase A is done when:
-1. Migration runs clean; all four tables exist
-2. Scanner completes a full scan without error and `poly_markets` has >500 rows
-3. All five Phase A commands return correctly-formatted responses
-4. 6am digest delivers successfully two days in a row
+1. Migration runs clean inside a single transaction; all five poly tables exist and re-running the migration is a no-op
+2. Scanner completes a full scan without error in <90s and `poly_markets` has >500 rows
+3. All five Phase A commands return correctly-formatted responses, respect the 4096-char cap, and handle unknown-slug gracefully
+4. One successful 6am digest delivers (one-day criterion, not two — shipping shouldn't gate on wall clock)
 5. `npm run build` passes with zero type errors
-6. No `console.log` in shipped code
+6. No `console.log` in shipped code; logs go through `src/logger.ts`
 
 Phase C is done when:
-1. Strategy engine emits at least 20 signals in a 48h run (includes rejections)
-2. At least 5 paper trades execute and persist across a restart
-3. All three risk gates have fired in at least one rejection each (proven by `rejection_reasons` content)
-4. One market resolves and `realized_pnl` is correctly recorded
-5. `/poly halt` immediately blocks new entries until `/poly resume`
-6. All commands work; build passes; manual QA in Telegram
+1. Strategy engine has emitted at least 20 signals (approved + rejected) — achievable in hours, not days
+2. At least 5 paper trades execute and persist across a process restart
+3. At least Gate 1 and Gate 3 have each produced one rejection observable in `poly_signals.rejection_reasons`. Gate 2 (portfolio health) is exempt from the check — forcing a drawdown event as an acceptance criterion was an error in the first draft.
+4. One market resolves and `realized_pnl` is correctly recorded in `poly_paper_trades`
+5. `/poly halt` immediately blocks new entries; `/poly resume` restores them
+6. All commands work; build passes; manual QA in Telegram against a live bot instance
 
 ## 6. Environment variables (addition to `src/config.ts`)
 
@@ -421,7 +462,7 @@ POLY_KELLY_FRACTION=0.25
 POLY_MODEL=claude-opus-4-6
 POLY_SCAN_INTERVAL_MIN=15
 POLY_DIGEST_HOUR=6
-POLY_DIGEST_TIMEZONE=local
+POLY_TIMEZONE=America/New_York
 ```
 
 All added via the existing `readEnvFile` pattern in `src/config.ts`. The existing `ANTHROPIC_API_KEY` (already used by the bot for chat) supplies the Claude credentials.
