@@ -71,7 +71,29 @@ export function computeKellySize(args: KellyArgs): number {
   return Math.min(Math.max(raw, 0), maxTradeUsd);
 }
 
-export class StrategyEngine {
+export interface SignalFilledEvent {
+  signalId: number;
+  tradeId: number;
+  slug: string;
+  outcomeLabel: string;
+  probability: number;
+  bestAsk: number;
+  edgePct: number;
+  sizeUsd: number;
+  confidence: string;
+  reasoning: string;
+}
+
+export interface SignalRejectedEvent {
+  slug: string;
+  outcomeLabel: string;
+  bestAsk: number;
+  probability: number;
+  edgePct: number;
+  rejections: GateRejection[];
+}
+
+export class StrategyEngine extends EventEmitter {
   private readonly db: Database.Database;
   private readonly paperCapital: number;
   private readonly minVolumeUsd: number;
@@ -86,6 +108,7 @@ export class StrategyEngine {
   private running = false;
 
   constructor(opts: StrategyEngineOptions) {
+    super();
     this.db = opts.db;
     this.paperCapital = opts.paperCapital ?? POLY_PAPER_CAPITAL;
     this.minVolumeUsd = opts.minVolumeUsd ?? POLY_MIN_VOLUME_USD;
@@ -181,14 +204,26 @@ export class StrategyEngine {
     });
 
     const signalId = this.insertSignal(signal, gates.passed, gates.rejections);
-    if (!gates.passed) return;
+    if (!gates.passed) {
+      this.emit('signal_rejected', {
+        slug: market.slug, outcomeLabel: yesOutcome.label, bestAsk,
+        probability: est.probability, edgePct, rejections: gates.rejections,
+      } satisfies SignalRejectedEvent);
+      return;
+    }
 
     const withId: SignalWithId = {
       ...signal, id: signalId, sizeUsd,
       kellyFraction: this.kellyFraction, strategy: STRATEGY,
     };
     const res = execute(this.db, withId, bestAsk, askDepthShares);
-    if (res.status !== 'filled') {
+    if (res.status === 'filled' && res.tradeId !== undefined) {
+      this.emit('signal_filled', {
+        signalId, tradeId: res.tradeId, slug: market.slug,
+        outcomeLabel: yesOutcome.label, probability: est.probability, bestAsk,
+        edgePct, sizeUsd, confidence: est.confidence, reasoning: est.reasoning,
+      } satisfies SignalFilledEvent);
+    } else {
       logger.info({ slug: market.slug, reason: res.reason }, 'signal approved but execution aborted');
     }
   }

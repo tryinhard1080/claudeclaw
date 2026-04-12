@@ -65,9 +65,19 @@ type OpenTradeRow = {
   id: number;
   market_slug: string;
   outcome_token_id: string;
+  outcome_label: string;
   entry_price: number;
   shares: number;
 };
+
+export interface PositionResolvedEvent {
+  tradeId: number;
+  slug: string;
+  outcomeLabel: string;
+  status: Exclude<ResolutionStatus, 'open'>;
+  realizedPnl: number;
+  voidedReason?: string;
+}
 
 interface RunOnceResult {
   updatedOpen: number;
@@ -88,7 +98,7 @@ export class PnlTracker extends EventEmitter {
   /** Run a single reconciliation pass. Safe to call directly from tests. */
   async runOnce(nowMs: number = Date.now()): Promise<RunOnceResult> {
     const trades = this.db.prepare(
-      `SELECT id, market_slug, outcome_token_id, entry_price, shares
+      `SELECT id, market_slug, outcome_token_id, outcome_label, entry_price, shares
          FROM poly_paper_trades WHERE status = 'open'`,
     ).all() as OpenTradeRow[];
 
@@ -136,10 +146,12 @@ export class PnlTracker extends EventEmitter {
         resolved++;
         this.emit('position_resolved', {
           tradeId: t.id,
+          slug: t.market_slug,
+          outcomeLabel: t.outcome_label,
           status: classification.status,
           realizedPnl: realized,
           voidedReason: classification.voidedReason,
-        });
+        } satisfies PositionResolvedEvent);
       } catch (err) {
         logger.error({ err: String(err), tradeId: t.id }, 'pnl resolution txn failed');
       }
