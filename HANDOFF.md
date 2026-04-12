@@ -1,11 +1,60 @@
 # Handoff -- ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-11 (trading research deep dive, code review, regime-trader integration went live, Polymarket blueprint)
+- **Date**: 2026-04-12 (Polymarket bot — Phase A shipped, Phase C building blocks done through Task 14)
 - **Model**: Claude Opus 4.6 (1M context)
-- **Previous session**: 2026-04-09 (user profile + autonomous routines + learning loop)
+- **Previous session**: 2026-04-11 (trading research deep dive, code review, regime-trader integration went live, Polymarket blueprint)
 
-## What Changed (2026-04-11, trading integration session)
+## What Changed (2026-04-12, Polymarket Phase A+C build)
+
+### Completed: Tasks 0-14 of `docs/superpowers/plans/2026-04-12-polymarket-bot.md`
+
+**Phase A (live + shippable):** scanner (15m interval), 5 `/poly` Telegram subcommands (`markets|market|trending|closing|status`), daily digest with timezone-aware gating. Wired into `src/index.ts` under `AGENT_ID === 'main'` via dynamic import. Gated by `POLY_ENABLED=true`.
+
+**Phase C building blocks:** AI-probability strategy with persistent eval cache (`poly_eval_cache`, 2h TTL, auto-invalidating on prompt edit via `PROMPT_TEMPLATE_HASH`), three deterministic risk gates (position limits / portfolio health / signal quality — all pure, state passed in), transactional paper broker with drift-abort, hourly P&L tracker with injected market/midpoint fetchers for testability.
+
+### New code
+- `src/poly/`: types, gamma-client, clob-client, market-scanner, price-history, telegram-commands, format, digest, index, strategies/ai-probability, risk-gates, paper-broker, pnl-tracker (+ tests for each — ~60 tests passing).
+- `migrations/v1.2.0/v1.2.0-poly.ts`: 6 `poly_*` tables, applied to DB.
+- `src/db.ts`: new `getDb()` accessor for raw handle.
+- `src/index.ts`: dynamic-import poly block under main-agent guard.
+- `scripts/poly-probe.ts`: throwaway API-shape probe (documented real field types in top comment).
+
+### Session commits (21 ahead of origin/main at push time)
+See `docs/superpowers/plans/2026-04-12-polymarket-bot.md` Task Map for commit-per-task table. Plus codex-review fix `713bad5` (tsc rootDir exclude + `/poly markets` slug discoverability).
+
+### Gotchas discovered and preserved in plan
+- Gamma `/markets/{slug}` returns 422; must use `/markets/{id}`.
+- `volume24hr`/`liquidity` come back as STRINGS from Gamma — schemas use `z.coerce.number()`.
+- No native `resolution` field on Gamma; use `outcomePrices[i] === 1.0` to detect winner.
+- `kv` table doesn't exist — poly module created its own `poly_kv` via `CREATE IF NOT EXISTS` in `initPoly()` (no new migration needed for a single table).
+- Migration test file excluded from tsc (rootDir conflict) — vitest still runs it.
+
+## Next Session Pickup — Task 15 (Strategy Engine)
+
+**File to create:** `src/poly/strategy-engine.ts` + test.
+
+**What it does:** Integration layer that ties Tasks 11-14 together into an actual trading loop.
+1. Subscribes to `MarketScanner` `scan_complete` event (already emitted by Task 7).
+2. Selects top-N markets by 24h volume (filter by `POLY_MIN_VOLUME_USD`, `POLY_MIN_TTR_HOURS`).
+3. For each YES outcome: calls `evaluateMarket` (Task 11 — LLM + eval cache).
+4. Computes `edgePct`, applies `POLY_KELLY_FRACTION` sizing, caps at `POLY_MAX_TRADE_USD`.
+5. Builds `PortfolioSnapshot` by querying `poly_paper_trades` + `poly_positions` + `getDailyRealizedPnl`.
+6. Calls `runAllGates(signal, snapshot, orderbookSnapshot)` (Task 12).
+7. Inserts signal row into `poly_signals` (approved or rejected with reasons).
+8. On approval: calls `execute()` (Task 13) → records `paper_trade_id` back on signal.
+9. Honors `poly_kv['poly.halt']='1'` as kill switch (no new signals when halted).
+
+**Then Tasks 16-18** (all light):
+- 16: Alerts — Telegram wrappers for signal-created, trade-filled, position-resolved.
+- 17: Phase C commands — `/poly signals`, `/poly positions`, `/poly pnl`.
+- 18: Wire Phase C into `src/index.ts` — mount `StrategyEngine` + `PnlTracker` alongside existing poly wiring.
+
+**Task 19** is human QA — run `POLY_ENABLED=true npm run start`, exercise `/poly` commands, wait for 1+ scan cycle, verify digest fires.
+
+---
+
+## Previous Session (2026-04-11, trading integration session)
 
 ### Equity Trading Research + Review + Integration (committed in ab4b6ce)
 - **`docs/trading-research-2025-2026.md`**: Perplexity Deep Research across 245 sources. 20+ validated strategies (Oct 2025-Apr 2026), tier ranking, regime analysis, combinability matrix, implementation priority, 10 red flags.

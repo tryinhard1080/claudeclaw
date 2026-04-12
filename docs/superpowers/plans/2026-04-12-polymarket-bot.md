@@ -27,28 +27,62 @@
 
 ## Task map
 
-| Task | What | Files | Phase |
-|------|------|-------|-------|
-| 0 | API-shape verification probe | `scripts/poly-probe.ts` | A |
-| 1 | Add dependencies | `package.json` | A |
-| 2 | Database migration | `migrations/v1.2.0-poly.ts`, `migrations/version.json` | A |
-| 3 | Config + env | `src/config.ts` | A |
-| 4 | Types + Zod schemas | `src/poly/types.ts` + test | A |
-| 5 | Gamma client | `src/poly/gamma-client.ts` + test | A |
-| 6 | CLOB client | `src/poly/clob-client.ts` + test | A |
-| 7 | Market scanner + price history | `src/poly/market-scanner.ts` + test | A |
-| 8 | Phase A Telegram commands | `src/poly/telegram-commands.ts` + test | A |
-| 9 | Daily digest | `src/poly/digest.ts` + test | A |
-| 10 | Wire Phase A into bot | `src/poly/index.ts`, `src/index.ts` | A |
-| 11 | AI-probability strategy + eval cache | `src/poly/strategies/ai-probability.ts` + test | C |
-| 12 | Risk gates | `src/poly/risk-gates.ts` + test | C |
-| 13 | Paper broker | `src/poly/paper-broker.ts` + test | C |
-| 14 | P&L tracker | `src/poly/pnl-tracker.ts` + test | C |
-| 15 | Strategy engine (orchestrator) | `src/poly/strategy-engine.ts` + test | C |
-| 16 | Alerts | `src/poly/alerts.ts` + test | C |
-| 17 | Phase C commands | extend `telegram-commands.ts` | C |
-| 18 | Wire Phase C into bot | extend `index.ts` | C |
-| 19 | End-to-end manual QA | runbook in this doc | A+C |
+Status key: ✅ done / 🟡 in progress / ⬜ todo. Last updated 2026-04-12 after session wrap.
+
+| Task | What | Files | Phase | Status | Commit |
+|------|------|-------|-------|--------|--------|
+| 0 | API-shape verification probe | `scripts/poly-probe.ts` | A | ✅ | `566a08c` |
+| 1 | Add dependencies | `package.json` | A | ✅ | `1c4cfa2` |
+| 2 | Database migration | `migrations/v1.2.0/v1.2.0-poly.ts`, `migrations/version.json` | A | ✅ | `388e0f0` |
+| 3 | Config + env | `src/config.ts` | A | ✅ | `1e61275` |
+| 4 | Types + Zod schemas | `src/poly/types.ts` + test | A | ✅ | `0431306` |
+| 5 | Gamma client | `src/poly/gamma-client.ts` + test | A | ✅ | `b495dbe` |
+| 6 | CLOB client | `src/poly/clob-client.ts` + test | A | ✅ | `ba19d70` |
+| 7 | Market scanner + price history | `src/poly/market-scanner.ts`, `price-history.ts` + tests | A | ✅ | `d7fe9b1` |
+| 8 | Phase A Telegram commands | `src/poly/telegram-commands.ts`, `format.ts` + tests | A | ✅ | `db16631` (codex `713bad5`) |
+| 9 | Daily digest | `src/poly/digest.ts` + test | A | ✅ | `7e40275` |
+| 10 | Wire Phase A into bot | `src/poly/index.ts`, `src/index.ts`, `src/db.ts` | A | ✅ | `41710f5` |
+| 11 | AI-probability strategy + eval cache | `src/poly/strategies/ai-probability.ts` + test | C | ✅ | `e3ad1d2` |
+| 12 | Risk gates | `src/poly/risk-gates.ts` + test | C | ✅ | `cd0a489` |
+| 13 | Paper broker | `src/poly/paper-broker.ts` + test | C | ✅ | `48fdc40` |
+| 14 | P&L tracker | `src/poly/pnl-tracker.ts` + test | C | ✅ | `2cffb5a` |
+| 15 | Strategy engine (orchestrator) | `src/poly/strategy-engine.ts` + test | C | ⬜ **NEXT** | — |
+| 16 | Alerts | `src/poly/alerts.ts` + test | C | ⬜ | — |
+| 17 | Phase C commands | extend `telegram-commands.ts` | C | ⬜ | — |
+| 18 | Wire Phase C into bot | extend `index.ts` | C | ⬜ | — |
+| 19 | End-to-end manual QA | runbook in this doc | A+C | ⬜ | human task |
+
+### Known deviations from plan (accumulated during implementation)
+
+Future tasks must respect these — the plan body was not rewritten, only annotated here.
+
+- **Task 2 file path:** migration lives at `migrations/v1.2.0/v1.2.0-poly.ts` (nested subdir), NOT flat `migrations/v1.2.0-poly.ts` — required by `scripts/migrate.ts` runner convention.
+- **Task 4 Zod coercion:** `volume24hr` and `liquidity` use `z.coerce.number()` because real Gamma API returns strings for these fields.
+- **Task 5 `fetchMarketBySlug` → `fetchMarketById(id)`:** Gamma's `/markets/{slug}` endpoint returns 422; only `/markets/{id}` works.
+- **Task 7 split:** `getPriceApproxHoursAgo` lives in `src/poly/price-history.ts`, not `market-scanner.ts`, so Telegram commands can import without coupling.
+- **Task 8 `renderStatus`:** wraps `SELECT FROM kv` in try/catch + defaults halt to undefined (the `kv` table doesn't exist — only `poly_kv` does; see below).
+- **Task 10 KV storage:** `poly_kv` table is created via `CREATE TABLE IF NOT EXISTS` inside `initPoly()` — no new migration. Keys use `poly.` prefix (`poly.last_digest_ymd`). Access helpers are `polyKvGet` / `polyKvSet`, module-private to `src/poly/index.ts`.
+- **Task 10 db accessor:** `src/db.ts` exports a new `getDb(): Database.Database` — the raw handle is otherwise module-private.
+- **Task 10 wire-up guard:** poly integration mounts under `if (AGENT_ID === 'main')` via dynamic import, mirroring the trading block.
+- **Task 11 lazy Anthropic client:** `getClient()` defers `new Anthropic(...)` until `evaluateMarket` is first called; tests can import the module without `ANTHROPIC_API_KEY` set.
+- **Task 11 `extractJson` regex:** uses greedy match for nested JSON objects inside fences (plan's lazy match truncated on first `}`).
+- **Task 12 gates are pure:** `PortfolioSnapshot` (including `openPositionKeys: Set<string>`) is passed in by the caller (Task 15). Gates never touch DB.
+- **Task 13 broker abort path:** writes `rejection_reasons` JSON back to `poly_signals` and sets `approved=0`. Reasons: `orderbook_changed_at_exec` (drift > 3%) or `empty_asks`.
+- **Task 13 shares rounding:** `floor((sizeUsd / currentBestAsk) * 100) / 100` — 2-decimal floor to avoid overspend.
+- **Task 14 resolution detection:** Polymarket Gamma has no plain `resolution` field. Use `outcomePrices` array: the index where price === 1.0 is the winning outcome. Implemented in pure `classifyResolution(market, heldTokenId)` helper. If no price is 1.0 → `voided/unresolved`. If `fetchMarketById` returns null → `voided/delisted`.
+- **Task 14 injected fetchers:** `PnlTracker` constructor takes optional `marketFetcher` and `midpointFetcher` for testability. Default marketFetcher reads `poly_markets.condition_id` then calls `fetchMarketById`.
+- **tsconfig:** `src/poly/migration.test.ts` is in `exclude` — avoids tsc rootDir failure from the migration file being outside `src/`. Vitest still runs it fine.
+
+### Test counts
+
+Session total: **~60 poly-module tests passing** across:
+- `migration.test.ts` (1), `types.test.ts` (3), `gamma-client.test.ts` (2), `clob-client.test.ts` (2)
+- `market-scanner.test.ts` (3), `format.test.ts` (5), `digest.test.ts` (4)
+- `strategies/ai-probability.test.ts` (9), `risk-gates.test.ts` (18), `paper-broker.test.ts` (5), `pnl-tracker.test.ts` (12)
+
+### Session wrap — picking up at Task 15
+
+Phase A is shipped (Tasks 0–10, commit `41710f5`). Phase C building blocks are in place (Tasks 11–14). Task 15 is the integration layer that turns those blocks into actual paper trades: wire `MarketScanner.scan_complete` event → evaluate top-volume markets → build `PortfolioSnapshot` from DB → run `runAllGates` → call `execute()` → record signal row. Honor `poly_kv['poly.halt']='1'` as the kill switch. Tasks 16–18 are mechanical (alerts + commands + wire-up); Task 19 is human QA.
 
 ---
 
