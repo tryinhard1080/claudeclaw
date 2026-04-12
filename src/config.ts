@@ -27,6 +27,22 @@ const envConfig = readEnvFile([
   'STORE_DIR',
   'REGIME_TRADER_PATH',
   'REGIME_TRADER_INSTANCES',
+  'POLY_ENABLED',
+  'POLY_PAPER_CAPITAL',
+  'POLY_MAX_TRADE_USD',
+  'POLY_MAX_OPEN_POSITIONS',
+  'POLY_MAX_DEPLOYED_PCT',
+  'POLY_MIN_EDGE_PCT',
+  'POLY_MIN_TTR_HOURS',
+  'POLY_MIN_VOLUME_USD',
+  'POLY_DAILY_LOSS_PCT',
+  'POLY_HALT_DD_PCT',
+  'POLY_KELLY_FRACTION',
+  'POLY_MODEL',
+  'POLY_SCAN_INTERVAL_MIN',
+  'POLY_DIGEST_HOUR',
+  'POLY_TIMEZONE',
+  'ANTHROPIC_API_KEY',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -184,4 +200,32 @@ export const REGIME_TRADER_PATH =
 export const REGIME_TRADER_INSTANCES = (
   process.env.REGIME_TRADER_INSTANCES || envConfig.REGIME_TRADER_INSTANCES || ''
 ).split(',').map(s => s.trim()).filter(Boolean);
+
+// ── Polymarket bot ───────────────────────────────────────────────────
+function num(key: string, def: number): number {
+  const v = process.env[key] ?? envConfig[key];
+  const n = v === undefined || v === '' ? def : Number(v);
+  return Number.isFinite(n) ? n : def;
+}
+
+export const POLY_ENABLED =
+  (process.env.POLY_ENABLED || envConfig.POLY_ENABLED || 'false').toLowerCase() === 'true';
+export const POLY_PAPER_CAPITAL = num('POLY_PAPER_CAPITAL', 5000);
+export const POLY_MAX_TRADE_USD = num('POLY_MAX_TRADE_USD', 50);
+export const POLY_MAX_OPEN_POSITIONS = num('POLY_MAX_OPEN_POSITIONS', 10);
+export const POLY_MAX_DEPLOYED_PCT = num('POLY_MAX_DEPLOYED_PCT', 0.5);
+export const POLY_MIN_EDGE_PCT = num('POLY_MIN_EDGE_PCT', 8);
+export const POLY_MIN_TTR_HOURS = num('POLY_MIN_TTR_HOURS', 24);
+export const POLY_MIN_VOLUME_USD = num('POLY_MIN_VOLUME_USD', 10000);
+export const POLY_DAILY_LOSS_PCT = num('POLY_DAILY_LOSS_PCT', 0.05);
+export const POLY_HALT_DD_PCT = num('POLY_HALT_DD_PCT', 0.2);
+export const POLY_KELLY_FRACTION = num('POLY_KELLY_FRACTION', 0.25);
+export const POLY_MODEL =
+  process.env.POLY_MODEL || envConfig.POLY_MODEL || 'claude-opus-4-6';
+export const POLY_SCAN_INTERVAL_MIN = num('POLY_SCAN_INTERVAL_MIN', 15);
+export const POLY_DIGEST_HOUR = num('POLY_DIGEST_HOUR', 6);
+export const POLY_TIMEZONE =
+  process.env.POLY_TIMEZONE || envConfig.POLY_TIMEZONE || 'America/New_York';
+export const ANTHROPIC_API_KEY =
+  process.env.ANTHROPIC_API_KEY || envConfig.ANTHROPIC_API_KEY || '';
 
