@@ -4,6 +4,8 @@ import { logger } from '../logger.js';
 import { fetchBook } from './clob-client.js';
 import { getPriceApproxHoursAgo } from './price-history.js';
 import { truncateForTelegram, fmtUsd, fmtPrice, truncateQuestion } from './format.js';
+import { getDailyRealizedPnl } from './pnl-tracker.js';
+import { POLY_PAPER_CAPITAL } from '../config.js';
 
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
   bot.command('poly', async (ctx) => {
@@ -23,6 +25,12 @@ export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): 
           return void await ctx.reply(truncateForTelegram(renderClosing(db)).text);
         case 'status':
           return void await ctx.reply(truncateForTelegram(renderStatus(db)).text);
+        case 'signals':
+          return void await ctx.reply(truncateForTelegram(renderSignals(db)).text);
+        case 'positions':
+          return void await ctx.reply(truncateForTelegram(renderPositions(db)).text);
+        case 'pnl':
+          return void await ctx.reply(truncateForTelegram(renderPnl(db)).text);
         default:
           return void await ctx.reply(HELP);
       }
@@ -40,7 +48,10 @@ const HELP =
 /poly market <slug> — full detail
 /poly trending — biggest 24h movers
 /poly closing — resolving in next 24h
-/poly status — bot health`;
+/poly status — bot health
+/poly signals — last 10 signals (approved + rejected)
+/poly positions — open paper positions with unrealized P&L
+/poly pnl — daily + lifetime paper P&L summary`;
 
 function renderMarkets(db: Database.Database): string {
   const rows = db.prepare(
@@ -130,10 +141,11 @@ function renderStatus(db: Database.Database): string {
     FROM poly_signals WHERE created_at >= ?
   `).get(Math.floor(Date.now() / 1000) - 86400) as { a: number | null; r: number | null };
 
-  // kv table may not exist yet — wrap and default to undefined.
+  // poly_kv is created by initPoly + StrategyEngine; guard in case a caller
+  // reads status before either has run.
   let halt: { value: string } | undefined;
   try {
-    halt = db.prepare(`SELECT value FROM kv WHERE key='poly.halt'`).get() as { value: string } | undefined;
+    halt = db.prepare(`SELECT value FROM poly_kv WHERE key='poly.halt'`).get() as { value: string } | undefined;
   } catch {
     halt = undefined;
   }
@@ -146,5 +158,136 @@ function renderStatus(db: Database.Database): string {
     `Signals last 24h: ${sigCounts.a ?? 0} approved / ${sigCounts.r ?? 0} rejected`,
     `Open paper positions: ${open.c}`,
     `Mode: paper  Halt: ${halt?.value === '1' ? 'YES' : 'no'}`,
+  ].join('\n');
+}
+
+interface SignalRow {
+  id: number;
+  created_at: number;
+  market_slug: string;
+  outcome_label: string;
+  market_price: number;
+  estimated_prob: number;
+  edge_pct: number;
+  approved: number;
+  paper_trade_id: number | null;
+  rejection_reasons: string | null;
+}
+
+export function renderSignals(db: Database.Database): string {
+  const rows = db.prepare(`
+    SELECT id, created_at, market_slug, outcome_label, market_price,
+           estimated_prob, edge_pct, approved, paper_trade_id, rejection_reasons
+      FROM poly_signals ORDER BY id DESC LIMIT 10
+  `).all() as SignalRow[];
+  if (rows.length === 0) return 'No signals yet. Strategy engine runs after each scan.';
+  const lines: string[] = ['Last 10 signals:', ''];
+  for (const r of rows) {
+    const icon = r.approved ? '✅' : '⚠️';
+    const ageMin = Math.floor((Date.now() / 1000 - r.created_at) / 60);
+    const tail = r.approved
+      ? `trade #${r.paper_trade_id ?? '—'}`
+      : (firstGate(r.rejection_reasons) ?? 'rejected');
+    lines.push(
+      `${icon} ${ageMin}m  ${truncateQuestion(r.market_slug, 40)} ${r.outcome_label}` +
+      `  ask ${(r.market_price * 100).toFixed(1)}¢ · p̂ ${(r.estimated_prob * 100).toFixed(0)}% · edge ${edgeStr(r.edge_pct)}` +
+      `  ${tail}`,
+    );
+  }
+  return lines.join('\n');
+}
+
+function firstGate(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Array<{ gate?: string; reason?: string }>;
+    return parsed[0] ? `${parsed[0].gate}: ${parsed[0].reason}` : null;
+  } catch { return null; }
+}
+
+function edgeStr(n: number): string {
+  return (n >= 0 ? '+' : '') + n.toFixed(1) + 'pp';
+}
+
+interface PositionRow {
+  trade_id: number;
+  market_slug: string;
+  outcome_label: string;
+  entry_price: number;
+  shares: number;
+  size_usd: number;
+  current_price: number | null;
+  unrealized_pnl: number | null;
+}
+
+export function renderPositions(db: Database.Database): string {
+  const rows = db.prepare(`
+    SELECT t.id AS trade_id, t.market_slug, t.outcome_label, t.entry_price,
+           t.shares, t.size_usd, p.current_price, p.unrealized_pnl
+      FROM poly_paper_trades t
+      LEFT JOIN poly_positions p ON p.paper_trade_id = t.id
+     WHERE t.status = 'open'
+     ORDER BY t.id DESC
+  `).all() as PositionRow[];
+  if (rows.length === 0) return 'No open positions.';
+  const lines: string[] = [`Open paper positions (${rows.length}):`, ''];
+  let totalCost = 0;
+  let totalUnrealized = 0;
+  for (const r of rows) {
+    totalCost += r.size_usd;
+    totalUnrealized += r.unrealized_pnl ?? 0;
+    const price = r.current_price ?? r.entry_price;
+    lines.push(
+      `#${r.trade_id}  ${truncateQuestion(r.market_slug, 40)} ${r.outcome_label}` +
+      `  ${r.shares.toFixed(2)} sh @ ${fmtPrice(r.entry_price)}` +
+      ` → ${fmtPrice(price)}  u/r ${signedUsd(r.unrealized_pnl ?? 0)}`,
+    );
+  }
+  lines.push('', `Deployed: ${fmtUsd(totalCost)}  Unrealized: ${signedUsd(totalUnrealized)}`);
+  return lines.join('\n');
+}
+
+function signedUsd(n: number): string {
+  return (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(2);
+}
+
+export function renderPnl(db: Database.Database): string {
+  const realized = db.prepare(`
+    SELECT status, COUNT(*) AS n, COALESCE(SUM(realized_pnl), 0) AS total
+      FROM poly_paper_trades
+     WHERE status IN ('won','lost','voided')
+     GROUP BY status
+  `).all() as Array<{ status: string; n: number; total: number }>;
+
+  const unrealizedRow = db.prepare(`
+    SELECT COALESCE(SUM(unrealized_pnl), 0) AS total FROM poly_positions
+  `).get() as { total: number };
+
+  const openRow = db.prepare(
+    `SELECT COUNT(*) AS n, COALESCE(SUM(size_usd), 0) AS deployed
+       FROM poly_paper_trades WHERE status='open'`,
+  ).get() as { n: number; deployed: number };
+
+  const dailyPnl = getDailyRealizedPnl(db);
+
+  const won = realized.find(r => r.status === 'won') ?? { n: 0, total: 0 };
+  const lost = realized.find(r => r.status === 'lost') ?? { n: 0, total: 0 };
+  const voided = realized.find(r => r.status === 'voided') ?? { n: 0, total: 0 };
+
+  const totalRealized = won.total + lost.total + voided.total;
+  const settled = won.n + lost.n;
+  const winRate = settled > 0 ? (won.n / settled) * 100 : 0;
+  const equity = POLY_PAPER_CAPITAL + totalRealized + unrealizedRow.total;
+  const ddPct = POLY_PAPER_CAPITAL > 0
+    ? Math.max(0, (POLY_PAPER_CAPITAL - equity) / POLY_PAPER_CAPITAL) * 100
+    : 0;
+
+  return [
+    'Paper P&L',
+    `Capital: ${fmtUsd(POLY_PAPER_CAPITAL)}  Equity: ${fmtUsd(equity)}  DD: ${ddPct.toFixed(1)}%`,
+    `Today realized: ${signedUsd(dailyPnl)}`,
+    `Lifetime realized: ${signedUsd(totalRealized)}  (won ${won.n} · lost ${lost.n} · void ${voided.n}` +
+      (settled > 0 ? `  · win rate ${winRate.toFixed(0)}%` : '') + ')',
+    `Open: ${openRow.n}  Deployed: ${fmtUsd(openRow.deployed)}  Unrealized: ${signedUsd(unrealizedRow.total)}`,
   ].join('\n');
 }
