@@ -745,20 +745,30 @@ export function createBot(): Bot {
 
   // --- Forum topic threading support ---
   // When Telegram "Topics in Private Chats" is enabled, every reply without
-  // message_thread_id creates a new topic. We capture the thread ID from
-  // incoming messages and auto-inject it into all outgoing API calls.
+  // message_thread_id creates a new topic. We track the thread ID from
+  // incoming messages AND the message_id (so we can reply_to_message_id
+  // to keep the bot's response in the same topic as the user's message).
   const chatThreadId = new Map<number, number>();
+  const chatReplyToMsg = new Map<number, number>();
 
-  // Middleware: capture message_thread_id from incoming messages
+  // Middleware: capture thread context from incoming messages
   bot.use(async (ctx, next) => {
-    const threadId = ctx.msg?.message_thread_id;
-    if (threadId && ctx.chat?.id) {
-      chatThreadId.set(ctx.chat.id, threadId);
+    if (ctx.chat?.id && ctx.msg) {
+      // If the message has a thread ID, capture it (user sent from inside a topic)
+      if (ctx.msg.message_thread_id) {
+        chatThreadId.set(ctx.chat.id, ctx.msg.message_thread_id);
+      }
+      // Always track the message_id so we can reply_to it (keeps us in the same topic)
+      if (ctx.msg.message_id) {
+        chatReplyToMsg.set(ctx.chat.id, ctx.msg.message_id);
+      }
     }
     await next();
   });
 
-  // API transformer: inject message_thread_id into all outgoing send calls
+  // API transformer: inject threading params into all outgoing send calls.
+  // Priority: message_thread_id if we have it, otherwise reply_to_message_id
+  // to anchor the response to the user's message (prevents new topic creation).
   const THREAD_METHODS = new Set([
     'sendMessage', 'sendPhoto', 'sendDocument', 'sendVoice', 'sendVideo',
     'sendAudio', 'sendAnimation', 'sendSticker', 'sendVideoNote',
@@ -768,13 +778,26 @@ export function createBot(): Bot {
   bot.api.config.use((prev, method, payload, signal) => {
     if (THREAD_METHODS.has(method) && payload && 'chat_id' in payload) {
       const p = payload as Record<string, unknown>;
+      const chatId = typeof p['chat_id'] === 'number'
+        ? p['chat_id'] as number
+        : parseInt(String(p['chat_id']), 10);
+
+      // Inject message_thread_id if we have one and it's not already set
       if (!p['message_thread_id']) {
-        const chatId = typeof p['chat_id'] === 'number'
-          ? p['chat_id'] as number
-          : parseInt(String(p['chat_id']), 10);
         const threadId = chatThreadId.get(chatId);
         if (threadId) {
           p['message_thread_id'] = threadId;
+        }
+      }
+
+      // Inject reply_to_message_id to anchor reply in the same topic.
+      // Only for sendMessage (multi-part replies shouldn't all quote the original).
+      if (method === 'sendMessage' && !p['reply_to_message_id'] && !p['reply_parameters']) {
+        const replyTo = chatReplyToMsg.get(chatId);
+        if (replyTo) {
+          p['reply_parameters'] = { message_id: replyTo, allow_sending_without_reply: true };
+          // Clear after first use so only the first message in a multi-part reply quotes
+          chatReplyToMsg.delete(chatId);
         }
       }
     }

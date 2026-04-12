@@ -50,6 +50,15 @@ class MessageQueue {
   queuedFor(chatId: string): number {
     return this.pending.get(chatId) ?? 0;
   }
+
+  /**
+   * Returns a Promise that resolves when all currently-executing tasks complete.
+   * Does NOT wait for queued (not-yet-started) tasks.
+   */
+  drain(): Promise<void> {
+    if (this.chains.size === 0) return Promise.resolve();
+    return Promise.all(this.chains.values()).then(() => {});
+  }
 }
 
 export const messageQueue = new MessageQueue();

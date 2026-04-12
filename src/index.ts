@@ -1,10 +1,11 @@
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { loadAgentConfig, resolveAgentDir, resolveAgentClaudeMd } from './agent-config.js';
 import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
-import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE } from './config.js';
+import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, REGIME_TRADER_PATH, REGIME_TRADER_INSTANCES } from './config.js';
 import { startDashboard } from './dashboard.js';
 import { initDatabase, cleanupOldMissionTasks, insertAuditLog } from './db.js';
 import { initSecurity, setAuditCallback } from './security.js';
@@ -12,10 +13,11 @@ import { logger } from './logger.js';
 import { cleanupOldUploads } from './media.js';
 import { runConsolidation } from './memory-consolidate.js';
 import { runDecaySweep } from './memory.js';
+import { messageQueue } from './message-queue.js';
 import { initOrchestrator } from './orchestrator.js';
 import { initNotifications } from './notifications.js';
 import { initScheduler } from './scheduler.js';
-import { setTelegramConnected, setBotInfo } from './state.js';
+import { setTelegramConnected, setBotInfo, abortAllActiveQueries } from './state.js';
 
 // Parse --agent flag
 const agentFlagIndex = process.argv.indexOf('--agent');
@@ -92,9 +94,8 @@ function acquireLock(): void {
         try {
           process.kill(old, 'SIGTERM');
           // Brief synchronous wait for old process to die before we take the lock.
-          // Atomics.wait throws on main thread in some Node versions, so use a busy wait.
-          const deadline = Date.now() + 1000;
-          while (Date.now() < deadline) { /* spin */ }
+          // execSync blocks the thread but yields to the OS scheduler, unlike a JS spin loop.
+          execSync(process.platform === 'win32' ? 'timeout /t 1 /nobreak >nul 2>&1' : 'sleep 1');
         } catch { /* already dead */ }
       }
     }
@@ -188,6 +189,17 @@ async function main(): Promise<void> {
 
     initScheduler(telegramSender, AGENT_ID);
     initNotifications(telegramSender);
+
+    // Trading integration: poll regime-trader instances and register /trade commands
+    if (AGENT_ID === 'main' && REGIME_TRADER_PATH && REGIME_TRADER_INSTANCES.length > 0) {
+      const { initTrading, registerTradingCommands } = await import('./trading/index.js');
+      const { poller, controller, alertManager } = initTrading(
+        telegramSender,
+        REGIME_TRADER_PATH,
+        REGIME_TRADER_INSTANCES,
+      );
+      registerTradingCommands(bot, poller, controller, alertManager, REGIME_TRADER_INSTANCES);
+    }
   } else {
     logger.warn('ALLOWED_CHAT_ID not set — scheduler disabled (no destination for results)');
   }
@@ -195,6 +207,17 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     logger.info('Shutting down...');
     setTelegramConnected(false);
+
+    // Abort all in-flight agent queries so they don't hang
+    const aborted = abortAllActiveQueries();
+    if (aborted > 0) logger.info({ aborted }, 'Aborted in-flight queries');
+
+    // Wait up to 5s for current message processing to finish
+    await Promise.race([
+      messageQueue.drain(),
+      new Promise(r => setTimeout(r, 5000)),
+    ]);
+
     releaseLock();
     await bot.stop();
     process.exit(0);

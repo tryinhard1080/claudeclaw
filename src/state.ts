@@ -80,3 +80,14 @@ export function abortActiveQuery(chatId: string): boolean {
   }
   return false;
 }
+
+/** Abort ALL in-flight agent queries. Used during graceful shutdown. */
+export function abortAllActiveQueries(): number {
+  let count = 0;
+  for (const [, ctrl] of _activeAbort) {
+    ctrl.abort();
+    count++;
+  }
+  _activeAbort.clear();
+  return count;
+}

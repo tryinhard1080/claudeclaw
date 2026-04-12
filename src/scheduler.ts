@@ -1,11 +1,14 @@
+import { randomUUID } from 'crypto';
+
 import { CronExpressionParser } from 'cron-parser';
 
 import { AGENT_ID, ALLOWED_CHAT_ID } from './config.js';
 import {
   getDueTasks,
+  getNextDueTimeMs,
   getSession,
   logConversationTurn,
-  markTaskRunning,
+  claimTaskExecution,
   updateTaskAfterRun,
   resetStuckTasks,
   claimNextMissionTask,
@@ -55,8 +58,17 @@ export function initScheduler(send: Sender, agentId = 'main'): void {
     logger.warn({ recovered: recoveredMission, agentId }, 'Reset stuck mission tasks from previous crash');
   }
 
-  setInterval(() => void runDueTasks(), 60_000);
-  logger.info({ agentId }, 'Scheduler started (checking every 60s)');
+  void scheduleNextTick();
+  logger.info({ agentId }, 'Scheduler started (precision timer)');
+}
+
+async function scheduleNextTick(): Promise<void> {
+  await runDueTasks();
+  const nextDueMs = getNextDueTimeMs(schedulerAgentId);
+  const delay = nextDueMs
+    ? Math.max(1000, Math.min(nextDueMs - Date.now(), 60_000))
+    : 60_000;
+  setTimeout(() => void scheduleNextTick(), delay);
 }
 
 async function runDueTasks(): Promise<void> {
@@ -76,8 +88,13 @@ async function runDueTasks(): Promise<void> {
     // Compute next occurrence BEFORE executing so we can lock the task
     // in the DB immediately, preventing re-fire on subsequent ticks.
     const nextRun = computeNextRun(task.schedule);
+    const nonce = randomUUID();
+    const claimed = claimTaskExecution(task.id, nonce, nextRun);
+    if (!claimed) {
+      logger.warn({ taskId: task.id }, 'Task already claimed by another execution, skipping');
+      continue;
+    }
     runningTaskIds.add(task.id);
-    markTaskRunning(task.id, nextRun);
 
     logger.info({ taskId: task.id, prompt: task.prompt.slice(0, 60) }, 'Firing task');
 

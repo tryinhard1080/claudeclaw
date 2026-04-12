@@ -9,6 +9,7 @@ import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROO
 import { buildRuntimeContext, renderContextForDashboard } from './context-builder.js';
 import crypto from 'crypto';
 import {
+  checkDatabaseHealth,
   getAllScheduledTasks,
   deleteScheduledTask,
   pauseScheduledTask,
@@ -118,6 +119,39 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   app.onError((err, c) => {
     logger.error({ err: err.message }, 'Dashboard request error');
     return c.json({ error: 'Internal server error' }, 500);
+  });
+
+  // Rate limiting (in-memory token bucket, 60 req/min per IP)
+  const rateBuckets = new Map<string, { tokens: number; lastRefill: number }>();
+  const RATE_LIMIT = 60;
+  const RATE_WINDOW_MS = 60_000;
+  app.use('/api/*', async (c, next) => {
+    const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+    const now = Date.now();
+    let bucket = rateBuckets.get(ip);
+    if (!bucket || now - bucket.lastRefill > RATE_WINDOW_MS) {
+      bucket = { tokens: RATE_LIMIT, lastRefill: now };
+      rateBuckets.set(ip, bucket);
+    }
+    if (bucket.tokens <= 0) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+    bucket.tokens--;
+    await next();
+  });
+
+  // Health check (no auth required -- used by pm2/monitoring)
+  app.get('/health', (c) => {
+    const dbOk = checkDatabaseHealth();
+    const botOk = getTelegramConnected();
+    const status = dbOk && botOk ? 200 : 503;
+    return c.json({
+      status: status === 200 ? 'healthy' : 'degraded',
+      uptime: process.uptime(),
+      database: dbOk ? 'ok' : 'error',
+      telegram: botOk ? 'connected' : 'disconnected',
+      agent: AGENT_ID,
+    }, status);
   });
 
   // Token auth middleware (timing-safe comparison to prevent side-channel attacks)

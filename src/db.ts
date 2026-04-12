@@ -59,8 +59,15 @@ export function decryptField(ciphertext: string): string {
     decipher.setAuthTag(authTag);
     const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
     return decrypted.toString('utf8');
-  } catch {
-    // Decryption failed: probably pre-encryption plaintext data
+  } catch (err) {
+    // Our encrypted format is "iv:authTag:data" (3 colon-separated hex segments).
+    // If the input matches this format but decryption still failed, that's a real
+    // error (wrong key, corrupted data). Otherwise it's pre-encryption plaintext.
+    const parts = ciphertext.split(':');
+    if (parts.length === 3 && parts.every(p => /^[0-9a-f]+$/i.test(p))) {
+      logger.error({ err }, 'Decryption failed for data matching encrypted format');
+      throw new Error('Decryption failed: possible key mismatch or data corruption');
+    }
     return ciphertext;
   }
 }
@@ -272,6 +279,16 @@ function createSchema(database: Database.Database): void {
         VALUES (new.id, new.summary, new.raw_text, new.entities, new.topics);
     END;
   `);
+}
+
+/** Quick health check on the database connection. */
+export function checkDatabaseHealth(): boolean {
+  try {
+    const result = db.prepare('PRAGMA quick_check').get() as { quick_check: string };
+    return result.quick_check === 'ok';
+  } catch {
+    return false;
+  }
 }
 
 export function initDatabase(): void {
@@ -646,7 +663,7 @@ const STOP_WORDS = new Set([
 function extractKeywords(query: string): string[] {
   return query
     .replace(/[""]/g, '"')
-    .replace(/[^\w\s]/g, '')
+    .replace(/[^\w\s-]/g, '')
     .toLowerCase()
     .trim()
     .split(/\s+/)
@@ -944,6 +961,28 @@ export function getDueTasks(agentId = 'main'): ScheduledTask[] {
       `SELECT * FROM scheduled_tasks WHERE status = 'active' AND next_run <= ? AND agent_id = ? ORDER BY next_run`,
     )
     .all(now, agentId) as ScheduledTask[];
+}
+
+/** Returns the next due time (in ms since epoch) for any active task, or null if none. */
+export function getNextDueTimeMs(agentId = 'main'): number | null {
+  const row = db.prepare(
+    `SELECT MIN(next_run) as next FROM scheduled_tasks WHERE status = 'active' AND agent_id = ?`,
+  ).get(agentId) as { next: number | null } | undefined;
+  return row?.next ? row.next * 1000 : null;
+}
+
+/**
+ * Atomically claim a task for execution. Returns true if this call
+ * successfully transitioned the task from 'active' to 'running'.
+ * Prevents duplicate execution after crash recovery.
+ */
+export function claimTaskExecution(taskId: string, _nonce: string, nextRun: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE scheduled_tasks SET status = 'running', started_at = ?, next_run = ?
+     WHERE id = ? AND status = 'active'`,
+  ).run(now, nextRun, taskId);
+  return result.changes > 0;
 }
 
 export function getAllScheduledTasks(agentId?: string): ScheduledTask[] {

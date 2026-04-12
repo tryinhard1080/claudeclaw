@@ -25,6 +25,8 @@ const envConfig = readEnvFile([
   'EMERGENCY_KILL_PHRASE',
   'STREAM_STRATEGY',
   'STORE_DIR',
+  'REGIME_TRADER_PATH',
+  'REGIME_TRADER_INSTANCES',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -172,4 +174,14 @@ export const IDLE_LOCK_MINUTES = parseInt(
 // Emergency kill phrase. Sending this to any bot immediately stops all agents and exits.
 export const EMERGENCY_KILL_PHRASE =
   process.env.EMERGENCY_KILL_PHRASE || envConfig.EMERGENCY_KILL_PHRASE || '';
+
+// ── Trading integration (regime-trader) ─────────────────────────────
+// Path to the regime-trader project directory
+export const REGIME_TRADER_PATH =
+  process.env.REGIME_TRADER_PATH || envConfig.REGIME_TRADER_PATH || '';
+
+// Comma-separated list of regime-trader instance names to monitor
+export const REGIME_TRADER_INSTANCES = (
+  process.env.REGIME_TRADER_INSTANCES || envConfig.REGIME_TRADER_INSTANCES || ''
+).split(',').map(s => s.trim()).filter(Boolean);
 
