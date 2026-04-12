@@ -44,3 +44,4 @@ CLAUDE.md
 agents/*/agent.yaml
 agents/*/CLAUDE.md
 logs/
+data/poly-probe/
