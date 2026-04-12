@@ -190,3 +190,22 @@ describe('pnl-tracker', () => {
     expect(sumApr11).toBe(60);
   });
 });
+
+describe('PnlTracker.start', () => {
+  it('fires an immediate reconciliation so restarts do not leave stale positions', async () => {
+    const db = freshDb();
+    const tradeId = seedOpenTrade(db);
+    const fetcher: MarketFetcher = async () => mkMarket({
+      closed: true, yesPrice: 1, noPrice: 0,  // Yes won
+    });
+    const tracker = new PnlTracker(db, fetcher, async () => 0.5);
+    tracker.start(60 * 60 * 1000);
+    // Wait for the startup runOnce microtask + promise chain to settle.
+    await new Promise(r => setImmediate(r));
+    await new Promise(r => setImmediate(r));
+    tracker.stop();
+
+    const row = db.prepare(`SELECT status FROM poly_paper_trades WHERE id = ?`).get(tradeId) as { status: string };
+    expect(row.status).toBe('won');
+  });
+});

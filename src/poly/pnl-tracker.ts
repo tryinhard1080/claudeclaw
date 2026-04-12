@@ -160,9 +160,17 @@ export class PnlTracker extends EventEmitter {
     return { updatedOpen, resolved };
   }
 
-  /** Start an hourly loop. Tests should NOT call start(); use runOnce. */
+  /**
+   * Start an hourly loop. Fires one immediate reconciliation so a restart
+   * doesn't leave positions stale for up to an hour — resolved markets would
+   * otherwise still count toward openPositionCount/deployedUsd and block
+   * valid signals in the next scan_complete tick. Tests should NOT call
+   * start(); use runOnce directly for determinism.
+   */
   start(intervalMs: number = 60 * 60 * 1000): void {
     if (this.timer !== null) return;
+    void this.runOnce().catch(err =>
+      logger.error({ err: String(err) }, 'pnl tracker startup reconciliation failed'));
     this.timer = setInterval(() => {
       this.runOnce().catch(err => logger.error({ err: String(err) }, 'pnl tracker tick failed'));
     }, intervalMs);

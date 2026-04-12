@@ -135,9 +135,14 @@ describe('paper broker execute', () => {
     // Ensure no new paper_trade row was committed.
     const tradeCount = db.prepare(`SELECT COUNT(*) as n FROM poly_paper_trades`).get() as { n: number };
     expect(tradeCount.n).toBe(0);
-    // Signal should NOT have paper_trade_id set.
-    const sig = db.prepare(`SELECT paper_trade_id FROM poly_signals WHERE id = ?`).get(signal.id) as { paper_trade_id: number | null };
+    // Signal must be flipped back to rejected with a db_error stamp so
+    // /poly signals + approval metrics don't count an orphaned approval.
+    const sig = db.prepare(`SELECT approved, paper_trade_id, rejection_reasons FROM poly_signals WHERE id = ?`).get(signal.id) as {
+      approved: number; paper_trade_id: number | null; rejection_reasons: string | null;
+    };
     expect(sig.paper_trade_id).toBeNull();
+    expect(sig.approved).toBe(0);
+    expect(sig.rejection_reasons).toMatch(/db_error/);
   });
 
   it('marks the original poly_signals row with rejection reason "orderbook_changed_at_exec" on abort', () => {

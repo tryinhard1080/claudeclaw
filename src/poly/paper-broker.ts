@@ -99,6 +99,9 @@ export function execute(
     return { status: 'filled', tradeId };
   } catch (err) {
     logger.error({ err: String(err), signalId: signal.id }, 'paper broker transaction failed');
+    // Flip the signal row back to rejected so /poly signals + approval metrics
+    // don't count an orphaned approved=1 row with no paper_trade_id.
+    abortSignal(db, signal.id, `db_error: ${String(err)}`);
     return { status: 'aborted', reason: `db_error: ${String(err)}` };
   }
 }
