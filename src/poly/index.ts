@@ -10,6 +10,9 @@ import {
 import { MarketScanner } from './market-scanner.js';
 import { registerPolyCommands } from './telegram-commands.js';
 import { composeDigest, shouldRunDigest } from './digest.js';
+import { StrategyEngine } from './strategy-engine.js';
+import { PnlTracker } from './pnl-tracker.js';
+import { registerPolyAlerts } from './alerts.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -24,14 +27,25 @@ const polyKvSet = (db: Database.Database, key: string, value: string): void => {
   ).run(key, value);
 };
 
+export interface InitPolyResult {
+  scanner: MarketScanner;
+  strategyEngine: StrategyEngine | null;
+  pnlTracker: PnlTracker | null;
+  stop: () => void;
+}
+
 export function initPoly(opts: {
   bot: Bot<Context>;
   sender: Sender;
   db: Database.Database;
-}): { scanner: MarketScanner; stop: () => void } {
+}): InitPolyResult {
   if (!POLY_ENABLED) {
     logger.info('POLY_ENABLED=false — polymarket module disabled');
-    return { scanner: null as unknown as MarketScanner, stop: () => {} };
+    return {
+      scanner: null as unknown as MarketScanner,
+      strategyEngine: null, pnlTracker: null,
+      stop: () => {},
+    };
   }
 
   // Poly-scoped kv table (no shared `kv` table exists in the DB).
@@ -40,6 +54,14 @@ export function initPoly(opts: {
   );
 
   const scanner = new MarketScanner(opts.db, POLY_SCAN_INTERVAL_MIN * 60_000);
+
+  // Phase C: strategy engine + P&L tracker + alerts. Engine subscribes to
+  // scanner `scan_complete` in its constructor, so it must be built BEFORE
+  // scanner.start() to avoid missing the first tick.
+  const strategyEngine = new StrategyEngine({ db: opts.db, scanner });
+  const pnlTracker = new PnlTracker(opts.db);
+  registerPolyAlerts({ strategyEngine, pnlTracker, sender: opts.sender });
+  pnlTracker.start();
   scanner.start();
   registerPolyCommands(opts.bot, opts.db);
 
@@ -65,11 +87,14 @@ export function initPoly(opts: {
     }
   }, 5 * 60_000);
 
-  logger.info('Polymarket module initialized');
+  logger.info('Polymarket module initialized (Phase C: scanner + strategy + pnl tracker)');
   return {
     scanner,
+    strategyEngine,
+    pnlTracker,
     stop: () => {
       scanner.stop();
+      pnlTracker.stop();
       clearInterval(digestTimer);
     },
   };
