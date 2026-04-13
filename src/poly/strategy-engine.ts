@@ -3,11 +3,11 @@ import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
 import {
   POLY_KELLY_FRACTION, POLY_MAX_TRADE_USD, POLY_MIN_VOLUME_USD,
-  POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL,
+  POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL, POLY_MODEL,
 } from '../config.js';
 import type { Market, Signal, ProbabilityEstimate } from './types.js';
 import { bestAskAndDepth, fetchBook } from './clob-client.js';
-import { computeEdgePct, evaluateMarket } from './strategies/ai-probability.js';
+import { computeEdgePct, evaluateMarket, PROMPT_VERSION } from './strategies/ai-probability.js';
 import {
   runAllGates, defaultGateConfig, positionKey,
   type GateConfig, type PortfolioSnapshot, type OrderbookSnapshot, type GateRejection,
@@ -230,16 +230,20 @@ export class StrategyEngine extends EventEmitter {
 
   private insertSignal(signal: Signal, approved: boolean, rejections: GateRejection[]): number {
     const nowSec = Math.floor(this.now() / 1000);
+    // prompt_version + model (Sprint 2 versioning) let us A/B compare
+    // strategy variants on the overlap set using Sprint 1's Brier metric.
     const info = this.db.prepare(`
       INSERT INTO poly_signals
         (created_at, market_slug, outcome_token_id, outcome_label, market_price,
-         estimated_prob, edge_pct, confidence, reasoning, contrarian, approved, rejection_reasons)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         estimated_prob, edge_pct, confidence, reasoning, contrarian, approved,
+         rejection_reasons, prompt_version, model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       nowSec, signal.marketSlug, signal.outcomeTokenId, signal.outcomeLabel,
       signal.marketPrice, signal.estimatedProb, signal.edgePct,
       signal.confidence, signal.reasoning, signal.contrarian ?? null,
       approved ? 1 : 0, rejections.length > 0 ? JSON.stringify(rejections) : null,
+      PROMPT_VERSION, POLY_MODEL,
     );
     return Number(info.lastInsertRowid);
   }

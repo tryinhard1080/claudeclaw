@@ -15,7 +15,8 @@ function bootDb(): Database.Database {
       market_slug TEXT, outcome_token_id TEXT, outcome_label TEXT,
       market_price REAL, estimated_prob REAL, edge_pct REAL, confidence TEXT,
       reasoning TEXT, contrarian TEXT, approved INTEGER NOT NULL,
-      rejection_reasons TEXT, paper_trade_id INTEGER);
+      rejection_reasons TEXT, paper_trade_id INTEGER,
+      prompt_version TEXT, model TEXT);
     CREATE TABLE poly_paper_trades (
       id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
       market_slug TEXT, outcome_token_id TEXT, outcome_label TEXT, side TEXT,
@@ -122,10 +123,14 @@ describe('StrategyEngine.onScanComplete', () => {
 
     const row = db.prepare(`SELECT * FROM poly_signals`).get() as {
       approved: number; edge_pct: number; paper_trade_id: number | null;
+      prompt_version: string | null; model: string | null;
     };
     expect(row.approved).toBe(1);
     expect(row.edge_pct).toBeCloseTo(20, 1);
     expect(row.paper_trade_id).not.toBeNull();
+    // Sprint 2 versioning: every new signal carries its prompt version + model.
+    expect(row.prompt_version).toBe('v3');
+    expect(row.model).toBeTruthy();
 
     const trade = db.prepare(`SELECT status, size_usd FROM poly_paper_trades WHERE id = ?`).get(row.paper_trade_id) as { status: string; size_usd: number };
     expect(trade.status).toBe('open');

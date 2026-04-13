@@ -5,7 +5,7 @@ import { ANTHROPIC_API_KEY, POLY_MODEL } from '../../config.js';
 import { ProbabilityEstimateSchema, type ProbabilityEstimate, type Market } from '../types.js';
 import { logger } from '../../logger.js';
 
-const PROMPT_VERSION = 'v3';
+export const PROMPT_VERSION = 'v3';
 
 const SYSTEM_PROMPT = `You are a prediction-market probability estimator.
 
