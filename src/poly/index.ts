@@ -6,6 +6,9 @@ import {
   POLY_SCAN_INTERVAL_MIN,
   POLY_TIMEZONE,
   POLY_DIGEST_HOUR,
+  POLY_CALIBRATION_HOUR,
+  POLY_CALIBRATION_BRIER_ALERT,
+  POLY_CALIBRATION_LOOKBACK_DAYS,
 } from '../config.js';
 import { MarketScanner } from './market-scanner.js';
 import { registerPolyCommands } from './telegram-commands.js';
@@ -13,6 +16,10 @@ import { composeDigest, shouldRunDigest } from './digest.js';
 import { StrategyEngine } from './strategy-engine.js';
 import { PnlTracker } from './pnl-tracker.js';
 import { registerPolyAlerts } from './alerts.js';
+import {
+  composeSnapshot, persistSnapshot,
+  shouldRunCalibration, formatCalibrationAlert, todayYmd,
+} from './calibration.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -91,6 +98,33 @@ export function initPoly(opts: {
           .then(() => polyKvSet(opts.db, 'poly.last_digest_ymd', ymd))
           .catch(err => logger.error({ err: String(err) }, 'digest send failed'))
           .finally(() => { digestInFlight = false; });
+      }
+
+      // Daily calibration tick — gated by last-run-ymd so it fires once per
+      // target-timezone day. Alert only if we actually persisted a snapshot
+      // and it breached the Brier threshold with n >= MIN_ALERT_SAMPLES.
+      const lastCal = polyKvGet(opts.db, 'poly.last_calibration_ymd');
+      if (
+        shouldRunCalibration({
+          hour: POLY_CALIBRATION_HOUR,
+          timezone: POLY_TIMEZONE,
+          now: new Date(),
+          lastRunYmd: lastCal,
+        })
+      ) {
+        const snap = composeSnapshot(opts.db, Date.now(), POLY_CALIBRATION_LOOKBACK_DAYS);
+        const ymd = todayYmd(new Date(), POLY_TIMEZONE);
+        if (snap !== null) {
+          persistSnapshot(opts.db, snap);
+          const alert = formatCalibrationAlert(snap, POLY_CALIBRATION_BRIER_ALERT);
+          if (alert !== null) {
+            opts
+              .sender(alert)
+              .catch(err => logger.warn({ err: String(err) }, 'calibration alert send failed'));
+          }
+        }
+        // Stamp regardless — no resolved samples is still "we tried today".
+        polyKvSet(opts.db, 'poly.last_calibration_ymd', ymd);
       }
     } catch (err) {
       logger.error({ err: String(err) }, 'digest tick failed');

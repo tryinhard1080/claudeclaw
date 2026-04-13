@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { renderSignals, renderPositions, renderPnl } from './telegram-commands.js';
+import { renderSignals, renderPositions, renderPnl, renderCalibration } from './telegram-commands.js';
 
 function bootDb(): Database.Database {
   const db = new Database(':memory:');
@@ -163,5 +163,41 @@ describe('renderPnl', () => {
     expect(txt).toContain('Open: 2');
     expect(txt).toContain('Deployed: $65');
     expect(txt).toContain('Unrealized: +$5.00');
+  });
+});
+
+describe('renderCalibration', () => {
+  function bootCalDb(): Database.Database {
+    const d = new Database(':memory:');
+    d.exec(`CREATE TABLE poly_calibration_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
+      window_start INTEGER NOT NULL, window_end INTEGER NOT NULL,
+      n_samples INTEGER NOT NULL, brier_score REAL, log_loss REAL, win_rate REAL,
+      curve_json TEXT NOT NULL);`);
+    return d;
+  }
+
+  it('shows empty-state when no snapshot exists yet', () => {
+    expect(renderCalibration(bootCalDb())).toMatch(/no calibration snapshot/i);
+  });
+
+  it('renders Brier, log loss, win rate and populated curve buckets', () => {
+    const db = bootCalDb();
+    db.prepare(`INSERT INTO poly_calibration_snapshots (created_at,window_start,window_end,n_samples,brier_score,log_loss,win_rate,curve_json) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(now, now - 30 * 86400, now, 12, 0.18, 0.41, 7/12,
+        JSON.stringify([
+          { bucket: 0, predLow: 0,   predHigh: 0.1, count: 0, actualWinRate: null },
+          { bucket: 5, predLow: 0.5, predHigh: 0.6, count: 4, actualWinRate: 0.5 },
+          { bucket: 8, predLow: 0.8, predHigh: 0.9, count: 8, actualWinRate: 0.875 },
+        ]));
+    const txt = renderCalibration(db);
+    expect(txt).toContain('Brier');
+    expect(txt).toContain('0.180');
+    expect(txt).toContain('Log loss');
+    expect(txt).toContain('0.410');
+    expect(txt).toContain('n=12');
+    expect(txt).toContain('50-60%');
+    expect(txt).toContain('80-90%');
+    expect(txt).not.toContain('0-10%');
   });
 });

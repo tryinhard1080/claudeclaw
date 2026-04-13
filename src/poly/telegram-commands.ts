@@ -5,6 +5,7 @@ import { fetchBook } from './clob-client.js';
 import { getPriceApproxHoursAgo } from './price-history.js';
 import { truncateForTelegram, fmtUsd, fmtPrice, truncateQuestion } from './format.js';
 import { getDailyRealizedPnl } from './pnl-tracker.js';
+import { latestSnapshot } from './calibration.js';
 import { POLY_PAPER_CAPITAL } from '../config.js';
 
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
@@ -33,6 +34,8 @@ export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): 
           return void await ctx.reply(truncateForTelegram(renderPositions(db)).text);
         case 'pnl':
           return void await ctx.reply(truncateForTelegram(renderPnl(db)).text);
+        case 'calibration':
+          return void await ctx.reply(truncateForTelegram(renderCalibration(db)).text);
         default:
           return void await ctx.reply(HELP);
       }
@@ -53,7 +56,8 @@ const HELP =
 /poly status — bot health
 /poly signals — last 10 signals (approved + rejected)
 /poly positions — open paper positions with unrealized P&L
-/poly pnl — daily + lifetime paper P&L summary`;
+/poly pnl — daily + lifetime paper P&L summary
+/poly calibration — Brier / log loss / curve over recent resolutions`;
 
 function renderMarkets(db: Database.Database): string {
   const rows = db.prepare(
@@ -292,4 +296,25 @@ export function renderPnl(db: Database.Database): string {
       (settled > 0 ? `  · win rate ${winRate.toFixed(0)}%` : '') + ')',
     `Open: ${openRow.n}  Deployed: ${fmtUsd(openRow.deployed)}  Unrealized: ${signedUsd(unrealizedRow.total)}`,
   ].join('\n');
+}
+
+export function renderCalibration(db: Database.Database): string {
+  const snap = latestSnapshot(db);
+  if (!snap) return 'No calibration snapshot yet. Daily snapshot fires at POLY_CALIBRATION_HOUR.';
+  const ageHrs = ((Math.floor(Date.now() / 1000)) - snap.createdAt) / 3600;
+  const lines: string[] = [
+    `Calibration (n=${snap.nSamples} resolved, last ${Math.round((snap.windowEnd - snap.windowStart) / 86400)}d)`,
+    `Brier: ${snap.brierScore?.toFixed(3) ?? 'n/a'}  Log loss: ${snap.logLoss?.toFixed(3) ?? 'n/a'}  Win rate: ${(snap.winRate * 100).toFixed(0)}%`,
+    `Snapshot age: ${ageHrs.toFixed(1)}h`,
+    '',
+    'Predicted → actual (populated buckets only):',
+  ];
+  for (const b of snap.curve) {
+    if (b.count === 0) continue;
+    const lo = (b.predLow * 100).toFixed(0);
+    const hi = (b.predHigh * 100).toFixed(0);
+    const actual = b.actualWinRate === null ? 'n/a' : `${(b.actualWinRate * 100).toFixed(0)}% won`;
+    lines.push(`  ${lo}-${hi}%: n=${b.count} → ${actual}`);
+  }
+  return lines.join('\n');
 }
