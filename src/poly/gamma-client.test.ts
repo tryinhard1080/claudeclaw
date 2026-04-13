@@ -51,4 +51,22 @@ describe('normalizeMarket', () => {
     };
     expect(normalizeMarket(raw)).toBeNull();
   });
+
+  it('parses successfully with requireEndDate=false even when endDate missing (resolution path)', () => {
+    // PnlTracker uses this path. Returning null here would conflate
+    // "Gamma omitted endDate" with "market delisted", causing every
+    // open trade against such a market to be voided at zero P&L.
+    const raw = {
+      conditionId: '0xabc', slug: 'x', question: 'Will X?',
+      outcomes: '["Yes","No"]', outcomePrices: '["1","0"]',
+      clobTokenIds: '["t1","t2"]',
+      volume24hr: 100, liquidity: 50,
+      closed: true,
+    };
+    const m = normalizeMarket(raw, { requireEndDate: false });
+    expect(m).not.toBeNull();
+    expect(m!.closed).toBe(true);
+    expect(m!.endDate).toBe(0);
+    expect(m!.outcomes[0]!.price).toBe(1);  // resolution still readable
+  });
 });

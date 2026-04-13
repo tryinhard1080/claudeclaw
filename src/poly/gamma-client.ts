@@ -18,14 +18,29 @@ async function getJson(url: string, attempt = 0): Promise<unknown> {
 }
 
 /**
- * Parse and normalize. Returns `null` for structurally valid markets that
- * lack an endDate — those are unusable for our TTR gate and are dropped
- * without a warning (the absence is common, not pathological). Throws for
- * every other malformation so fetchActiveMarkets can log + skip.
+ * Parse and normalize. Two modes:
+ *
+ *   - Default (`requireEndDate: true`): returns `null` for structurally
+ *     valid markets that lack an endDate. Used by the active-market
+ *     scanner because such markets can't pass our TTR risk gate anyway.
+ *
+ *   - `requireEndDate: false`: tolerates missing endDate (returns
+ *     endDate=0). Used by resolution-path lookups (PnlTracker) which
+ *     only care about `closed` + `outcomes[i].price`. Without this,
+ *     a slug fetch that happens to omit endDate would return null,
+ *     classifyResolution would treat that as "delisted", and the
+ *     trade would be incorrectly voided at zero P&L.
+ *
+ * Throws for truly malformed shapes (length mismatches, etc.) so the
+ * caller can log + skip.
  */
-export function normalizeMarket(raw: unknown): Market | null {
+export function normalizeMarket(
+  raw: unknown,
+  opts: { requireEndDate?: boolean } = {},
+): Market | null {
+  const requireEndDate = opts.requireEndDate ?? true;
   const g: GammaMarket = GammaMarketSchema.parse(raw);
-  if (!g.endDate) return null;
+  if (!g.endDate && requireEndDate) return null;
   if (g.outcomes.length !== g.outcomePrices.length || g.outcomes.length !== g.clobTokenIds.length) {
     throw new Error(`market ${g.slug}: outcome/price/tokenId length mismatch`);
   }
@@ -42,7 +57,7 @@ export function normalizeMarket(raw: unknown): Market | null {
     outcomes,
     volume24h: g.volume24hr,
     liquidity: g.liquidity,
-    endDate: Math.floor(new Date(g.endDate).getTime() / 1000),
+    endDate: g.endDate ? Math.floor(new Date(g.endDate).getTime() / 1000) : 0,
     closed: g.closed,
   };
 }
@@ -105,7 +120,9 @@ export async function fetchMarketBySlug(slug: string): Promise<Market | null> {
   try {
     const raw = await getJson(`${BASE}/markets?slug=${encodeURIComponent(slug)}&limit=1`);
     if (!Array.isArray(raw) || raw.length === 0) return null;
-    return normalizeMarket(raw[0]);
+    // Resolution path: tolerate missing endDate so we don't conflate
+    // "Gamma omitted endDate" with "market not found" / "delisted".
+    return normalizeMarket(raw[0], { requireEndDate: false });
   } catch (err) {
     logger.warn({ slug, err: String(err) }, 'fetchMarketBySlug failed');
     return null;
