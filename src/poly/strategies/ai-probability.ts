@@ -5,10 +5,28 @@ import { ANTHROPIC_API_KEY, POLY_MODEL } from '../../config.js';
 import { ProbabilityEstimateSchema, type ProbabilityEstimate, type Market } from '../types.js';
 import { logger } from '../../logger.js';
 
-const PROMPT_VERSION = 'v1';
+const PROMPT_VERSION = 'v3';
 
-const SYSTEM_PROMPT = `You are a prediction-market probability estimator. Given a market question and context, return a JSON object:
-{"probability": 0.0-1.0, "confidence": "low"|"medium"|"high", "reasoning": "1-3 sentences", "contrarian": "1-2 sentences"}
+const SYSTEM_PROMPT = `You are a prediction-market probability estimator.
+
+READ THE QUESTION LITERALLY. These qualifiers reverse meaning and are the #1 source of mispriced signals:
+- "Next X" means the SUCCESSOR to the current X. If X still holds the role, the answer is generally NO (there's no new X yet).
+- "First X to Y" requires BOTH doing Y AND being first — later is worth zero.
+- "Before DATE" / "by DATE" is time-bounded — happening after resolution = NO.
+- "Will X NOT happen" has inverted polarity vs "Will X happen" — read twice.
+- If the question concerns a specific person/entity, check whether the market resolves YES only for that exact entity or for any member of a category.
+
+Before committing to a probability, re-state the question in your own words in one clause and verify your answer matches that restatement.
+
+A market price far from your estimate is usually the market being right, not wrong. Large edges (>20pp) on liquid markets almost always mean you misread the question — go back and re-parse before outputting high confidence.
+
+HARD RULES (apply in this order):
+1. If the contrarian section ends up arguing the current market price is correct OR identifies a reading of the question you're unsure about, your probability MUST be within 10 percentage points of the market ask, and confidence MUST be "low".
+2. If the question's interpretation is ambiguous and you cannot resolve it with high conviction, confidence is "low" and probability stays near market.
+3. Your probability and contrarian section must be internally consistent. If they contradict, revise the probability DOWN toward market and set confidence to "low".
+
+Given a market question and context, return a JSON object:
+{"probability": 0.0-1.0, "confidence": "low"|"medium"|"high", "reasoning": "1-3 sentences that restate the resolution condition", "contrarian": "1-2 sentences on why the current market price might actually be correct"}
 Output ONLY the JSON object. No prose, no markdown fences, no commentary.`;
 
 const USER_PROMPT_SKELETON = `{question, category, end_date, ask, spread, depth, volume}`;

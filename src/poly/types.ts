@@ -46,7 +46,10 @@ export const GammaMarketSchema = z.object({
   clobTokenIds: stringArrayFromJson,
   volume24hr: z.coerce.number().default(0),
   liquidity: z.coerce.number().default(0),
-  endDate: z.string(),           // ISO
+  // Gamma returns markets with a missing/null endDate (~46% of the active
+  // list on 2026-04-12). Accept either shape here; `normalizeMarket`
+  // filters them out cleanly without a Zod throw.
+  endDate: z.string().nullish(),
   closed: z.boolean().default(false),
 }).passthrough();
 export type GammaMarket = z.infer<typeof GammaMarketSchema>;

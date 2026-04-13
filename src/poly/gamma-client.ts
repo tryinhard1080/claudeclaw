@@ -17,8 +17,15 @@ async function getJson(url: string, attempt = 0): Promise<unknown> {
   return res.json();
 }
 
-export function normalizeMarket(raw: unknown): Market {
+/**
+ * Parse and normalize. Returns `null` for structurally valid markets that
+ * lack an endDate — those are unusable for our TTR gate and are dropped
+ * without a warning (the absence is common, not pathological). Throws for
+ * every other malformation so fetchActiveMarkets can log + skip.
+ */
+export function normalizeMarket(raw: unknown): Market | null {
   const g: GammaMarket = GammaMarketSchema.parse(raw);
+  if (!g.endDate) return null;
   if (g.outcomes.length !== g.outcomePrices.length || g.outcomes.length !== g.clobTokenIds.length) {
     throw new Error(`market ${g.slug}: outcome/price/tokenId length mismatch`);
   }
@@ -42,17 +49,33 @@ export function normalizeMarket(raw: unknown): Market {
 
 export async function fetchActiveMarkets(pageSize = 500): Promise<Market[]> {
   const out: Market[] = [];
+  let skippedNoEndDate = 0;
+  let skippedMalformed = 0;
   let offset = 0;
   while (true) {
     const raw = await getJson(`${BASE}/markets?active=true&closed=false&limit=${pageSize}&offset=${offset}`);
     if (!Array.isArray(raw) || raw.length === 0) break;
     for (const r of raw) {
-      try { out.push(normalizeMarket(r)); }
-      catch (e) { logger.warn({ err: String(e) }, 'skipping malformed market'); }
+      try {
+        const m = normalizeMarket(r);
+        if (m === null) skippedNoEndDate++;
+        else out.push(m);
+      } catch (e) {
+        skippedMalformed++;
+        // Per-item warn only for truly malformed shapes; missing endDate
+        // is expected enough that a batch summary is sufficient.
+        logger.warn({ err: String(e) }, 'skipping malformed market');
+      }
     }
     if (raw.length < pageSize) break;
     offset += pageSize;
     await sleep(200);
+  }
+  if (skippedNoEndDate > 0 || skippedMalformed > 0) {
+    logger.info(
+      { parsed: out.length, skippedNoEndDate, skippedMalformed },
+      'fetchActiveMarkets skip summary',
+    );
   }
   return out;
 }
@@ -65,7 +88,7 @@ export async function fetchActiveMarkets(pageSize = 500): Promise<Market[]> {
 export async function fetchMarketById(id: string | number): Promise<Market | null> {
   try {
     const raw = await getJson(`${BASE}/markets/${encodeURIComponent(String(id))}`);
-    return normalizeMarket(raw);
+    return normalizeMarket(raw);  // may be null if endDate missing
   } catch (err) {
     logger.warn({ id, err: String(err) }, 'fetchMarketById failed');
     return null;

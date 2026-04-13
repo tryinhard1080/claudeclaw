@@ -9,6 +9,14 @@ import {
   POLY_HALT_DD_PCT,
 } from '../config.js';
 
+/**
+ * Large-edge signals with only medium/low confidence almost always mean the
+ * LLM misread the question (most commonly: "next X" parsed as "current X
+ * continuing"). A genuinely 25pp+ mispriced liquid market requires high
+ * conviction — anything less is filtered out as an implicit contradiction.
+ */
+const HIGH_CONFIDENCE_REQUIRED_EDGE_PCT = 25;
+
 // Gates are pure. Caller (strategy engine) builds PortfolioSnapshot from DB and passes it in.
 export interface PortfolioSnapshot {
   openPositionCount: number;
@@ -121,6 +129,12 @@ export function gate3SignalQuality(
 ): GateResult {
   if (signal.edgePct < config.minEdgePct) {
     return { passed: false, reason: `edge_pct ${signal.edgePct} < min ${config.minEdgePct}` };
+  }
+  if (signal.edgePct >= HIGH_CONFIDENCE_REQUIRED_EDGE_PCT && signal.confidence !== 'high') {
+    return {
+      passed: false,
+      reason: `edge_pct ${signal.edgePct.toFixed(1)} >= ${HIGH_CONFIDENCE_REQUIRED_EDGE_PCT} but confidence=${signal.confidence} (likely misread question)`,
+    };
   }
   const ttrHours = (market.endDate * 1000 - now) / (1000 * 60 * 60);
   if (ttrHours < config.minTtrHours) {

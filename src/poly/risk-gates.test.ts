@@ -164,6 +164,33 @@ describe('gate3SignalQuality', () => {
     const r = gate3SignalQuality(mkSignal(), mkMarket(), mkBook({ bestAsk: 0.412 }), 40, now, baseConfig());
     expect(r.passed).toBe(true);
   });
+
+  it('rejects large-edge signals without high confidence (likely misread)', () => {
+    // 90pp edge but medium confidence — classic "next X" misread.
+    const r = gate3SignalQuality(
+      mkSignal({ edgePct: 90, confidence: 'medium' }),
+      mkMarket(), mkBook(), 40, now, baseConfig(),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.reason).toMatch(/likely misread/);
+  });
+
+  it('accepts large-edge signals when confidence is high', () => {
+    const r = gate3SignalQuality(
+      mkSignal({ edgePct: 90, confidence: 'high' }),
+      mkMarket(), mkBook(), 40, now, baseConfig(),
+    );
+    expect(r.passed).toBe(true);
+  });
+
+  it('accepts medium-confidence signals below the high-conf-required threshold', () => {
+    // edge 20pp < 25 threshold → no high-conf requirement
+    const r = gate3SignalQuality(
+      mkSignal({ edgePct: 20, confidence: 'medium' }),
+      mkMarket(), mkBook(), 40, now, baseConfig(),
+    );
+    expect(r.passed).toBe(true);
+  });
 });
 
 describe('runAllGates', () => {
