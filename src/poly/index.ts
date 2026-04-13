@@ -60,6 +60,26 @@ export function initPoly(opts: {
     `CREATE TABLE IF NOT EXISTS poly_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
   );
 
+  // Defensive: ensure poly_calibration_snapshots exists even on upgraded
+  // installs that haven't run `npm run migrate` yet. Migration state is
+  // tracked outside the DB; without this guard, the daily calibration
+  // pass would throw "no such table" every 5 minutes all day.
+  opts.db.exec(`
+    CREATE TABLE IF NOT EXISTS poly_calibration_snapshots (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at    INTEGER NOT NULL,
+      window_start  INTEGER NOT NULL,
+      window_end    INTEGER NOT NULL,
+      n_samples     INTEGER NOT NULL,
+      brier_score   REAL,
+      log_loss      REAL,
+      win_rate      REAL,
+      curve_json    TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_poly_calibration_created
+      ON poly_calibration_snapshots(created_at DESC);
+  `);
+
   const scanner = new MarketScanner(opts.db, POLY_SCAN_INTERVAL_MIN * 60_000);
 
   // Phase C: strategy engine + P&L tracker + alerts. Engine subscribes to
@@ -101,8 +121,13 @@ export function initPoly(opts: {
       }
 
       // Daily calibration tick — gated by last-run-ymd so it fires once per
-      // target-timezone day. Alert only if we actually persisted a snapshot
-      // and it breached the Brier threshold with n >= MIN_ALERT_SAMPLES.
+      // target-timezone day. Alert only if we persisted a snapshot and it
+      // breached the Brier threshold with n >= MIN_ALERT_SAMPLES.
+      // Stamp logic (codex-review P2):
+      //   - no samples: stamp (nothing to retry).
+      //   - persisted, no alert: stamp (work is done).
+      //   - alert fires: stamp ONLY on successful send so a transient
+      //     Telegram outage lets the next tick retry the alert today.
       const lastCal = polyKvGet(opts.db, 'poly.last_calibration_ymd');
       if (
         shouldRunCalibration({
@@ -114,17 +139,20 @@ export function initPoly(opts: {
       ) {
         const snap = composeSnapshot(opts.db, Date.now(), POLY_CALIBRATION_LOOKBACK_DAYS);
         const ymd = todayYmd(new Date(), POLY_TIMEZONE);
-        if (snap !== null) {
+        if (snap === null) {
+          polyKvSet(opts.db, 'poly.last_calibration_ymd', ymd);
+        } else {
           persistSnapshot(opts.db, snap);
           const alert = formatCalibrationAlert(snap, POLY_CALIBRATION_BRIER_ALERT);
-          if (alert !== null) {
+          if (alert === null) {
+            polyKvSet(opts.db, 'poly.last_calibration_ymd', ymd);
+          } else {
             opts
               .sender(alert)
-              .catch(err => logger.warn({ err: String(err) }, 'calibration alert send failed'));
+              .then(() => polyKvSet(opts.db, 'poly.last_calibration_ymd', ymd))
+              .catch(err => logger.warn({ err: String(err) }, 'calibration alert send failed; will retry next tick'));
           }
         }
-        // Stamp regardless — no resolved samples is still "we tried today".
-        polyKvSet(opts.db, 'poly.last_calibration_ymd', ymd);
       }
     } catch (err) {
       logger.error({ err: String(err) }, 'digest tick failed');
