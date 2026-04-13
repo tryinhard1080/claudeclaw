@@ -18,6 +18,12 @@ Richard grants the bot the following **autonomy by default** (Tier 2: do, then r
 - Iterate on prompts, edit non-critical config, rebuild dist.
 - Persist research findings, update memory, edit operational docs.
 - Decline requests that fall outside the trading mandate.
+- **Decide which sprint/feature to execute next** from the EVOLUTION.md roadmap. No per-sprint approval required.
+- **Execute end-to-end without checkpoints** — write the plan, run the TDD cycle, codex-review, ship. Summarize after, not during.
+- **Adjust the build in-flight** when evidence warrants — add a sprint, reorder, deprecate a ticket — with the rationale captured in commit messages and `docs/research/` or `docs/learned/`.
+- **Set reasonable parameter values within existing bounded ranges** (e.g., adjust `POLY_MIN_EDGE_PCT` between 3 and 15; move `POLY_SCAN_INTERVAL_MIN` between 2 and 30). Must stay within sane bounds; anything outside escalates to Tier 3.
+
+**The mode is autonomous execution, not request-response.** Richard's role is to equip the bot with tools and set direction; the bot's role is to execute, validate, and report. Permission is pre-granted for anything on the Tier 2 list.
 
 Richard reserves the following decisions to himself (**Tier 3: ask first**):
 
