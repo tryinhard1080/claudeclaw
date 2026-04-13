@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { DateTime } from 'luxon';
 import {
-  brierScore, logLoss, calibrationCurve,
+  brierScore, logLoss, calibrationCurve, brierByRegime,
   fetchResolvedSamples, composeSnapshot, persistSnapshot, latestSnapshot,
   shouldRunCalibration, formatCalibrationAlert, MIN_ALERT_SAMPLES,
   type ResolvedSample, type CalibrationSnapshot,
@@ -126,7 +126,7 @@ function bootDb(): Database.Database {
       created_at INTEGER NOT NULL, market_slug TEXT, outcome_token_id TEXT,
       outcome_label TEXT, market_price REAL, estimated_prob REAL, edge_pct REAL,
       confidence TEXT, reasoning TEXT, contrarian TEXT, approved INTEGER NOT NULL,
-      rejection_reasons TEXT, paper_trade_id INTEGER);
+      rejection_reasons TEXT, paper_trade_id INTEGER, regime_label TEXT);
     CREATE TABLE poly_paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT,
       created_at INTEGER NOT NULL, market_slug TEXT, outcome_token_id TEXT,
       outcome_label TEXT, side TEXT, entry_price REAL, size_usd REAL, shares REAL,
@@ -136,8 +136,8 @@ function bootDb(): Database.Database {
   return db;
 }
 
-function insertResolved(db: Database.Database, o: { prob: number; status: 'won'|'lost'|'voided'; resolvedAt: number; }): void {
-  const sig = db.prepare(`INSERT INTO poly_signals (created_at,market_slug,outcome_token_id,outcome_label,market_price,estimated_prob,edge_pct,confidence,reasoning,approved) VALUES (0,'s','tok','Yes',0.4,?,10,'high','r',1)`).run(o.prob);
+function insertResolved(db: Database.Database, o: { prob: number; status: 'won'|'lost'|'voided'; resolvedAt: number; regime?: string | null; }): void {
+  const sig = db.prepare(`INSERT INTO poly_signals (created_at,market_slug,outcome_token_id,outcome_label,market_price,estimated_prob,edge_pct,confidence,reasoning,approved,regime_label) VALUES (0,'s','tok','Yes',0.4,?,10,'high','r',1,?)`).run(o.prob, o.regime ?? null);
   const tradeId = sig.lastInsertRowid;
   db.prepare(`INSERT INTO poly_paper_trades (id,created_at,market_slug,outcome_token_id,outcome_label,side,entry_price,size_usd,shares,kelly_fraction,strategy,status,resolved_at,realized_pnl) VALUES (?,0,'s','tok','Yes','BUY',0.4,50,125,0.25,'ai',?,?,0)`).run(tradeId, o.status, o.resolvedAt);
   db.prepare(`UPDATE poly_signals SET paper_trade_id=? WHERE id=?`).run(tradeId, tradeId);
@@ -150,10 +150,36 @@ function bootCalDb(): Database.Database {
       id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
       window_start INTEGER NOT NULL, window_end INTEGER NOT NULL,
       n_samples INTEGER NOT NULL, brier_score REAL, log_loss REAL, win_rate REAL,
-      curve_json TEXT NOT NULL);
+      curve_json TEXT NOT NULL, by_regime_json TEXT);
   `);
   return db;
 }
+
+describe('brierByRegime', () => {
+  it('empty input returns empty list', () => {
+    expect(brierByRegime([])).toEqual([]);
+  });
+  it('groups samples by regime and sorts by n desc', () => {
+    const out = brierByRegime([
+      { estimatedProb: 0.7, outcome: 1, regimeLabel: 'A' },
+      { estimatedProb: 0.3, outcome: 0, regimeLabel: 'A' },
+      { estimatedProb: 0.5, outcome: 1, regimeLabel: 'B' },
+    ]);
+    expect(out.map(g => g.regime)).toEqual(['A', 'B']);
+    expect(out[0]!.nSamples).toBe(2);
+    expect(out[1]!.nSamples).toBe(1);
+    expect(out[0]!.brierScore).toBeCloseTo((0.09 + 0.09) / 2, 6);
+  });
+  it('tags untagged samples as "unknown"', () => {
+    const out = brierByRegime([
+      { estimatedProb: 0.5, outcome: 1 },
+      { estimatedProb: 0.5, outcome: 0, regimeLabel: null },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.regime).toBe('unknown');
+    expect(out[0]!.nSamples).toBe(2);
+  });
+});
 
 describe('fetchResolvedSamples', () => {
   it('empty when no resolved trades in window', () => {
@@ -166,8 +192,8 @@ describe('fetchResolvedSamples', () => {
     insertResolved(db, { prob: 0.3, status: 'lost', resolvedAt: 200 });
     const out = fetchResolvedSamples(db, 0, 1000);
     expect(out).toHaveLength(2);
-    expect(out).toContainEqual({ estimatedProb: 0.7, outcome: 1 });
-    expect(out).toContainEqual({ estimatedProb: 0.3, outcome: 0 });
+    expect(out).toContainEqual({ estimatedProb: 0.7, outcome: 1, regimeLabel: null });
+    expect(out).toContainEqual({ estimatedProb: 0.3, outcome: 0, regimeLabel: null });
   });
 
   it('excludes voided trades', () => {
@@ -198,6 +224,18 @@ describe('composeSnapshot', () => {
     expect(composeSnapshot(bootCalDb(), 1_700_000_000_000, 30)).toBeNull();
   });
 
+  it('snapshot includes byRegime grouping', () => {
+    const db = bootCalDb();
+    const now = 1_700_000_000;
+    insertResolved(db, { prob: 0.7, status: 'won',  resolvedAt: now - 1000, regime: 'A' });
+    insertResolved(db, { prob: 0.3, status: 'lost', resolvedAt: now - 1000, regime: 'A' });
+    insertResolved(db, { prob: 0.6, status: 'won',  resolvedAt: now - 1000, regime: 'B' });
+    const snap = composeSnapshot(db, now * 1000, 30)!;
+    const labels = snap.byRegime.map(r => r.regime);
+    expect(labels).toContain('A');
+    expect(labels).toContain('B');
+  });
+
   it('produces full snapshot with math + curve', () => {
     const db = bootCalDb();
     const now = 1_700_000_000;
@@ -218,6 +256,7 @@ describe('persistSnapshot + latestSnapshot', () => {
     createdAt: 100, windowStart: 0, windowEnd: 100, nSamples: 1,
     brierScore: 0.1, logLoss: 0.2, winRate: 1,
     curve: [{ bucket: 0, predLow: 0, predHigh: 0.1, count: 0, actualWinRate: null }],
+    byRegime: [{ regime: 'vnorm_bmix_ymid', nSamples: 1, brierScore: 0.1 }],
   };
 
   it('persist returns id; latest round-trips the snapshot', () => {
@@ -238,7 +277,7 @@ describe('persistSnapshot + latestSnapshot', () => {
     const emptyCurve = [{ bucket: 0, predLow: 0, predHigh: 0.1, count: 0, actualWinRate: null }];
     const base: CalibrationSnapshot = {
       createdAt: 0, windowStart: 0, windowEnd: 0, nSamples: 0,
-      brierScore: null, logLoss: null, winRate: 0, curve: emptyCurve,
+      brierScore: null, logLoss: null, winRate: 0, curve: emptyCurve, byRegime: [],
     };
     persistSnapshot(db, { ...base, createdAt: 200, brierScore: 0.5 });
     persistSnapshot(db, { ...base, createdAt: 100, brierScore: 0.9 });
@@ -269,7 +308,7 @@ describe('shouldRunCalibration', () => {
 describe('formatCalibrationAlert', () => {
   const baseSnap: CalibrationSnapshot = {
     createdAt: 0, windowStart: 0, windowEnd: 30 * 86400, nSamples: 12,
-    brierScore: 0.40, logLoss: 0.85, winRate: 0.42, curve: [],
+    brierScore: 0.40, logLoss: 0.85, winRate: 0.42, curve: [], byRegime: [],
   };
   it('null when n below MIN_ALERT_SAMPLES', () => {
     expect(formatCalibrationAlert({ ...baseSnap, nSamples: MIN_ALERT_SAMPLES - 1 }, 0.30)).toBeNull();

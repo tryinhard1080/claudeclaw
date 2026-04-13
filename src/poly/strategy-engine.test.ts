@@ -16,7 +16,10 @@ function bootDb(): Database.Database {
       market_price REAL, estimated_prob REAL, edge_pct REAL, confidence TEXT,
       reasoning TEXT, contrarian TEXT, approved INTEGER NOT NULL,
       rejection_reasons TEXT, paper_trade_id INTEGER,
-      prompt_version TEXT, model TEXT);
+      prompt_version TEXT, model TEXT, regime_label TEXT);
+    CREATE TABLE poly_regime_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
+      vix REAL, btc_dominance REAL, yield_10y REAL, regime_label TEXT NOT NULL);
     CREATE TABLE poly_paper_trades (
       id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
       market_slug TEXT, outcome_token_id TEXT, outcome_label TEXT, side TEXT,
@@ -211,6 +214,32 @@ describe('StrategyEngine.onScanComplete', () => {
     });
     await engine.onScanComplete({ markets: [mkMarket()] });
     expect(seenTokens).toEqual(['tok-yes']);
+  });
+
+  it('tags signal with latest regime_label when a snapshot exists', async () => {
+    db.prepare(`INSERT INTO poly_regime_snapshots (created_at, vix, btc_dominance, yield_10y, regime_label) VALUES (?,?,?,?,?)`)
+      .run(100, 18, 50, 4.2, 'vnorm_bmix_ymid');
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+    });
+    await engine.onScanComplete({ markets: [mkMarket()] });
+    const row = db.prepare(`SELECT regime_label FROM poly_signals`).get() as { regime_label: string | null };
+    expect(row.regime_label).toBe('vnorm_bmix_ymid');
+  });
+
+  it('regime_label is null when no snapshot yet (cold start)', async () => {
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+    });
+    await engine.onScanComplete({ markets: [mkMarket()] });
+    const row = db.prepare(`SELECT regime_label FROM poly_signals`).get() as { regime_label: string | null };
+    expect(row.regime_label).toBeNull();
   });
 
   it('limits evaluation to topN markets sorted by volume', async () => {

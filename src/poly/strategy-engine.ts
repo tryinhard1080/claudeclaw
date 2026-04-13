@@ -14,6 +14,7 @@ import {
 } from './risk-gates.js';
 import { execute, type SignalWithId } from './paper-broker.js';
 import { getDailyRealizedPnl } from './pnl-tracker.js';
+import { latestRegimeSnapshot } from './regime.js';
 
 const STRATEGY = 'ai-probability';
 const HALT_KEY = 'poly.halt';
@@ -230,20 +231,24 @@ export class StrategyEngine extends EventEmitter {
 
   private insertSignal(signal: Signal, approved: boolean, rejections: GateRejection[]): number {
     const nowSec = Math.floor(this.now() / 1000);
+    // Sprint 3 regime: tag with the latest regime snapshot at signal time so
+    // calibration can later bucket Brier by macro regime. Null-safe when no
+    // snapshot has been taken yet (first ticks after cold start).
+    const regime = latestRegimeSnapshot(this.db);
     // prompt_version + model (Sprint 2 versioning) let us A/B compare
     // strategy variants on the overlap set using Sprint 1's Brier metric.
     const info = this.db.prepare(`
       INSERT INTO poly_signals
         (created_at, market_slug, outcome_token_id, outcome_label, market_price,
          estimated_prob, edge_pct, confidence, reasoning, contrarian, approved,
-         rejection_reasons, prompt_version, model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         rejection_reasons, prompt_version, model, regime_label)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       nowSec, signal.marketSlug, signal.outcomeTokenId, signal.outcomeLabel,
       signal.marketPrice, signal.estimatedProb, signal.edgePct,
       signal.confidence, signal.reasoning, signal.contrarian ?? null,
       approved ? 1 : 0, rejections.length > 0 ? JSON.stringify(rejections) : null,
-      PROMPT_VERSION, POLY_MODEL,
+      PROMPT_VERSION, POLY_MODEL, regime?.regimeLabel ?? null,
     );
     return Number(info.lastInsertRowid);
   }

@@ -6,6 +6,7 @@ import { getPriceApproxHoursAgo } from './price-history.js';
 import { truncateForTelegram, fmtUsd, fmtPrice, truncateQuestion } from './format.js';
 import { getDailyRealizedPnl } from './pnl-tracker.js';
 import { latestSnapshot } from './calibration.js';
+import { latestRegimeSnapshot } from './regime.js';
 import { POLY_PAPER_CAPITAL } from '../config.js';
 
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
@@ -36,6 +37,8 @@ export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): 
           return void await ctx.reply(truncateForTelegram(renderPnl(db)).text);
         case 'calibration':
           return void await ctx.reply(truncateForTelegram(renderCalibration(db)).text);
+        case 'regime':
+          return void await ctx.reply(truncateForTelegram(renderRegime(db)).text);
         default:
           return void await ctx.reply(HELP);
       }
@@ -57,7 +60,8 @@ const HELP =
 /poly signals — last 10 signals (approved + rejected)
 /poly positions — open paper positions with unrealized P&L
 /poly pnl — daily + lifetime paper P&L summary
-/poly calibration — Brier / log loss / curve over recent resolutions`;
+/poly calibration — Brier / log loss / curve over recent resolutions
+/poly regime — latest macro regime snapshot (VIX / BTC dom / 10y yield)`;
 
 function renderMarkets(db: Database.Database): string {
   const rows = db.prepare(
@@ -316,5 +320,26 @@ export function renderCalibration(db: Database.Database): string {
     const actual = b.actualWinRate === null ? 'n/a' : `${(b.actualWinRate * 100).toFixed(0)}% won`;
     lines.push(`  ${lo}-${hi}%: n=${b.count} → ${actual}`);
   }
+  // Per-regime Brier (Sprint 3): shows whether the strategy miscalibrates
+  // in specific macro regimes. Empty when the calibration snapshot was
+  // taken before any regime-tagged signals had resolved.
+  if (snap.byRegime.length > 0) {
+    lines.push('', 'Brier by regime:');
+    for (const r of snap.byRegime.slice(0, 5)) {
+      const brier = r.brierScore === null ? 'n/a' : r.brierScore.toFixed(3);
+      lines.push(`  ${r.regime}: n=${r.nSamples} Brier=${brier}`);
+    }
+  }
   return lines.join('\n');
+}
+
+export function renderRegime(db: Database.Database): string {
+  const snap = latestRegimeSnapshot(db);
+  if (!snap) return 'No regime snapshot yet. Refresh fires every POLY_REGIME_REFRESH_MIN inside the scanner tick.';
+  const ageMin = Math.round((Math.floor(Date.now() / 1000) - snap.createdAt) / 60);
+  const fmt = (n: number | null, d = 2): string => n === null ? 'n/a' : n.toFixed(d);
+  return [
+    `Latest regime: ${snap.regimeLabel}  (age ${ageMin}m)`,
+    `VIX: ${fmt(snap.vix)}  BTC dominance: ${fmt(snap.btcDominance)}%  10y yield: ${fmt(snap.yield10y)}%`,
+  ].join('\n');
 }

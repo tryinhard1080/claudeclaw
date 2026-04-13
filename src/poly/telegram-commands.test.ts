@@ -173,7 +173,7 @@ describe('renderCalibration', () => {
       id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
       window_start INTEGER NOT NULL, window_end INTEGER NOT NULL,
       n_samples INTEGER NOT NULL, brier_score REAL, log_loss REAL, win_rate REAL,
-      curve_json TEXT NOT NULL);`);
+      curve_json TEXT NOT NULL, by_regime_json TEXT);`);
     return d;
   }
 

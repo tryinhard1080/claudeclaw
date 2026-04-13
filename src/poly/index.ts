@@ -9,6 +9,7 @@ import {
   POLY_CALIBRATION_HOUR,
   POLY_CALIBRATION_BRIER_ALERT,
   POLY_CALIBRATION_LOOKBACK_DAYS,
+  POLY_REGIME_REFRESH_MIN,
 } from '../config.js';
 import { MarketScanner } from './market-scanner.js';
 import { registerPolyCommands } from './telegram-commands.js';
@@ -20,6 +21,10 @@ import {
   composeSnapshot, persistSnapshot,
   shouldRunCalibration, formatCalibrationAlert, todayYmd,
 } from './calibration.js';
+import {
+  composeRegimeSnapshot, fetchRegimeInputs, latestRegimeSnapshot,
+  persistRegimeSnapshot, shouldRunRegimeSnapshot, defaultHttpJson,
+} from './regime.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -80,6 +85,32 @@ export function initPoly(opts: {
       ON poly_calibration_snapshots(created_at DESC);
   `);
 
+  // by_regime_json (Sprint 3) — idempotent add for installs that ran the
+  // v1.3.0 migration before v1.5.0 existed. Same PRAGMA-guard pattern as
+  // in the migration itself.
+  const calCols = new Set(
+    (opts.db.prepare(`PRAGMA table_info(poly_calibration_snapshots)`).all() as Array<{ name: string }>)
+      .map(c => c.name),
+  );
+  if (!calCols.has('by_regime_json')) {
+    opts.db.exec(`ALTER TABLE poly_calibration_snapshots ADD COLUMN by_regime_json TEXT`);
+  }
+
+  // Sprint 3: regime snapshots table. Defensive create so an upgraded
+  // install without `npm run migrate` doesn't crash every 5 minutes.
+  opts.db.exec(`
+    CREATE TABLE IF NOT EXISTS poly_regime_snapshots (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at    INTEGER NOT NULL,
+      vix           REAL,
+      btc_dominance REAL,
+      yield_10y     REAL,
+      regime_label  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_poly_regime_snapshots_created
+      ON poly_regime_snapshots(created_at DESC);
+  `);
+
   const scanner = new MarketScanner(opts.db, POLY_SCAN_INTERVAL_MIN * 60_000);
 
   // Phase C: strategy engine + P&L tracker + alerts. Engine subscribes to
@@ -99,6 +130,7 @@ export function initPoly(opts: {
   //   (2) A sender rejection would bypass the outer try/catch (it's inside
   //       a promise chain), causing unhandled rejections to accumulate.
   let digestInFlight = false;
+  let regimeInFlight = false;
   const digestTimer = setInterval(() => {
     try {
       if (digestInFlight) return;
@@ -152,6 +184,30 @@ export function initPoly(opts: {
               .then(() => polyKvSet(opts.db, 'poly.last_calibration_ymd', ymd))
               .catch(err => logger.warn({ err: String(err) }, 'calibration alert send failed; will retry next tick'));
           }
+        }
+      }
+      // Regime refresh tick — gated by last snapshot's created_at so a
+      // slow or failing upstream doesn't re-fire every 5 minutes. Network
+      // errors are isolated inside fetchRegimeInputs (per-upstream
+      // try/catch) so a persistent snapshot always lands even if one or
+      // two components fall back to 'unk'. regimeInFlight guards against
+      // overlapping HTTP cycles when one call hangs past the next tick.
+      if (!regimeInFlight) {
+        const last = latestRegimeSnapshot(opts.db);
+        if (shouldRunRegimeSnapshot({
+          refreshMinutes: POLY_REGIME_REFRESH_MIN,
+          lastRunAtSec: last?.createdAt ?? null,
+          nowSec: Math.floor(Date.now() / 1000),
+        })) {
+          regimeInFlight = true;
+          fetchRegimeInputs(defaultHttpJson)
+            .then(inputs => {
+              const snap = composeRegimeSnapshot(inputs, Math.floor(Date.now() / 1000));
+              persistRegimeSnapshot(opts.db, snap);
+              logger.info({ regime: snap.regimeLabel, vix: snap.vix, btcDom: snap.btcDominance, y10: snap.yield10y }, 'regime snapshot captured');
+            })
+            .catch(err => logger.warn({ err: String(err) }, 'regime snapshot failed (skipping tick)'))
+            .finally(() => { regimeInFlight = false; });
         }
       }
     } catch (err) {

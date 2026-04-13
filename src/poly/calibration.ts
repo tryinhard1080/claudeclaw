@@ -11,6 +11,33 @@ import { DateTime } from 'luxon';
 export interface ResolvedSample {
   estimatedProb: number;
   outcome: 0 | 1;
+  regimeLabel?: string | null;
+}
+
+export interface RegimeBrier {
+  regime: string;
+  nSamples: number;
+  brierScore: number | null;
+}
+
+/**
+ * Group resolved samples by regime_label and compute Brier per group.
+ * Signals missing a regime tag (pre-Sprint 3 rows or cold-start cycles)
+ * are lumped into 'unknown' so they remain visible rather than silently
+ * dropped — hiding unclassified data would bias the aggregate.
+ */
+export function brierByRegime(samples: ResolvedSample[]): RegimeBrier[] {
+  const groups = new Map<string, ResolvedSample[]>();
+  for (const s of samples) {
+    const key = s.regimeLabel ?? 'unknown';
+    const arr = groups.get(key);
+    if (arr) arr.push(s); else groups.set(key, [s]);
+  }
+  return Array.from(groups.entries())
+    .map(([regime, items]): RegimeBrier => ({
+      regime, nSamples: items.length, brierScore: brierScore(items),
+    }))
+    .sort((a, b) => b.nSamples - a.nSamples);
 }
 
 /**
@@ -78,6 +105,7 @@ export function calibrationCurve(samples: ResolvedSample[]): CurveBucket[] {
 interface RawRow {
   estimated_prob: number;
   status: string;
+  regime_label: string | null;
 }
 
 /**
@@ -91,7 +119,7 @@ export function fetchResolvedSamples(
   windowEndSec: number,
 ): ResolvedSample[] {
   const rows = db.prepare(`
-    SELECT s.estimated_prob, t.status
+    SELECT s.estimated_prob, t.status, s.regime_label
       FROM poly_paper_trades t
       INNER JOIN poly_signals s ON s.paper_trade_id = t.id
      WHERE t.status IN ('won','lost')
@@ -102,6 +130,7 @@ export function fetchResolvedSamples(
   return rows.map(r => ({
     estimatedProb: r.estimated_prob,
     outcome: r.status === 'won' ? 1 : 0,
+    regimeLabel: r.regime_label ?? null,
   }));
 }
 
@@ -114,6 +143,7 @@ export interface CalibrationSnapshot {
   logLoss: number | null;
   winRate: number;
   curve: CurveBucket[];
+  byRegime: RegimeBrier[];
 }
 
 /**
@@ -140,17 +170,20 @@ export function composeSnapshot(
     logLoss: logLoss(samples),
     winRate: wins / samples.length,
     curve: calibrationCurve(samples),
+    byRegime: brierByRegime(samples),
   };
 }
 
 export function persistSnapshot(db: Database.Database, snap: CalibrationSnapshot): number {
   const info = db.prepare(`
     INSERT INTO poly_calibration_snapshots
-      (created_at, window_start, window_end, n_samples, brier_score, log_loss, win_rate, curve_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (created_at, window_start, window_end, n_samples, brier_score, log_loss,
+       win_rate, curve_json, by_regime_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     snap.createdAt, snap.windowStart, snap.windowEnd, snap.nSamples,
-    snap.brierScore, snap.logLoss, snap.winRate, JSON.stringify(snap.curve),
+    snap.brierScore, snap.logLoss, snap.winRate,
+    JSON.stringify(snap.curve), JSON.stringify(snap.byRegime),
   );
   return Number(info.lastInsertRowid);
 }
@@ -158,14 +191,14 @@ export function persistSnapshot(db: Database.Database, snap: CalibrationSnapshot
 export function latestSnapshot(db: Database.Database): CalibrationSnapshot | null {
   const row = db.prepare(`
     SELECT created_at, window_start, window_end, n_samples,
-           brier_score, log_loss, win_rate, curve_json
+           brier_score, log_loss, win_rate, curve_json, by_regime_json
       FROM poly_calibration_snapshots
      ORDER BY created_at DESC, id DESC
      LIMIT 1
   `).get() as {
     created_at: number; window_start: number; window_end: number;
     n_samples: number; brier_score: number | null; log_loss: number | null;
-    win_rate: number; curve_json: string;
+    win_rate: number; curve_json: string; by_regime_json: string | null;
   } | undefined;
   if (!row) return null;
   return {
@@ -177,6 +210,7 @@ export function latestSnapshot(db: Database.Database): CalibrationSnapshot | nul
     logLoss: row.log_loss,
     winRate: row.win_rate,
     curve: JSON.parse(row.curve_json) as CurveBucket[],
+    byRegime: row.by_regime_json ? JSON.parse(row.by_regime_json) as RegimeBrier[] : [],
   };
 }
 
