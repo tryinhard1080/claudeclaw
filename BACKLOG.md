@@ -9,7 +9,7 @@ Richard's side-requests land here; bot prioritizes them against the EVOLUTION.md
 - **Trigger:** Richard 2026-04-13.
 - **Pitch:** Rich HTML reports, brokerage-confirmation parsing, newsletter ingestion, fallback alert channel.
 - **Effort:** Sprint Email-A (~3 hrs outbound) + Sprint Email-B (~4 hrs inbound).
-- **Blocker:** Richard must provide `AGENTMAIL_API_KEY` + destination email.
+- **Blocker status (2026-04-13):** `AGENTMAIL_API_KEY` received and loaded to `.env`. **Still blocked on `OPERATOR_EMAIL`** — Richard needs to specify the destination address where daily/weekly reports should go. Ask before Sprint Email-A starts.
 - **Research:** Done — see `docs/research/agent-mail-integration.md`.
 - **Verdict:** Accepted. Build after EVOLUTION.md Sprints 2-3 (versioning + regime). Reason: versioning unlocks A/B testing the email-vs-Telegram reporting efficacy; regime tagging enriches what goes in the reports. Email before either would ship partial signal.
 
