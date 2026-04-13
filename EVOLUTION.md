@@ -176,6 +176,16 @@ Each sprint = self-contained, shippable, tested.
 
 Each sprint's output flows into the next. By Sprint 6 we have a **measurable, versioned, regime-aware, backtested, adversarially-reviewed strategy** — that's the working definition of "world class" for an automated trading agent.
 
+### Additions from the 2026-04-13 self-improvement-loops research
+
+See `docs/research/self-improvement-loops.md`. Three additions:
+
+- **Sprint 1.5 — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. Each is an early-warning signal that precedes the kind of silent degradation that only surfaces as a loss. Small ticket, high information.
+- **Sprint 2.5 — Reflection pass on signals.** One extra API call per signal: second-LLM critic reads the initial estimate + contrarian, flags self-contradictions before the risk gate. Measure Brier delta in A/B against single-pass. ~1 day of work; this is the Reflexion / evaluator-optimizer pattern applied to signal generation. Prototype only once Sprint 2's versioning harness exists.
+- **`docs/learned/` distillation ledger (continuous).** Every adversarial-review finding, every calibration surprise, every resolved trade that diverged from the model → one-line entry with a rationale. Periodically condense into a SYSTEM_PROMPT update in `ai-probability.ts`. This is how the bot accumulates tacit knowledge across sessions.
+
+Explicitly NOT adding yet: multi-armed bandit routing over strategies (needs 3+ viable versions before it helps).
+
 ---
 
 ## 5. Anti-Patterns to Refuse

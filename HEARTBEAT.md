@@ -11,6 +11,7 @@ The bot's pulse. If any of these stop, something is wrong.
 | P&L tracker | 60 min | hardcoded in `PnlTracker.start` | reconcile open positions: mark-to-midpoint or resolve won/lost/voided |
 | Daily digest | once/day | `POLY_DIGEST_HOUR` in `POLY_TIMEZONE` | summarize state → Telegram |
 | Trading state poll | 5 sec | `src/trading/state-poller.ts` | read `instances/*/data/state.json` from regime-trader |
+| News sync | 2 hours | scheduled task `3d623e0e` | Perplexity Sonar (free) headline pass; Telegram-alert only on intersection with open positions or <48h macro events. Persists to `docs/news/YYYY-MM-DD-HHh.md`. |
 
 ## Halt Switches (in escalation order)
 
