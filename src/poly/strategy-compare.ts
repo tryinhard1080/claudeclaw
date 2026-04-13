@@ -169,10 +169,12 @@ export function compareStrategies(
   `).all(versionA, versionB) as RawJoinRow[];
 
   // Bucket by (slug, tokenId) → { versionA: prob, versionB: prob, outcome }.
+  // Key uses JSON.stringify of a tuple so slugs containing separator chars
+  // can't collide with a different (slug, tokenId) pair.
   interface Bucket { a?: number; b?: number; outcome: 0 | 1 }
   const buckets = new Map<string, Bucket>();
   for (const r of rows) {
-    const key = `${r.market_slug}|${r.outcome_token_id}`;
+    const key = JSON.stringify([r.market_slug, r.outcome_token_id]);
     const outcome: 0 | 1 = r.status === 'won' ? 1 : 0;
     const bucket = buckets.get(key) ?? { outcome };
     if (r.prompt_version === versionA) bucket.a = r.estimated_prob;
