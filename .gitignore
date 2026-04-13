@@ -45,3 +45,6 @@ agents/*/agent.yaml
 agents/*/CLAUDE.md
 logs/
 data/poly-probe/
+
+# Transient news-sync output (auto-pruned, see HEARTBEAT.md)
+docs/news/

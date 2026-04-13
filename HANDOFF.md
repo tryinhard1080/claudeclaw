@@ -1,171 +1,78 @@
-# Handoff -- ClaudeClaw
+# Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-12 (Polymarket bot — Phase A shipped, Phase C building blocks done through Task 14)
+- **Date**: 2026-04-13 (trading-only pivot + Sprints 1 & 2 shipped)
 - **Model**: Claude Opus 4.6 (1M context)
-- **Previous session**: 2026-04-11 (trading research deep dive, code review, regime-trader integration went live, Polymarket blueprint)
+- **Previous session**: 2026-04-12 (Polymarket Phase A+C tasks 0-14)
 
-## What Changed (2026-04-12, Polymarket Phase A+C build)
+## What Changed (2026-04-13)
 
-### Completed: Tasks 0-14 of `docs/superpowers/plans/2026-04-12-polymarket-bot.md`
+### Identity pivot — bot is now a trading-only partner
+Operator directive: "make this a first-class trading bot, single focus." New project-root identity files (read in this order before substantive work):
+- `TRUST.md` — partnership contract. Tier-2 default autonomy + Tier-3 ask-first list. Bright lines: no harm, no blackmail, no operator-data leak, no undisclosed real-money, no host-system file changes outside project scope, own-your-data clause. Decision hierarchy: TRUST > SOUL > operator > risk gates > MISSION gate > HEARTBEAT > CLAUDE.md > defaults.
+- `SOUL.md` — identity. Partnership FIRST, world-class self-improving trading agent second. Family-stakes constraint informs every risk decision. Three-layer arch (strategy / risk gates / execution) must stay separated.
+- `MISSION.md` — Q2 2026 objectives + real-money gate checklist + operator sign-off log.
+- `HEARTBEAT.md` — operational rhythm (5-min scans, 60-min PnL reconcile, daily digest, daily calibration, 2h news sync, halt switches).
+- `EVOLUTION.md` — 6-sprint self-improvement architecture (calibration → versioning → regime → ingestion → backtest → adversarial). Validated by Karpathy/Anthropic literature in `docs/research/self-improvement-loops.md`.
+- `BACKLOG.md` — parked side-requests; bot owns prioritization.
+- Project `CLAUDE.md` — rewritten to reflect trading-only mandate; old personal-assistant framing dropped.
 
-**Phase A (live + shippable):** scanner (15m interval), 5 `/poly` Telegram subcommands (`markets|market|trending|closing|status`), daily digest with timezone-aware gating. Wired into `src/index.ts` under `AGENT_ID === 'main'` via dynamic import. Gated by `POLY_ENABLED=true`.
+### Sprint 1 shipped — Calibration tracker
+- `migrations/v1.4.0/v1.4.0-calibration.ts` (actually v1.3.0 — see commits) — `poly_calibration_snapshots` table.
+- `src/poly/calibration.ts` — Brier score, log loss, 10-bucket calibration curve, snapshot composer/persist/latest, alert helper. 220 lines, 34 tests.
+- `/poly calibration` Telegram command + renderer.
+- Daily cron in `initPoly` 5-min tick (gated by `poly_kv` last-run-ymd, stamp-on-send-success).
+- Config: `POLY_CALIBRATION_HOUR=7`, `POLY_CALIBRATION_BRIER_ALERT=0.30`, `POLY_CALIBRATION_LOOKBACK_DAYS=30`.
+- Codex review: 2 P1/P2 fixes applied (defensive `CREATE TABLE IF NOT EXISTS` + stamp-after-send-success).
 
-**Phase C building blocks:** AI-probability strategy with persistent eval cache (`poly_eval_cache`, 2h TTL, auto-invalidating on prompt edit via `PROMPT_TEMPLATE_HASH`), three deterministic risk gates (position limits / portfolio health / signal quality — all pure, state passed in), transactional paper broker with drift-abort, hourly P&L tracker with injected market/midpoint fetchers for testability.
+### Sprint 2 shipped — Strategy versioning + A/B compare
+- `migrations/v1.4.0/v1.4.0-strategy-versioning.ts` — adds `prompt_version` + `model` columns to `poly_signals` (idempotent, preserves existing data).
+- `src/poly/strategy-compare.ts` — pure A/B compare with paired Brier deltas + two-tailed paired t-test (hand-rolled Lanczos ln-gamma + Lentz incomplete-beta — no stats lib). 222 lines, 15 tests.
+- `scripts/poly-strategy-compare.ts` CLI — `npx tsx scripts/poly-strategy-compare.ts v3 v4`.
+- Strategy engine writes `prompt_version='v3'` + `model='claude-opus-4-6'` on every new signal.
+- Live-verified: signals 118-124 carry tags; older 117 stay NULL (no corruption).
+- Self-audit fix: bucket key uses JSON tuple (collision-proof if slugs contain `|`).
 
-### New code
-- `src/poly/`: types, gamma-client, clob-client, market-scanner, price-history, telegram-commands, format, digest, index, strategies/ai-probability, risk-gates, paper-broker, pnl-tracker (+ tests for each — ~60 tests passing).
-- `migrations/v1.2.0/v1.2.0-poly.ts`: 6 `poly_*` tables, applied to DB.
-- `src/db.ts`: new `getDb()` accessor for raw handle.
-- `src/index.ts`: dynamic-import poly block under main-agent guard.
-- `scripts/poly-probe.ts`: throwaway API-shape probe (documented real field types in top comment).
-
-### Session commits (21 ahead of origin/main at push time)
-See `docs/superpowers/plans/2026-04-12-polymarket-bot.md` Task Map for commit-per-task table. Plus codex-review fix `713bad5` (tsc rootDir exclude + `/poly markets` slug discoverability).
-
-### Gotchas discovered and preserved in plan
-- Gamma `/markets/{slug}` returns 422; must use `/markets/{id}`.
-- `volume24hr`/`liquidity` come back as STRINGS from Gamma — schemas use `z.coerce.number()`.
-- No native `resolution` field on Gamma; use `outcomePrices[i] === 1.0` to detect winner.
-- `kv` table doesn't exist — poly module created its own `poly_kv` via `CREATE IF NOT EXISTS` in `initPoly()` (no new migration needed for a single table).
-- Migration test file excluded from tsc (rootDir conflict) — vitest still runs it.
-
-## Next Session Pickup — Task 15 (Strategy Engine)
-
-**File to create:** `src/poly/strategy-engine.ts` + test.
-
-**What it does:** Integration layer that ties Tasks 11-14 together into an actual trading loop.
-1. Subscribes to `MarketScanner` `scan_complete` event (already emitted by Task 7).
-2. Selects top-N markets by 24h volume (filter by `POLY_MIN_VOLUME_USD`, `POLY_MIN_TTR_HOURS`).
-3. For each YES outcome: calls `evaluateMarket` (Task 11 — LLM + eval cache).
-4. Computes `edgePct`, applies `POLY_KELLY_FRACTION` sizing, caps at `POLY_MAX_TRADE_USD`.
-5. Builds `PortfolioSnapshot` by querying `poly_paper_trades` + `poly_positions` + `getDailyRealizedPnl`.
-6. Calls `runAllGates(signal, snapshot, orderbookSnapshot)` (Task 12).
-7. Inserts signal row into `poly_signals` (approved or rejected with reasons).
-8. On approval: calls `execute()` (Task 13) → records `paper_trade_id` back on signal.
-9. Honors `poly_kv['poly.halt']='1'` as kill switch (no new signals when halted).
-
-**Then Tasks 16-18** (all light):
-- 16: Alerts — Telegram wrappers for signal-created, trade-filled, position-resolved.
-- 17: Phase C commands — `/poly signals`, `/poly positions`, `/poly pnl`.
-- 18: Wire Phase C into `src/index.ts` — mount `StrategyEngine` + `PnlTracker` alongside existing poly wiring.
-
-**Task 19** is human QA — run `POLY_ENABLED=true npm run start`, exercise `/poly` commands, wait for 1+ scan cycle, verify digest fires.
-
----
-
-## Previous Session (2026-04-11, trading integration session)
-
-### Equity Trading Research + Review + Integration (committed in ab4b6ce)
-- **`docs/trading-research-2025-2026.md`**: Perplexity Deep Research across 245 sources. 20+ validated strategies (Oct 2025-Apr 2026), tier ranking, regime analysis, combinability matrix, implementation priority, 10 red flags.
-- **`docs/mega-prompt-trading-bot.md`**: 3-phase mega prompt for integrating regime-trader with ClaudeClaw via file-based IPC.
-- **Code review findings fixed** (7 items):
-  - P0: busy-wait spin lock replaced with execSync (`src/index.ts`)
-  - P0: Graceful shutdown aborts in-flight queries + drains queue (`src/index.ts`, `src/state.ts`, `src/message-queue.ts`)
-  - P1: Scheduler replaced 60s polling with precision setTimeout (`src/scheduler.ts`)
-  - P1: Idempotency guard via `claimTaskExecution` (`src/scheduler.ts`, `src/db.ts`)
-  - P1: Dashboard rate limiter (60 req/min/IP, in-memory token bucket)
-  - P1: pm2 ecosystem config + headless start scripts
-  - P2: Decryption no longer silently returns ciphertext on format-matching failures
-  - Bonus: `extractKeywords` now preserves hyphens (was breaking "stop-loss", "take-profit" in FTS5)
-- **`src/trading/`** (6 files, ~600 LOC): Hub-and-spoke integration bridge to regime-trader
-  - `types.ts` -- TS types mirroring state.json
-  - `state-poller.ts` -- polls instances/*/data/state.json every 5s
-  - `instance-control.ts` -- subprocess wrapper for instance_manager.py
-  - `alerts.ts` -- rate-limited Telegram alert manager (15min/type/instance)
-  - `telegram-commands.ts` -- 10 /trade subcommands
-  - `index.ts` -- init + event wiring
-- **`/health` endpoint**: DB quick_check + Telegram connection status (no auth)
-- **Live confirmation**: Bot restarted via pm2, logs show "Trading integration initialized" + "Trading commands registered" for spy-aggressive and spy-conservative instances.
-
-### Polymarket Trading Bot Blueprint
-
-### Polymarket Trading Bot Blueprint
-- **`docs/mega-prompt-polymarket-bot.md`** (new, 836 lines): Complete blueprint for multi-strategy Polymarket prediction market trading bot. 7 sections: Context/Calibration, Strategy Portfolio, Multi-Agent Architecture, Risk Management (hard rules), ClaudeClaw Integration, Implementation Phases, Reference Library
-- **`docs/trading-research-2025-2026.md`** (extended, +96 lines): Added Category 6 (Prediction Market Strategies) with trader profiles (Domer, Theo, WindWalk3), ranked strategy table, key repos, threats, 20 new source citations
-- **Triggered by**: Bullpen CLI video review (Sharbel A. tutorial) -- naive copy trading approach found insufficient
-- **Architecture**: Multi-agent pipeline with bull/bear adversarial debate, fractional Kelly (1/4) sizing, 3 independent safety gates, multi-model LLM ensemble (Claude + Gemini + GPT)
-
-### Trading Integration Committed (was uncommitted from prior work)
-- Committed `src/trading/` regime-trader bridge (6 files, ~600 LOC)
-- Committed 7 P0/P1 reliability fixes from `docs/mega-prompt-trading-bot.md`
-- Committed pm2 ecosystem config + headless start scripts
-- Committed video analysis notes (research notes from earlier trading bot tutorials)
-
-### Housekeeping
-- **`.gitignore`**: Added `.claude/settings.local.json` (user-specific permissions shouldn't be tracked)
-- **Memory**: Added `project_polymarket_bot.md` to memory index
-
-## Last Session (2026-04-09, session 2) -- preserved for context
-
-## What Changed (2026-04-09, session 2)
-
-### User Profile System (Phase 1)
-- **`src/profile.ts`** (new): Profile CRUD with 60s cache TTL, loadProfile(), getProfileSummary(), updateProfile(), formatProfileForTelegram()
-- **`C:/claudeclaw-store/profile/*.md`** (6 files): identity, projects, preferences, workflows, contacts, goals -- pre-populated with known data
-- **`src/bot.ts`**: Profile injected on first turn of every session, `/profile` command (view/edit/refresh)
-- **`src/registry.ts`**: Registered `/profile` command
-- **`CLAUDE.md`**: Documented profile system and update instructions
-
-### Proactive Routines (Phase 2)
-- **`src/routines.ts`** (new): 5 routine definitions -- morning briefing (8am weekdays), evening wrap (6pm), weekly review (Mon 9am), inbox sweep (4h), project pulse (Wed 10am)
-- **`scripts/seed-routines.ts`** (new): Idempotent seeder for scheduled_tasks table
-- **`src/scheduler.ts`**: Dynamic prompt rebuild for system routines (fresh profile data at execution time)
-- **`src/db.ts`**: Added `routine_type` column migration to scheduled_tasks
-
-### Enhanced Context Injection (Phase 3)
-- **`src/context-builder.ts`**: Added buildTimeContext() (date/time/period), buildMomentumContext() (today's conversation focus), detectActiveProject() (keyword match against profile projects), buildEnhancedContext() (orchestrator)
-- **`src/bot.ts`**: Enhanced context injected every turn (both Telegram and dashboard paths)
-
-### Autonomous Skills (Phase 4)
-- **`src/auto-delegate.ts`** (new): Smart delegation detection by keyword patterns for research/comms/content/ops agents
-- **`src/learning.ts`** (new): Auto-extracts correction lessons via Gemini, stores in store/profile/lessons.md, injects top 5 into context
-- **`src/notifications.ts`** (new): Priority-based notification system with quiet hours (9pm-7am) and digest batching
-- **`src/bot.ts`**: Learning extraction wired after saveConversationTurn (fire-and-forget)
-- **`src/index.ts`**: Notification system initialized alongside scheduler
-
-### New Project Skills (Phase 5)
-- **`skills/daily-briefing/SKILL.md`**: Morning briefing aggregation
-- **`skills/project-status/SKILL.md`**: Project health checks
-- **`skills/quick-capture/SKILL.md`**: Fast Obsidian note capture
+### Operational additions
+- 2-hour news-sync cron registered (`schedule-cli` task `3d623e0e`, fires `0 */2 * * *` from 8 AM).
+- `docs/research/INDEX.md` + 2 research notes (self-improvement-loops, agent-mail-integration).
+- `docs/news/` gitignored (transient cron output, auto-pruned at 7 days).
+- `.env` carries `ANTHROPIC_API_KEY` + `AGENTMAIL_API_KEY` (both gitignored).
 
 ## Current State
-- **Bot**: Online as @CCbot1080bot via pm2 (restarted this session with trading integration active)
-- **Dashboard**: localhost:3141 (hardened + rate-limited + /health endpoint)
-- **Scheduler**: Active (precision timer, was 60s polling). Routines NOT yet seeded -- need to run seed script.
-- **Trading integration**: LIVE. Polling `C:\Projects\regime-trader\instances\spy-aggressive` and `spy-conservative` state.json every 5s. `/trade` commands registered (status, regime, pnl, halt, resume, start, stop, backtest, alerts).
-- **Memory**: Consolidation working (verified in logs: memory ingested + consolidation complete)
-- **Profile**: 6 sections populated at C:/claudeclaw-store/profile/
-- **Tests**: 223/223 passing (14 test files) after all Phase 1 + 2 changes
-- **Telegram plugin**: Disabled in settings.json. 3 zombie bun processes killed in prior session.
 
-## Context Injection Stack (per message)
-1. Agent system prompt (CLAUDE.md) -- first turn only
-2. Runtime context (agent ID, model, uptime) -- first turn only
-3. User Profile (identity, projects, preferences) -- first turn only (~500 tokens)
-4. Enhanced context (time, momentum, project detection) -- every turn (~200 tokens)
-5. Learned behaviors (correction lessons) -- every turn (~100 tokens)
-6. Memory context (semantic + consolidations) -- every turn (variable)
-7. Recent task outputs -- every turn if applicable
-8. User message -- always last
+**Bot live (pm2 id 9, PID 21728):** Phase C running, scans every 5 min, ~24 signals/hour evaluated, 0 approvals so far (gates correctly blocking long-shot Polymarket markets). 745 pm2 restarts cumulative across all sessions.
+
+**Test count:** 163/163 poly suite green. Typecheck clean. Build clean.
+
+**Migration state:** v1.2.0 + v1.3.0 + v1.4.0 all applied to prod DB at `C:/claudeclaw-store/claudeclaw.db`.
+
+**Branches:** Only `main`. Feature branches `feat/calibration-tracker` + `feat/strategy-versioning` merged FF + deleted.
+
+## Inventory (delta from 2026-04-12)
+
+- **Source files added:** calibration.ts, strategy-compare.ts, 2 migration files, 2 migration tests, 1 CLI script.
+- **Tests added:** 18 sprint-1 + 18 sprint-2 = 36 net new tests (66 → 163 total cumulative).
+- **Memory entries added (this session):** 9 new under `~/.claude/projects/.../memory/`:
+  trading_pivot, research_first, superpowers_tdd, trust_and_autonomy, news_sync_2h, mega_prompt, full_autonomy, partnership_identity, dont_derail, host_environment, sprint1_calibration_shipped, sprint2_versioning_shipped.
+- **Docs added:** TRUST/SOUL/MISSION/HEARTBEAT/EVOLUTION/BACKLOG (all project root), 2 research notes, 2 sprint plans.
+- **Crons added:** 1 (news sync, task 3d623e0e).
 
 ## Next Steps
-1. **Smoke test /trade commands**: Send `/trade status`, `/trade regime`, `/trade pnl` in Telegram. Confirm state.json reads are working. Verify alerts fire on next regime change in regime-trader.
-2. **Start a regime-trader instance in paper mode** (if not already running): `cd C:\Projects\regime-trader && python instance_manager.py start spy-aggressive --mode paper`. Then `/trade status` in Telegram should show live equity.
-3. **Polymarket bot Phase 0**: Clone `Polymarket/agents`, `Polymarket/py-clob-client`, `dylanpersonguy/Fully-Autonomous-Polymarket-AI-Trading-Bot` for study. Set up Polymarket account + dedicated wallet ($100-200 test funds). Install Bullpen CLI for prototyping.
-4. **Seed routines** (still pending from last session): `STORE_DIR=C:/claudeclaw-store npx tsx scripts/seed-routines.ts`
-3. Wire profile auto-update from memory-ingest.ts (detect profile-worthy info in conversations)
-4. Write tests for security.ts, message-queue.ts (critical gaps from audit)
-5. Limit getMemoriesWithEmbeddings() to recent 50 (O(n) scan)
-6. Split bot.ts into smaller modules (now 1500+ LOC)
-7. FTS5 query injection fix (db.ts)
-8. Implement SDK Engine (RFC at docs/rfc-sdk-engine.md)
+
+1. **Sprint 3 — Regime tagging.** Add a `regime_snapshots` table (VIX bucket, BTC dominance, US 10y yield, days-to-major-event); annotate each signal at creation with current regime; expose per-regime Brier breakdown in `/poly calibration`. Closes the third foundational layer of the self-improvement loop. Estimated 4-6 hrs.
+2. **Sprint 1.5 (small) — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. Early-warning signals before P&L surfaces drift. ~2 hrs. Can interleave with Sprint 3.
+3. **Sprint Email-A** — outbound AgentMail integration (HTML daily reports, fallback alerts). **Blocker:** Richard must specify `OPERATOR_EMAIL` destination address before this can proceed. API key is already in `.env`.
+4. **Sprint 2.5 — Reflection pass on signals** (second-LLM critic for self-contradiction detection). Build after Sprint 3 lands; measure Brier delta via Sprint 2's A/B harness.
+
+Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **#1 (regime tagging)**.
 
 ## Gotchas & Notes
-- **Trading integration is file-based**: ClaudeClaw does NOT have trading logic. It polls `regime-trader/instances/*/data/state.json` and shells out to `instance_manager.py`. This keeps crash domains isolated -- either process can die without taking down the other.
-- **Codex --full scope fails on OneDrive paths**: `node codex-review.js --full` errors out because of how PowerShell escapes paths with spaces. Works fine on commit/branch modes. For full-codebase reviews, dispatch Explore + code-reviewer agents manually.
-- **Scheduler is no longer 60s polling**: It's a precision setTimeout that sleeps exactly until next due time (capped at 60s max). Tests in `src/scheduler.test.ts` still pass but mental model needs updating.
-- **Telegram plugin auto-re-enables**: Must kill zombie bun processes AND set plugin to false in settings.json. This session had 3 zombie processes at PIDs 175872, 105492, 141624.
-- **Profile lives off-repo**: Profile files at C:/claudeclaw-store/profile/ (same STORE_DIR as DB), NOT in project store/. This keeps them off OneDrive.
-- **Routines rebuild prompts dynamically**: Even though seed script writes a prompt to DB, the scheduler rebuilds it at execution time for system routines (isSystemRoutine check). This ensures fresh profile data.
-- **Enhanced context is every-turn**: Unlike profile (first turn only), time/momentum/project detection runs every message. Token cost is low (~200 tokens).
+
+- **Codex CLI is flaky on Windows PowerShell.** Crashed mid-stream twice this session reading skill/AGENTS files. Workaround: use `--commit HEAD` in shorter passes; if still fails, self-review small modules and document in commit message. Don't block on codex review for advisory-only code (offline scripts, pure math); do block for risk-gates / paper-broker / pnl-tracker changes.
+- **`CLAUDE.md` is in `.gitignore` BUT also tracked** (legacy from public-template phase). Edits commit fine; just confusing. Backlog: clean up `.gitignore` entry someday.
+- **Partial blocker tracking in BACKLOG.md.** AgentMail key arrived but `OPERATOR_EMAIL` still missing. BACKLOG documents this so a future session doesn't try to ship Sprint Email-A without asking.
+- **`docs/news/` is gitignored.** News cron writes there but content auto-prunes at 7 days. Don't surprise yourself by looking for these files in git history.
+- **Model identity tagged on every signal as `claude-opus-4-6`.** Pulled from `POLY_MODEL` config which defaults to that. If we ever switch models, A/B compare must respect the new value.
+- **Stale-training-data rule (memory `feedback_news_sync_2h`):** Claude 4.6 cutoff is ~May 2025; today is 2026-04-13. ~11 months of drift. Search-before-assert on anything time-sensitive.
+- **Two pasted credentials in `.env` this session.** Both private repo, both gitignored, both confirmed loaded. Bot will not echo or persist beyond `.env`.
