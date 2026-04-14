@@ -1,7 +1,7 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-13 (Sprints 3 + 4 shipped same day)
+- **Date**: 2026-04-13 (Sprints 3 + 4 + 5 shipped same day)
 - **Model**: Claude Opus 4.6 (1M context)
 - **Previous session**: 2026-04-13 earlier (trading-only pivot + Sprints 1 & 2)
 
@@ -35,6 +35,18 @@
 - Known: AQR Insights + Star Spangled Gamblers feed URLs redirect to landing pages, not RSS. 0 items fetched. Operator can patch `docs/research/feeds.json` with working alternatives.
 
 **Tests**: 441 total (earlier 458 count was stale — actual is 441). Typecheck + build clean.
+
+## What Changed (2026-04-13 Sprint 5)
+
+**Sprint 5 shipped — Backtesting harness.**
+- `migrations/v1.7.0/v1.7.0-resolutions-cache.ts` — `poly_resolutions` (slug PK, closed, outcomes_json, fetched_at, resolved_at). Cache populated on-demand.
+- `src/poly/backtest.ts` — `simulateOutcome` reuses `classifyResolution` from pnl-tracker for won/lost/voided semantics. YES-only BUY P&L math: won = shares×(1-entry), lost = -shares×entry, voided/open = 0. `runBacktest` aggregates. `composeMinEdgeSweep` runs across a threshold list. 14 unit tests + 3 migration.
+- `scripts/fetch-resolutions.ts` — iterates distinct slugs in poly_signals, rate-limited to ~10 req/sec, UPSERTs cache.
+- `scripts/backtest.ts` — loads + prints sweep table. `--from/--to/--kelly/--max-trade/--thresholds` flags.
+- **Insight the backtester surfaced**: 639 historical signals fall in edge range 0.1-2.5pp; none reach the production 8pp threshold. Sample rows show `p=0.005, mp=0.003` — long-shot tail markets where the LLM has near-zero informational edge. Strategy-level follow-up: add midpoint-price band filter (prefer 0.2-0.8 markets).
+- 13 distinct slugs in poly_signals (bot scans same top-volume markets repeatedly). 0 closed yet (~1 week of data — normal).
+
+**Tests**: 458 total (+17 net). Typecheck + build clean. v1.7.0 applied to prod DB.
 
 ## What Changed (2026-04-13)
 
@@ -91,22 +103,20 @@ Operator directive: "make this a first-class trading bot, single focus." New pro
 
 ## Next Steps
 
-1. **Sprint 5 — Backtesting harness** (EVOLUTION.md §4 #5). Replay strategy against historical Gamma snapshots. ~6-8 hrs. Unlocks safe parameter sweeps + A/B without risking capital.
-2. **Sprint 1.5 — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. Early-warning signals before P&L surfaces drift. ~2 hrs. Interleaves well.
-3. **Sprint 2.5 — Reflection pass on signals** (second-LLM critic for self-contradiction detection). Now that Sprints 2 + 3 land, Brier delta measurable via A/B harness with regime slices.
-4. **Sprint 4.5 — NotebookLM upload wiring.** Operator creates a trading notebook in NotebookLM, sets `POLY_RESEARCH_NOTEBOOK_ID`, research-ingest auto-uploads. Code path already shipped — just needs the notebook ID and re-run.
-5. **Feed URL cleanup.** AQR Insights + Star Spangled Gamblers need working RSS URLs. Low priority.
-6. **Sprint Email-A** — still blocked on `OPERATOR_EMAIL`.
+1. **Sprint 5.5 — Market-price band filter.** Strategy-level fix for the long-shot tail bias the backtester exposed. Add `POLY_MIN_MARKET_PRICE` / `POLY_MAX_MARKET_PRICE` (defaults 0.15 / 0.85) to the candidate selector so we stop evaluating markets where the LLM has no meaningful informational edge. ~1 hr. **Highest-impact next sprint** — the bot will start generating actionable signals instead of 639 near-zero-edge ones.
+2. **Sprint 6 — Adversarial review cron** (EVOLUTION.md §4 #6). Weekly red-team report on recent decisions via `adversarial-review` skill. ~2-3 hrs.
+3. **Sprint 2.5 — Reflection pass on signals.** Second-LLM critic for self-contradiction detection. Measure Brier delta via Sprint 2's A/B harness. ~1 day.
+4. **Sprint 1.5 — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. ~2 hrs. Interleaves.
+5. **Sprint 4.5 — NotebookLM upload wiring.** Operator creates a trading notebook, sets `POLY_RESEARCH_NOTEBOOK_ID`, research-ingest auto-uploads. Code path shipped.
+6. **Feed URL cleanup** (AQR, Star Spangled Gamblers). Low priority.
+7. **Sprint Email-A** — still blocked on `OPERATOR_EMAIL`.
 
-Selection rule: bot picks based on dependency order × marginal P&L impact. Default next sprint is **#1 (backtesting harness)** — highest impact; enables safe strategy iteration, which compounds with Sprints 2/3's measurement infra.
+Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **#1 (market-price band filter)** — Tier-2 strategy fix surfaced directly by Sprint 5's backtest, gets bot into the right slice of the market.
 
 **Operational watch items:**
 - Regime snapshots in `poly_regime_snapshots` every 15 min.
 - Weekly research ingest fires Sun 06:00 ET (task 3de52de7).
-
-Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **#1 (research ingestion)** — the data edge compounds and the next two sprints (2.5 reflection, 5 backtest) depend on having reference material indexed.
-
-**Operational watch item**: regime snapshots should appear in `poly_regime_snapshots` every 15 min. First one fires within 5 min of boot. If empty after 30 min, check pm2 logs for upstream fetch errors (Yahoo/CoinGecko rate limits). Command: `/poly regime` in Telegram.
+- Resolution cache: refresh via `npx tsx scripts/fetch-resolutions.ts` before each backtest run. Consider scheduling weekly once closed-count > 20.
 
 ## Gotchas & Notes
 
