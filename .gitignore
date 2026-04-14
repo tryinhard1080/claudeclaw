@@ -48,3 +48,6 @@ data/poly-probe/
 
 # Transient news-sync output (auto-pruned, see HEARTBEAT.md)
 docs/news/
+
+# Sprint 4 research ingestion run summaries — content is also in SQLite
+docs/research/ingestions/

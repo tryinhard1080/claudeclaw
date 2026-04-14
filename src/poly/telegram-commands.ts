@@ -7,6 +7,7 @@ import { truncateForTelegram, fmtUsd, fmtPrice, truncateQuestion } from './forma
 import { getDailyRealizedPnl } from './pnl-tracker.js';
 import { latestSnapshot } from './calibration.js';
 import { latestRegimeSnapshot } from './regime.js';
+import { latestItems as latestResearchItems } from './research-ingest.js';
 import { POLY_PAPER_CAPITAL } from '../config.js';
 
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
@@ -39,6 +40,8 @@ export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): 
           return void await ctx.reply(truncateForTelegram(renderCalibration(db)).text);
         case 'regime':
           return void await ctx.reply(truncateForTelegram(renderRegime(db)).text);
+        case 'research':
+          return void await ctx.reply(truncateForTelegram(renderResearch(db)).text);
         default:
           return void await ctx.reply(HELP);
       }
@@ -61,7 +64,8 @@ const HELP =
 /poly positions — open paper positions with unrealized P&L
 /poly pnl — daily + lifetime paper P&L summary
 /poly calibration — Brier / log loss / curve over recent resolutions
-/poly regime — latest macro regime snapshot (VIX / BTC dom / 10y yield)`;
+/poly regime — latest macro regime snapshot (VIX / BTC dom / 10y yield)
+/poly research — last 10 ingested research items`;
 
 function renderMarkets(db: Database.Database): string {
   const rows = db.prepare(
@@ -329,6 +333,25 @@ export function renderCalibration(db: Database.Database): string {
       const brier = r.brierScore === null ? 'n/a' : r.brierScore.toFixed(3);
       lines.push(`  ${r.regime}: n=${r.nSamples} Brier=${brier}`);
     }
+  }
+  return lines.join('\n');
+}
+
+export function renderResearch(db: Database.Database): string {
+  let rows: ReturnType<typeof latestResearchItems>;
+  try {
+    rows = latestResearchItems(db, 10);
+  } catch {
+    // research_items table may not exist on pre-v1.6.0 installs.
+    return 'No research ingested yet. Run: npx tsx scripts/research-ingest.ts';
+  }
+  if (rows.length === 0) return 'No research ingested yet. Run: npx tsx scripts/research-ingest.ts';
+  const lines: string[] = [`Latest ${rows.length} research items:`, ''];
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const r of rows) {
+    const ageHrs = Math.max(0, Math.round((nowSec - r.fetchedAt) / 3600));
+    const ageStr = ageHrs < 24 ? `${ageHrs}h` : `${Math.round(ageHrs / 24)}d`;
+    lines.push(`${ageStr}  [${r.source}] ${truncateQuestion(r.title, 70)}`);
   }
   return lines.join('\n');
 }

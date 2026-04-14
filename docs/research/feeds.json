@@ -1,0 +1,32 @@
+[
+  {
+    "name": "AQR Insights",
+    "url": "https://www.aqr.com/Insights/Research/rss",
+    "tier": 1
+  },
+  {
+    "name": "arXiv q-fin",
+    "url": "https://arxiv.org/rss/q-fin",
+    "tier": 1
+  },
+  {
+    "name": "Marc Rubinstein - Net Interest",
+    "url": "https://www.netinterest.co/feed",
+    "tier": 1
+  },
+  {
+    "name": "Domer - Polymarket",
+    "url": "https://domahhhh.substack.com/feed",
+    "tier": 1
+  },
+  {
+    "name": "Star Spangled Gamblers",
+    "url": "https://www.starspangledgamblers.com/feed",
+    "tier": 1
+  },
+  {
+    "name": "Of Dollars and Data",
+    "url": "https://ofdollarsanddata.com/feed/",
+    "tier": 1
+  }
+]
