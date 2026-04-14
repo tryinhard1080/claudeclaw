@@ -1,7 +1,16 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-13 (Sprints 3 + 4 + 5 shipped same day)
+- **Date**: 2026-04-13 (Sprints 3 + 4 + 5 + 5.5 shipped same day)
+
+## What Changed (2026-04-13 Sprint 5.5)
+
+**Sprint 5.5 shipped — Market-price band filter.** Strategy-level fix surfaced by Sprint 5 backtest.
+- `src/poly/strategy-engine.ts` `selectCandidates`: filters out markets where YES price is outside `[POLY_MIN_MARKET_PRICE, POLY_MAX_MARKET_PRICE]` (defaults 0.15/0.85).
+- `src/config.ts`: `POLY_MIN_MARKET_PRICE=0.15`, `POLY_MAX_MARKET_PRICE=0.85`.
+- Test coverage: long-shot (0.02) + near-cert (0.95) + in-band (0.4) → only in-band market evaluated.
+- **Expected effect**: signal count per scan drops sharply but each remaining signal has potential for real edge. Measure over 7 days via `/poly signals`.
+- pm2 restarted. 459 tests. Commit: sprint 5.5 in HANDOFF above.
 - **Model**: Claude Opus 4.6 (1M context)
 - **Previous session**: 2026-04-13 earlier (trading-only pivot + Sprints 1 & 2)
 
