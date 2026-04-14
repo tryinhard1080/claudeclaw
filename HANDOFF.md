@@ -1,7 +1,7 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-13 (Sprint 3 regime tagging shipped)
+- **Date**: 2026-04-13 (Sprints 3 + 4 shipped same day)
 - **Model**: Claude Opus 4.6 (1M context)
 - **Previous session**: 2026-04-13 earlier (trading-only pivot + Sprints 1 & 2)
 
@@ -20,6 +20,21 @@
 - Migration applied to prod DB via `npm run migrate` (v1.4.0 → v1.5.0). pm2 restarted clean.
 
 **Tests**: 458 total (+36 vs previous session). Typecheck + build clean.
+
+## What Changed (2026-04-13 Sprint 4)
+
+**Sprint 4 shipped — Research ingestion pipeline.**
+- `migrations/v1.6.0/v1.6.0-research-ingest.ts` — `research_items` table with `UNIQUE(url)` dedupe + `upload_status` tracking. Indexed on fetched_at / source / upload_status.
+- `src/poly/research-ingest.ts` — tolerant RSS 2.0 + Atom 1.0 regex parser (no XML dep), DAO, `validateFeedConfig`, `composeNoteContent`, `ingestFeed` orchestrator. HTTP fn injectable for tests. 15 tests + 3 migration tests.
+- `docs/research/feeds.json` — 6 Tier-1 sources seeded (AQR, arXiv q-fin, Net Interest, Domer, Star Spangled Gamblers, Of Dollars and Data).
+- `scripts/research-ingest.ts` CLI — `--tier N` / `--all-tiers` flags; writes run summary to `docs/research/ingestions/YYYY-MM-DD.md` (gitignored). Reads/writes prod DB.
+- Optional NotebookLM upload path gated by `POLY_RESEARCH_NOTEBOOK_ID` env var (no-op until operator creates a trading notebook). Uses `nlm note create` via child_process.
+- `/poly research` Telegram command shows last 10 ingested items.
+- Weekly cron registered: task `3de52de7`, `0 6 * * 0` ET.
+- Live smoke: 45 items ingested across arXiv q-fin, Net Interest, Of Dollars and Data. Second run: 0 new — UNIQUE dedupe confirmed.
+- Known: AQR Insights + Star Spangled Gamblers feed URLs redirect to landing pages, not RSS. 0 items fetched. Operator can patch `docs/research/feeds.json` with working alternatives.
+
+**Tests**: 441 total (earlier 458 count was stale — actual is 441). Typecheck + build clean.
 
 ## What Changed (2026-04-13)
 
@@ -76,11 +91,18 @@ Operator directive: "make this a first-class trading bot, single focus." New pro
 
 ## Next Steps
 
-1. **Sprint 4 — Research ingestion pipeline.** Per EVOLUTION.md §4: NotebookLM auto-feed from Tier-1 sources (AQR, Domer, Matt Levine, arXiv q-fin). RSS/Substack → docling-provenance → `nlm` upload cron. ~3-5 hrs. Information edge compounds weekly.
-2. **Sprint 1.5 — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. Early-warning signals before P&L surfaces drift. ~2 hrs. Can interleave.
-3. **Sprint 2.5 — Reflection pass on signals** (second-LLM critic for self-contradiction detection). Now that Sprint 3 lands, Brier delta measurable via Sprint 2's A/B harness with regime slices.
-4. **Sprint Email-A** — outbound AgentMail integration. **Still blocked:** `OPERATOR_EMAIL` destination unknown.
-5. **Sprint 5 — Backtesting harness** (EVOLUTION.md §4 #5). Replay strategy against historical Gamma snapshots. ~6-8 hrs.
+1. **Sprint 5 — Backtesting harness** (EVOLUTION.md §4 #5). Replay strategy against historical Gamma snapshots. ~6-8 hrs. Unlocks safe parameter sweeps + A/B without risking capital.
+2. **Sprint 1.5 — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. Early-warning signals before P&L surfaces drift. ~2 hrs. Interleaves well.
+3. **Sprint 2.5 — Reflection pass on signals** (second-LLM critic for self-contradiction detection). Now that Sprints 2 + 3 land, Brier delta measurable via A/B harness with regime slices.
+4. **Sprint 4.5 — NotebookLM upload wiring.** Operator creates a trading notebook in NotebookLM, sets `POLY_RESEARCH_NOTEBOOK_ID`, research-ingest auto-uploads. Code path already shipped — just needs the notebook ID and re-run.
+5. **Feed URL cleanup.** AQR Insights + Star Spangled Gamblers need working RSS URLs. Low priority.
+6. **Sprint Email-A** — still blocked on `OPERATOR_EMAIL`.
+
+Selection rule: bot picks based on dependency order × marginal P&L impact. Default next sprint is **#1 (backtesting harness)** — highest impact; enables safe strategy iteration, which compounds with Sprints 2/3's measurement infra.
+
+**Operational watch items:**
+- Regime snapshots in `poly_regime_snapshots` every 15 min.
+- Weekly research ingest fires Sun 06:00 ET (task 3de52de7).
 
 Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **#1 (research ingestion)** — the data edge compounds and the next two sprints (2.5 reflection, 5 backtest) depend on having reference material indexed.
 
