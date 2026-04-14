@@ -4,6 +4,7 @@ import { logger } from '../logger.js';
 import {
   POLY_KELLY_FRACTION, POLY_MAX_TRADE_USD, POLY_MIN_VOLUME_USD,
   POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL, POLY_MODEL,
+  POLY_MIN_MARKET_PRICE, POLY_MAX_MARKET_PRICE,
 } from '../config.js';
 import type { Market, Signal, ProbabilityEstimate } from './types.js';
 import { bestAskAndDepth, fetchBook } from './clob-client.js';
@@ -37,6 +38,8 @@ export interface StrategyEngineOptions {
   topN?: number;
   maxTradeUsd?: number;
   kellyFraction?: number;
+  minYesPrice?: number;
+  maxYesPrice?: number;
   gateConfig?: GateConfig;
   evaluate?: EvaluateFn;
   fetchBook?: (tokenId: string) => Promise<ReturnType<typeof emptyBook> | import('./types.js').ClobBook | null>;
@@ -102,6 +105,8 @@ export class StrategyEngine extends EventEmitter {
   private readonly topN: number;
   private readonly maxTradeUsd: number;
   private readonly kellyFraction: number;
+  private readonly minYesPrice: number;
+  private readonly maxYesPrice: number;
   private readonly gateConfig: GateConfig;
   private readonly evaluate: EvaluateFn;
   private readonly fetchBookFn: NonNullable<StrategyEngineOptions['fetchBook']>;
@@ -117,6 +122,8 @@ export class StrategyEngine extends EventEmitter {
     this.topN = opts.topN ?? 20;
     this.maxTradeUsd = opts.maxTradeUsd ?? POLY_MAX_TRADE_USD;
     this.kellyFraction = opts.kellyFraction ?? POLY_KELLY_FRACTION;
+    this.minYesPrice = opts.minYesPrice ?? POLY_MIN_MARKET_PRICE;
+    this.maxYesPrice = opts.maxYesPrice ?? POLY_MAX_MARKET_PRICE;
     this.gateConfig = opts.gateConfig ?? defaultGateConfig();
     this.evaluate = opts.evaluate ?? (args => evaluateMarket(args));
     this.fetchBookFn = opts.fetchBook ?? fetchBook;
@@ -159,8 +166,20 @@ export class StrategyEngine extends EventEmitter {
   private selectCandidates(markets: Market[]): Market[] {
     const nowSec = Math.floor(this.now() / 1000);
     const minEnd = nowSec + this.minTtrHours * 3600;
+    // Sprint 5.5: band filter on YES price. Excludes long-shot tails
+    // (<minYesPrice) and near-certainties (>maxYesPrice) where the LLM
+    // has no meaningful edge over the market. Markets without a YES
+    // outcome are skipped — matches processMarket's existing behavior.
     return markets
-      .filter(m => !m.closed && m.volume24h >= this.minVolumeUsd && m.endDate >= minEnd)
+      .filter(m => {
+        if (m.closed) return false;
+        if (m.volume24h < this.minVolumeUsd) return false;
+        if (m.endDate < minEnd) return false;
+        const yes = m.outcomes.find(o => o.label.toLowerCase() === 'yes');
+        if (!yes) return false;
+        if (yes.price < this.minYesPrice || yes.price > this.maxYesPrice) return false;
+        return true;
+      })
       .sort((a, b) => b.volume24h - a.volume24h)
       .slice(0, this.topN);
   }

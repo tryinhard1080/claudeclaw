@@ -242,6 +242,34 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(row.regime_label).toBeNull();
   });
 
+  it('filters out markets outside the YES-price band (Sprint 5.5)', async () => {
+    let evalCalls = 0;
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      minYesPrice: 0.15, maxYesPrice: 0.85,
+      evaluate: async () => { evalCalls++; return mkEst(0.6); },
+      fetchBook: async () => mkBook(0.4, 1000),
+    });
+    const longShot = mkMarket({
+      slug: 'tail', outcomes: [
+        { label: 'Yes', tokenId: 'ty', price: 0.02 },
+        { label: 'No',  tokenId: 'tn', price: 0.98 },
+      ],
+    });
+    const nearCert = mkMarket({
+      slug: 'cert', outcomes: [
+        { label: 'Yes', tokenId: 'cy', price: 0.95 },
+        { label: 'No',  tokenId: 'cn', price: 0.05 },
+      ],
+    });
+    const inBand = mkMarket({ slug: 'mid' });  // 0.4/0.6
+    await engine.onScanComplete({ markets: [longShot, nearCert, inBand] });
+    expect(evalCalls).toBe(1);
+    const rows = db.prepare(`SELECT market_slug FROM poly_signals`).all() as Array<{ market_slug: string }>;
+    expect(rows.map(r => r.market_slug)).toEqual(['mid']);
+  });
+
   it('limits evaluation to topN markets sorted by volume', async () => {
     let evalCalls = 0;
     const engine = new StrategyEngine({

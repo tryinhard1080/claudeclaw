@@ -46,6 +46,8 @@ const envConfig = readEnvFile([
   'POLY_CALIBRATION_BRIER_ALERT',
   'POLY_CALIBRATION_LOOKBACK_DAYS',
   'POLY_REGIME_REFRESH_MIN',
+  'POLY_MIN_MARKET_PRICE',
+  'POLY_MAX_MARKET_PRICE',
   'POLY_RESEARCH_NOTEBOOK_ID',
   'ANTHROPIC_API_KEY',
 ]);
@@ -235,6 +237,12 @@ export const POLY_CALIBRATION_HOUR = num('POLY_CALIBRATION_HOUR', 7);
 export const POLY_CALIBRATION_BRIER_ALERT = num('POLY_CALIBRATION_BRIER_ALERT', 0.30);
 export const POLY_CALIBRATION_LOOKBACK_DAYS = num('POLY_CALIBRATION_LOOKBACK_DAYS', 30);
 export const POLY_REGIME_REFRESH_MIN = num('POLY_REGIME_REFRESH_MIN', 15);
+// Sprint 5.5 band filter — exclude long-shot tails where the LLM has
+// near-zero informational edge. Sprint 5 backtest showed 639 signals
+// at edge 0.1-2.5pp because we were evaluating 0.3%-2% probability
+// markets. 0.15-0.85 keeps us in the middle of the probability space.
+export const POLY_MIN_MARKET_PRICE = num('POLY_MIN_MARKET_PRICE', 0.15);
+export const POLY_MAX_MARKET_PRICE = num('POLY_MAX_MARKET_PRICE', 0.85);
 export const POLY_RESEARCH_NOTEBOOK_ID =
   process.env.POLY_RESEARCH_NOTEBOOK_ID || envConfig.POLY_RESEARCH_NOTEBOOK_ID || '';
 export const ANTHROPIC_API_KEY =
