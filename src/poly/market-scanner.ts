@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
 import { fetchActiveMarkets } from './gamma-client.js';
 import type { Market } from './types.js';
+import { recordScanRun } from './drift.js';
 
 export class MarketScanner extends EventEmitter {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -34,10 +35,30 @@ export class MarketScanner extends EventEmitter {
       upsertMarkets(this.db, markets);
       capturePrices(this.db, markets);
       pruneOldPrices(this.db);
-      logger.info({ count: markets.length, ms: Date.now() - started }, 'poly scan complete');
+      const duration = Date.now() - started;
+      logger.info({ count: markets.length, ms: duration }, 'poly scan complete');
+      // Sprint 1.5: persist per-run metrics for drift dashboards. Wrapped
+      // in try/catch so a scan-run write failure can't break the tick.
+      try {
+        recordScanRun(this.db, {
+          startedAt: Math.floor(started / 1000),
+          durationMs: duration,
+          marketCount: markets.length,
+          status: 'ok',
+        });
+      } catch (e) {
+        logger.warn({ err: String(e) }, 'recordScanRun failed');
+      }
       this.emit('scan_complete', { markets });
     } catch (err) {
       logger.error({ err: String(err) }, 'poly scan failed');
+      try {
+        recordScanRun(this.db, {
+          startedAt: Math.floor(started / 1000),
+          durationMs: null, marketCount: null,
+          status: 'error', error: String(err).slice(0, 200),
+        });
+      } catch { /* table may not exist on pre-v1.8.0 installs */ }
       this.emit('scan_error', { error: String(err) });
     } finally {
       this.scanning = false;

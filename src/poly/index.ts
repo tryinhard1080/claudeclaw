@@ -96,6 +96,21 @@ export function initPoly(opts: {
     opts.db.exec(`ALTER TABLE poly_calibration_snapshots ADD COLUMN by_regime_json TEXT`);
   }
 
+  // Sprint 1.5 drift dashboards — scan run log. Defensive IF NOT EXISTS
+  // so upgraded installs don't crash on the scanner's first recordScanRun.
+  opts.db.exec(`
+    CREATE TABLE IF NOT EXISTS poly_scan_runs (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at   INTEGER NOT NULL,
+      duration_ms  INTEGER,
+      market_count INTEGER,
+      status       TEXT NOT NULL,
+      error        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_poly_scan_runs_started
+      ON poly_scan_runs(started_at DESC);
+  `);
+
   // Sprint 3: regime snapshots table. Defensive create so an upgraded
   // install without `npm run migrate` doesn't crash every 5 minutes.
   opts.db.exec(`

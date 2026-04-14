@@ -8,6 +8,7 @@ import { getDailyRealizedPnl } from './pnl-tracker.js';
 import { latestSnapshot } from './calibration.js';
 import { latestRegimeSnapshot } from './regime.js';
 import { latestItems as latestResearchItems } from './research-ingest.js';
+import { composeDriftReport, formatDriftReport } from './drift.js';
 import { POLY_PAPER_CAPITAL } from '../config.js';
 
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
@@ -42,6 +43,8 @@ export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): 
           return void await ctx.reply(truncateForTelegram(renderRegime(db)).text);
         case 'research':
           return void await ctx.reply(truncateForTelegram(renderResearch(db)).text);
+        case 'drift':
+          return void await ctx.reply(truncateForTelegram(renderDrift(db)).text);
         default:
           return void await ctx.reply(HELP);
       }
@@ -65,7 +68,8 @@ const HELP =
 /poly pnl — daily + lifetime paper P&L summary
 /poly calibration — Brier / log loss / curve over recent resolutions
 /poly regime — latest macro regime snapshot (VIX / BTC dom / 10y yield)
-/poly research — last 10 ingested research items`;
+/poly research — last 10 ingested research items
+/poly drift — 24h scan latency, market count trend, rejection mix`;
 
 function renderMarkets(db: Database.Database): string {
   const rows = db.prepare(
@@ -335,6 +339,15 @@ export function renderCalibration(db: Database.Database): string {
     }
   }
   return lines.join('\n');
+}
+
+export function renderDrift(db: Database.Database): string {
+  try {
+    const report = composeDriftReport(db, Math.floor(Date.now() / 1000), 24);
+    return formatDriftReport(report);
+  } catch {
+    return 'Drift metrics unavailable — poly_scan_runs table may not exist. Run: npm run migrate';
+  }
 }
 
 export function renderResearch(db: Database.Database): string {

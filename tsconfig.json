@@ -16,5 +16,5 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/poly/migration.test.ts", "src/poly/calibration-migration.test.ts", "src/poly/strategy-versioning-migration.test.ts", "src/poly/regime-migration.test.ts", "src/poly/research-ingest-migration.test.ts", "src/poly/backtest-migration.test.ts"]
+  "exclude": ["node_modules", "dist", "src/poly/migration.test.ts", "src/poly/calibration-migration.test.ts", "src/poly/strategy-versioning-migration.test.ts", "src/poly/regime-migration.test.ts", "src/poly/research-ingest-migration.test.ts", "src/poly/backtest-migration.test.ts", "src/poly/scan-runs-migration.test.ts"]
 }
