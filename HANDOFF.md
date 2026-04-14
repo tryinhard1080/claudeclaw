@@ -1,7 +1,17 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-13 (Sprints 3 + 4 + 5 + 5.5 + 6 shipped same day)
+- **Date**: 2026-04-13 (Sprints 3 + 4 + 5 + 5.5 + 6 + 1.5 shipped same day)
+
+## What Changed (2026-04-13 Sprint 1.5)
+
+**Sprint 1.5 shipped — Drift dashboards.**
+- `migrations/v1.8.0/v1.8.0-scan-runs.ts` — `poly_scan_runs` (started_at, duration_ms, market_count, status, error). One row per tick.
+- `src/poly/drift.ts` — pure `percentile`, `latencyStats`, `rejectionMix`, `marketCountTrend` (baseline excludes latest), `composeDriftReport`, `formatDriftReport`. 13 unit + 2 migration tests.
+- `market-scanner.runOnce` writes ok/error rows every tick, wrapped in try/catch.
+- `/poly drift` — 24h p50/p95/p99 + market count trend + rejection mix by gate.
+- Live render surfaces the data: `signal_quality: 668 (99%), position_limits: 5 (1%)` — Sprint 5's long-shot bias now visible at operator glance.
+- 474 tests. pm2 restarted.
 
 ## What Changed (2026-04-13 Sprint 6)
 
