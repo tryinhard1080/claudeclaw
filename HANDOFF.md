@@ -1,7 +1,15 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-13 (Sprints 3 + 4 + 5 + 5.5 shipped same day)
+- **Date**: 2026-04-13 (Sprints 3 + 4 + 5 + 5.5 + 6 shipped same day)
+
+## What Changed (2026-04-13 Sprint 6)
+
+**Sprint 6 shipped — Adversarial review cron.** No code, pure scheduling.
+- Registered weekly Sunday 18:00 ET schedule (task `2c87cdca`).
+- Prompt instructs agent to answer four evidence-backed questions each week: worst trade, false-negative rejection, miscalibrated regime/category, drift concern. Output appended to `docs/research/weekly-adversarial-YYYY-MM-DD.md` + Telegram summary.
+- Skill: `adversarial-review` (or equivalent skeptical-QA analysis).
+- **Three weekly/periodic crons now live**: news-sync (2h, `3d623e0e`), research-ingest (Sun 06:00, `3de52de7`), adversarial-review (Sun 18:00, `2c87cdca`). First adversarial review fires 2026-04-19.
 
 ## What Changed (2026-04-13 Sprint 5.5)
 
@@ -120,7 +128,7 @@ Operator directive: "make this a first-class trading bot, single focus." New pro
 6. **Feed URL cleanup** (AQR, Star Spangled Gamblers). Low priority.
 7. **Sprint Email-A** — still blocked on `OPERATOR_EMAIL`.
 
-Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **#1 (market-price band filter)** — Tier-2 strategy fix surfaced directly by Sprint 5's backtest, gets bot into the right slice of the market.
+Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **Sprint 1.5 (drift dashboards)** or **Sprint 2.5 (reflection pass)** — both ~2-hr, both compound with measurement infra already in place.
 
 **Operational watch items:**
 - Regime snapshots in `poly_regime_snapshots` every 15 min.
