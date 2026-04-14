@@ -1,9 +1,25 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-13 (trading-only pivot + Sprints 1 & 2 shipped)
+- **Date**: 2026-04-13 (Sprint 3 regime tagging shipped)
 - **Model**: Claude Opus 4.6 (1M context)
-- **Previous session**: 2026-04-12 (Polymarket Phase A+C tasks 0-14)
+- **Previous session**: 2026-04-13 earlier (trading-only pivot + Sprints 1 & 2)
+
+## What Changed (2026-04-13 Sprint 3)
+
+**Sprint 3 shipped — Regime tagging + per-regime Brier.**
+- `migrations/v1.5.0/v1.5.0-regime-tagging.ts` — new `poly_regime_snapshots` table + `regime_label` col on `poly_signals` + `by_regime_json` col on `poly_calibration_snapshots`. Idempotent, data-preserving, indexed.
+- `src/poly/regime.ts` — pure bucket classifiers (`vixBucket`, `btcDomBucket`, `yieldBucket`), `composeRegimeTag`, composer/persistence DAO, `shouldRunRegimeSnapshot` gate, `fetchRegimeInputs` with per-upstream isolation. Free data sources: Yahoo `^VIX` + `^TNX`, CoinGecko `/global`. 27 tests.
+- `src/poly/regime-migration.test.ts` — 4 tests (schema + column + idempotency + data preservation).
+- Strategy engine writes `regime_label` from `latestRegimeSnapshot` on every signal. Null-safe on cold start.
+- Calibration now carries `byRegime: [{regime, nSamples, brierScore}]`; `/poly calibration` renders top-5 regimes.
+- `/poly regime` command shows latest snapshot (VIX / BTC dom / 10y yield + age).
+- `initPoly` 5-min tick runs regime refresh gated by `POLY_REGIME_REFRESH_MIN=15`. Network errors isolated in `try/catch`.
+- Config: `POLY_REGIME_REFRESH_MIN=15` added.
+- **Live bug caught**: Yahoo `^TNX` format is percent-direct (4.3 = 4.3%), not `×10` as earlier-draft code assumed. Caught by real-network smoke test before shipping. Tests now match prod format.
+- Migration applied to prod DB via `npm run migrate` (v1.4.0 → v1.5.0). pm2 restarted clean.
+
+**Tests**: 458 total (+36 vs previous session). Typecheck + build clean.
 
 ## What Changed (2026-04-13)
 
@@ -60,12 +76,15 @@ Operator directive: "make this a first-class trading bot, single focus." New pro
 
 ## Next Steps
 
-1. **Sprint 3 — Regime tagging.** Add a `regime_snapshots` table (VIX bucket, BTC dominance, US 10y yield, days-to-major-event); annotate each signal at creation with current regime; expose per-regime Brier breakdown in `/poly calibration`. Closes the third foundational layer of the self-improvement loop. Estimated 4-6 hrs.
-2. **Sprint 1.5 (small) — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. Early-warning signals before P&L surfaces drift. ~2 hrs. Can interleave with Sprint 3.
-3. **Sprint Email-A** — outbound AgentMail integration (HTML daily reports, fallback alerts). **Blocker:** Richard must specify `OPERATOR_EMAIL` destination address before this can proceed. API key is already in `.env`.
-4. **Sprint 2.5 — Reflection pass on signals** (second-LLM critic for self-contradiction detection). Build after Sprint 3 lands; measure Brier delta via Sprint 2's A/B harness.
+1. **Sprint 4 — Research ingestion pipeline.** Per EVOLUTION.md §4: NotebookLM auto-feed from Tier-1 sources (AQR, Domer, Matt Levine, arXiv q-fin). RSS/Substack → docling-provenance → `nlm` upload cron. ~3-5 hrs. Information edge compounds weekly.
+2. **Sprint 1.5 — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. Early-warning signals before P&L surfaces drift. ~2 hrs. Can interleave.
+3. **Sprint 2.5 — Reflection pass on signals** (second-LLM critic for self-contradiction detection). Now that Sprint 3 lands, Brier delta measurable via Sprint 2's A/B harness with regime slices.
+4. **Sprint Email-A** — outbound AgentMail integration. **Still blocked:** `OPERATOR_EMAIL` destination unknown.
+5. **Sprint 5 — Backtesting harness** (EVOLUTION.md §4 #5). Replay strategy against historical Gamma snapshots. ~6-8 hrs.
 
-Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **#1 (regime tagging)**.
+Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **#1 (research ingestion)** — the data edge compounds and the next two sprints (2.5 reflection, 5 backtest) depend on having reference material indexed.
+
+**Operational watch item**: regime snapshots should appear in `poly_regime_snapshots` every 15 min. First one fires within 5 min of boot. If empty after 30 min, check pm2 logs for upstream fetch errors (Yahoo/CoinGecko rate limits). Command: `/poly regime` in Telegram.
 
 ## Gotchas & Notes
 
