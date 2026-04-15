@@ -106,6 +106,87 @@ export function execute(
   }
 }
 
+export type ExitReason = 'take_profit' | 'stop_loss';
+
+export interface ShouldExitArgs {
+  entryPrice: number;
+  currentPrice: number;
+  takeProfitPct: number;
+  stopLossPct: number;
+}
+
+/**
+ * Sprint 8: pure exit-condition check on a YES-side BUY.
+ *   unrealized pct = (currentPrice - entryPrice) / entryPrice
+ * Take-profit fires first if both thresholds are somehow crossed (shouldn't
+ * be possible on a single tick, but deterministic order matters).
+ *
+ * Degenerate entryPrice (<=0) returns null — can't compute a percentage.
+ * Negative take-profit or stop-loss values are treated as disabled (0).
+ */
+export function shouldExit(args: ShouldExitArgs): { reason: ExitReason } | null {
+  const { entryPrice, currentPrice } = args;
+  if (entryPrice <= 0 || !Number.isFinite(entryPrice)) return null;
+  if (!Number.isFinite(currentPrice)) return null;
+  const tp = Math.max(0, args.takeProfitPct);
+  const sl = Math.max(0, args.stopLossPct);
+  const pct = (currentPrice - entryPrice) / entryPrice;
+  if (tp > 0 && pct >= tp) return { reason: 'take_profit' };
+  if (sl > 0 && pct <= -sl) return { reason: 'stop_loss' };
+  return null;
+}
+
+export interface ExitResult {
+  status: 'exited' | 'skipped';
+  realizedPnl?: number;
+  reason?: string;
+}
+
+/**
+ * Close an open paper position at `exitPrice`. Realized P&L for a YES BUY:
+ *   shares * (exitPrice - entryPrice)
+ * Uses `status='exited'` plus `voided_reason='exit:<reason>'`. Calibration
+ * and A/B compare queries filter on `status IN ('won','lost')` so exited
+ * trades are auto-excluded from Brier math — correct semantics, since we
+ * don't know the counterfactual outcome.
+ *
+ * The UPDATE is guarded `WHERE status='open'` so a concurrent resolver
+ * can't double-close a trade. Returns status='skipped' if the trade is
+ * already non-open.
+ */
+export function exitPosition(
+  db: Database.Database,
+  tradeId: number,
+  exitPrice: number,
+  reason: ExitReason,
+  nowMs: number = Date.now(),
+): ExitResult {
+  const trade = db.prepare(
+    `SELECT shares, entry_price, status FROM poly_paper_trades WHERE id = ?`,
+  ).get(tradeId) as { shares: number; entry_price: number; status: string } | undefined;
+  if (!trade) return { status: 'skipped', reason: 'trade_not_found' };
+  if (trade.status !== 'open') return { status: 'skipped', reason: `status=${trade.status}` };
+
+  const realized = trade.shares * (exitPrice - trade.entry_price);
+  const resolvedAt = Math.floor(nowMs / 1000);
+  const voidedReason = `exit:${reason}`;
+
+  const tx = db.transaction((): number => {
+    const update = db.prepare(
+      `UPDATE poly_paper_trades
+          SET status = 'exited', realized_pnl = ?, resolved_at = ?, voided_reason = ?
+        WHERE id = ? AND status = 'open'`,
+    ).run(realized, resolvedAt, voidedReason, tradeId);
+    if (update.changes !== 1) return 0;
+    db.prepare(`DELETE FROM poly_positions WHERE paper_trade_id = ?`).run(tradeId);
+    return 1;
+  });
+  const changed = tx();
+  if (changed !== 1) return { status: 'skipped', reason: 'concurrent_close' };
+  logger.info({ tradeId, exitPrice, realized, reason }, 'paper position exited');
+  return { status: 'exited', realizedPnl: realized, reason };
+}
+
 function abortSignal(db: Database.Database, signalId: number, reason: string): void {
   try {
     const reasonsJson = JSON.stringify([{ gate: 'exec_revalidation', reason }]);

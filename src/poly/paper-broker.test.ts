@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { execute, type SignalWithId } from './paper-broker.js';
+import { execute, exitPosition, shouldExit, type SignalWithId } from './paper-broker.js';
 
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
@@ -151,5 +151,98 @@ describe('paper broker execute', () => {
     const row = db.prepare(`SELECT approved, rejection_reasons FROM poly_signals WHERE id = ?`).get(signal.id) as { approved: number; rejection_reasons: string };
     expect(row.approved).toBe(0);
     expect(row.rejection_reasons).toMatch(/orderbook_changed_at_exec/);
+  });
+});
+
+describe('shouldExit (Sprint 8)', () => {
+  const baseThresholds = { takeProfitPct: 0.30, stopLossPct: 0.50 };
+
+  it('returns null when current price is within bounds', () => {
+    expect(shouldExit({ entryPrice: 0.4, currentPrice: 0.42, ...baseThresholds })).toBeNull();
+  });
+
+  it('fires take_profit at exactly the threshold', () => {
+    // 0.4 * 1.3 = 0.52
+    expect(shouldExit({ entryPrice: 0.4, currentPrice: 0.52, ...baseThresholds })).toEqual({ reason: 'take_profit' });
+  });
+
+  it('fires stop_loss at exactly the threshold', () => {
+    // 0.4 * 0.5 = 0.20
+    expect(shouldExit({ entryPrice: 0.4, currentPrice: 0.20, ...baseThresholds })).toEqual({ reason: 'stop_loss' });
+  });
+
+  it('take_profit takes precedence if both conditions somehow met', () => {
+    // Not physically possible on one tick but defensive: negative stop + high price
+    expect(shouldExit({ entryPrice: 0.4, currentPrice: 1.0, ...baseThresholds })).toEqual({ reason: 'take_profit' });
+  });
+
+  it('tp=0 disables take_profit', () => {
+    expect(shouldExit({ entryPrice: 0.4, currentPrice: 0.99, takeProfitPct: 0, stopLossPct: 0.5 })).toBeNull();
+  });
+
+  it('sl=0 disables stop_loss', () => {
+    expect(shouldExit({ entryPrice: 0.4, currentPrice: 0.01, takeProfitPct: 0.3, stopLossPct: 0 })).toBeNull();
+  });
+
+  it('returns null on degenerate entry price', () => {
+    expect(shouldExit({ entryPrice: 0, currentPrice: 0.5, ...baseThresholds })).toBeNull();
+    expect(shouldExit({ entryPrice: -0.1, currentPrice: 0.5, ...baseThresholds })).toBeNull();
+  });
+
+  it('treats negative threshold inputs as 0 (disabled)', () => {
+    expect(shouldExit({ entryPrice: 0.4, currentPrice: 0.99, takeProfitPct: -1, stopLossPct: -1 })).toBeNull();
+  });
+});
+
+describe('exitPosition (Sprint 8)', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = freshDb(); });
+
+  function seedOpenTrade(): number {
+    const signal = seedSignal(db);
+    const res = execute(db, signal, 0.4, 1000);
+    return res.tradeId!;
+  }
+
+  it('happy-path take_profit: writes status=exited, realized_pnl, deletes position', () => {
+    const tradeId = seedOpenTrade();
+    const res = exitPosition(db, tradeId, 0.55, 'take_profit');
+    expect(res.status).toBe('exited');
+    // shares=100, realized = 100 * (0.55 - 0.40) = 15
+    expect(res.realizedPnl).toBeCloseTo(15, 6);
+
+    const row = db.prepare(`SELECT status, realized_pnl, voided_reason FROM poly_paper_trades WHERE id=?`).get(tradeId) as {
+      status: string; realized_pnl: number; voided_reason: string;
+    };
+    expect(row.status).toBe('exited');
+    expect(row.realized_pnl).toBeCloseTo(15, 6);
+    expect(row.voided_reason).toBe('exit:take_profit');
+
+    const posCount = db.prepare(`SELECT COUNT(*) AS n FROM poly_positions WHERE paper_trade_id=?`).get(tradeId) as { n: number };
+    expect(posCount.n).toBe(0);
+  });
+
+  it('happy-path stop_loss: negative realized_pnl', () => {
+    const tradeId = seedOpenTrade();
+    const res = exitPosition(db, tradeId, 0.20, 'stop_loss');
+    // realized = 100 * (0.20 - 0.40) = -20
+    expect(res.realizedPnl).toBeCloseTo(-20, 6);
+    const row = db.prepare(`SELECT voided_reason FROM poly_paper_trades WHERE id=?`).get(tradeId) as { voided_reason: string };
+    expect(row.voided_reason).toBe('exit:stop_loss');
+  });
+
+  it('skips when trade not found', () => {
+    const res = exitPosition(db, 9999, 0.5, 'take_profit');
+    expect(res.status).toBe('skipped');
+    expect(res.reason).toBe('trade_not_found');
+  });
+
+  it('skips when trade already non-open (double-close guard)', () => {
+    const tradeId = seedOpenTrade();
+    exitPosition(db, tradeId, 0.55, 'take_profit');
+    const res = exitPosition(db, tradeId, 0.60, 'take_profit');
+    expect(res.status).toBe('skipped');
+    // Either status=exited (first call) or concurrent_close if stamped. Both acceptable.
+    expect(res.reason).toMatch(/status=exited|concurrent_close/);
   });
 });

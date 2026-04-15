@@ -191,6 +191,105 @@ describe('pnl-tracker', () => {
   });
 });
 
+describe('PnlTracker exit logic (Sprint 8)', () => {
+  it('take-profit: mid crosses +30% → trade status=exited, realized positive, position deleted, event emitted', async () => {
+    const db = freshDb();
+    const tradeId = seedOpenTrade(db, { entry: 0.4, shares: 100 });
+    const fetcher: MarketFetcher = async () => mkMarket({ closed: false, yesPrice: 0.55 });
+    const tracker = new PnlTracker(db, fetcher, async () => 0.55, {
+      exitEnabled: true, takeProfitPct: 0.30, stopLossPct: 0.50,
+    });
+    const events: Array<{ reason: string; realizedPnl: number }> = [];
+    tracker.on('position_exited', e => events.push({ reason: e.reason, realizedPnl: e.realizedPnl }));
+
+    const res = await tracker.runOnce();
+    expect(res.exited).toBe(1);
+    expect(res.resolved).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.reason).toBe('take_profit');
+    expect(events[0]!.realizedPnl).toBeCloseTo(15, 6); // 100 * (0.55 - 0.40)
+
+    const row = db.prepare(`SELECT status, realized_pnl FROM poly_paper_trades WHERE id=?`).get(tradeId) as { status: string; realized_pnl: number };
+    expect(row.status).toBe('exited');
+    expect(row.realized_pnl).toBeCloseTo(15, 6);
+    const n = (db.prepare(`SELECT COUNT(*) AS n FROM poly_positions`).get() as { n: number }).n;
+    expect(n).toBe(0);
+  });
+
+  it('stop-loss: mid crosses -50% → exited with negative realized', async () => {
+    const db = freshDb();
+    const tradeId = seedOpenTrade(db, { entry: 0.4, shares: 100 });
+    const fetcher: MarketFetcher = async () => mkMarket({ closed: false, yesPrice: 0.2 });
+    const tracker = new PnlTracker(db, fetcher, async () => 0.2, {
+      exitEnabled: true, takeProfitPct: 0.30, stopLossPct: 0.50,
+    });
+    const res = await tracker.runOnce();
+    expect(res.exited).toBe(1);
+    const row = db.prepare(`SELECT status, realized_pnl, voided_reason FROM poly_paper_trades WHERE id=?`).get(tradeId) as {
+      status: string; realized_pnl: number; voided_reason: string;
+    };
+    expect(row.status).toBe('exited');
+    expect(row.realized_pnl).toBeCloseTo(-20, 6);
+    expect(row.voided_reason).toBe('exit:stop_loss');
+  });
+
+  it('disabled: no exit even when thresholds cross, position updates normally', async () => {
+    const db = freshDb();
+    const tradeId = seedOpenTrade(db, { entry: 0.4, shares: 100 });
+    const fetcher: MarketFetcher = async () => mkMarket({ closed: false, yesPrice: 0.8 });
+    const tracker = new PnlTracker(db, fetcher, async () => 0.8, {
+      exitEnabled: false, takeProfitPct: 0.30, stopLossPct: 0.50,
+    });
+    const res = await tracker.runOnce();
+    expect(res.exited).toBe(0);
+    expect(res.updatedOpen).toBe(1);
+    const row = db.prepare(`SELECT status FROM poly_paper_trades WHERE id=?`).get(tradeId) as { status: string };
+    expect(row.status).toBe('open');
+  });
+
+  it('within bounds: no exit, unrealized pnl updates', async () => {
+    const db = freshDb();
+    seedOpenTrade(db, { entry: 0.4, shares: 100 });
+    const fetcher: MarketFetcher = async () => mkMarket({ closed: false, yesPrice: 0.42 });
+    const tracker = new PnlTracker(db, fetcher, async () => 0.42, {
+      exitEnabled: true, takeProfitPct: 0.30, stopLossPct: 0.50,
+    });
+    const res = await tracker.runOnce();
+    expect(res.exited).toBe(0);
+    expect(res.updatedOpen).toBe(1);
+    const pos = db.prepare(`SELECT current_price, unrealized_pnl FROM poly_positions`).get() as { current_price: number; unrealized_pnl: number };
+    expect(pos.current_price).toBe(0.42);
+    expect(pos.unrealized_pnl).toBeCloseTo(2, 6); // 100 * (0.42 - 0.40)
+  });
+
+  it('resolution still wins over exit check (closed market short-circuits)', async () => {
+    const db = freshDb();
+    const tradeId = seedOpenTrade(db, { entry: 0.4, shares: 100 });
+    // Market is closed YES won; exit conditions would also be met but resolution takes precedence.
+    const fetcher: MarketFetcher = async () => mkMarket({ closed: true, yesPrice: 1, noPrice: 0 });
+    const tracker = new PnlTracker(db, fetcher, async () => 1, {
+      exitEnabled: true, takeProfitPct: 0.30, stopLossPct: 0.50,
+    });
+    const res = await tracker.runOnce();
+    expect(res.resolved).toBe(1);
+    expect(res.exited).toBe(0);
+    const row = db.prepare(`SELECT status FROM poly_paper_trades WHERE id=?`).get(tradeId) as { status: string };
+    expect(row.status).toBe('won');
+  });
+
+  it('exited trades count toward daily realized pnl', async () => {
+    const db = freshDb();
+    seedOpenTrade(db, { entry: 0.4, shares: 100 });
+    const fetcher: MarketFetcher = async () => mkMarket({ closed: false, yesPrice: 0.6 });
+    const tracker = new PnlTracker(db, fetcher, async () => 0.6, {
+      exitEnabled: true, takeProfitPct: 0.30, stopLossPct: 0.50,
+    });
+    await tracker.runOnce(Date.now());
+    const daily = getDailyRealizedPnl(db, Date.now());
+    expect(daily).toBeCloseTo(20, 6); // 100 * (0.6 - 0.4)
+  });
+});
+
 describe('PnlTracker.start', () => {
   it('fires an immediate reconciliation so restarts do not leave stale positions', async () => {
     const db = freshDb();

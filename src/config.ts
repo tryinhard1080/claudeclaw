@@ -262,6 +262,15 @@ export const POLY_REFLECTION_ENABLED =
 export const POLY_KELLY_LOW_MULT  = num('POLY_KELLY_LOW_MULT',  0.3);
 export const POLY_KELLY_MED_MULT  = num('POLY_KELLY_MED_MULT',  0.7);
 export const POLY_KELLY_HIGH_MULT = num('POLY_KELLY_HIGH_MULT', 1.0);
+// Sprint 8 — intra-resolution exits. Take profit at +30% on cost basis,
+// stop loss at -50%. Both measured as (current_price - entry_price) /
+// entry_price. Disabled by default until the thresholds are validated
+// against a few resolved markets. Enabling doubles the writes per
+// pnl-tracker tick (reconcile + possible exit).
+export const POLY_EXIT_ENABLED =
+  (process.env.POLY_EXIT_ENABLED || envConfig.POLY_EXIT_ENABLED || 'false').toLowerCase() === 'true';
+export const POLY_TAKE_PROFIT_PCT = num('POLY_TAKE_PROFIT_PCT', 0.30);
+export const POLY_STOP_LOSS_PCT   = num('POLY_STOP_LOSS_PCT',   0.50);
 export const ANTHROPIC_API_KEY =
   process.env.ANTHROPIC_API_KEY || envConfig.ANTHROPIC_API_KEY || '';
 

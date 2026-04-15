@@ -3,6 +3,19 @@
 ## Last Session
 - **Date**: 2026-04-15 (Sprint 2.5 reflection pass shipped)
 
+## What Changed (2026-04-15 Sprint 8)
+
+**Sprint 8 shipped — Price-based position exits (take-profit + stop-loss).**
+- First execution-side sprint after eight measurement/infra sprints. The bot could enter positions but only exit on resolution — if a YES bought at 0.3 moved to 0.7 intraday, we couldn't book the 40c/share. Now we can.
+- `shouldExit` pure fn (paper-broker.ts): `{ entryPrice, currentPrice, takeProfitPct, stopLossPct }` → `{ reason: 'take_profit' | 'stop_loss' } | null`. Take-profit precedes stop-loss on ambiguous tick. Zero/negative thresholds disable that side. Degenerate entryPrice returns null.
+- `exitPosition(db, tradeId, exitPrice, reason)` writes status='exited', realized_pnl = shares * (exitPrice - entryPrice), voided_reason='exit:<reason>'. Transactional. `WHERE status='open'` guard for concurrent-resolver double-close protection.
+- `PnlTracker` constructor gained `opts: { exitEnabled, takeProfitPct, stopLossPct }`, all falling back to config. `runOnce` now returns `{ updatedOpen, resolved, exited }`. Resolution check runs first — if a market closed, that wins over any exit threshold.
+- New event `position_exited` with `{ tradeId, slug, outcomeLabel, reason, entryPrice, exitPrice, realizedPnl }`.
+- `getDailyRealizedPnl` now includes status='exited' so Gate 2 (daily loss floor) sees real intraday P&L.
+- **Calibration + A/B Brier auto-exclude exited trades**: existing queries filter `status IN ('won','lost')` — an early exit has no counterfactual binary outcome, so excluding preserves Brier math integrity.
+- **Defaults (flag-gated)**: `POLY_EXIT_ENABLED=false`, `POLY_TAKE_PROFIT_PCT=0.30`, `POLY_STOP_LOSS_PCT=0.50`. Operator enables after validating thresholds against 3-5 resolved markets.
+- **Tests**: 518/518 green (+18 new: 8 `shouldExit` + 4 `exitPosition` + 6 `PnlTracker` integration). Typecheck + build clean. Zero migration.
+
 ## What Changed (2026-04-15 Sprint 7)
 
 **Sprint 7 shipped — Confidence-weighted Kelly + resolution-fetch cron.**

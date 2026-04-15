@@ -2,9 +2,13 @@ import { EventEmitter } from 'events';
 import { DateTime } from 'luxon';
 import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
-import { POLY_TIMEZONE } from '../config.js';
+import {
+  POLY_TIMEZONE,
+  POLY_EXIT_ENABLED, POLY_TAKE_PROFIT_PCT, POLY_STOP_LOSS_PCT,
+} from '../config.js';
 import { fetchMidpoint } from './clob-client.js';
 import { fetchMarketBySlug } from './gamma-client.js';
+import { exitPosition, shouldExit, type ExitReason } from './paper-broker.js';
 import type { Market } from './types.js';
 
 export type ResolutionStatus = 'won' | 'lost' | 'voided' | 'open';
@@ -79,20 +83,44 @@ export interface PositionResolvedEvent {
   voidedReason?: string;
 }
 
+export interface PositionExitedEvent {
+  tradeId: number;
+  slug: string;
+  outcomeLabel: string;
+  reason: ExitReason;
+  entryPrice: number;
+  exitPrice: number;
+  realizedPnl: number;
+}
+
+export interface PnlTrackerOptions {
+  exitEnabled?: boolean;
+  takeProfitPct?: number;
+  stopLossPct?: number;
+}
+
 interface RunOnceResult {
   updatedOpen: number;
   resolved: number;
+  exited: number;
 }
 
 export class PnlTracker extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
+  private readonly exitEnabled: boolean;
+  private readonly takeProfitPct: number;
+  private readonly stopLossPct: number;
 
   constructor(
     private readonly db: Database.Database,
     private readonly marketFetcher: MarketFetcher = makeDefaultMarketFetcher(db),
     private readonly midpointFetcher: (tokenId: string) => Promise<number | null> = fetchMidpoint,
+    opts: PnlTrackerOptions = {},
   ) {
     super();
+    this.exitEnabled = opts.exitEnabled ?? POLY_EXIT_ENABLED;
+    this.takeProfitPct = opts.takeProfitPct ?? POLY_TAKE_PROFIT_PCT;
+    this.stopLossPct = opts.stopLossPct ?? POLY_STOP_LOSS_PCT;
   }
 
   /** Run a single reconciliation pass. Safe to call directly from tests. */
@@ -104,6 +132,7 @@ export class PnlTracker extends EventEmitter {
 
     let updatedOpen = 0;
     let resolved = 0;
+    let exited = 0;
 
     for (const t of trades) {
       const market = await this.marketFetcher(t.market_slug);
@@ -112,6 +141,27 @@ export class PnlTracker extends EventEmitter {
       if (classification.status === 'open') {
         const mid = await this.midpointFetcher(t.outcome_token_id);
         if (mid !== null) {
+          // Sprint 8: before updating unrealized, check exit conditions. A
+          // resolved-to-won/lost classification always takes precedence over
+          // an exit (we're in the `open` branch here, so that's fine).
+          if (this.exitEnabled) {
+            const exit = shouldExit({
+              entryPrice: t.entry_price, currentPrice: mid,
+              takeProfitPct: this.takeProfitPct, stopLossPct: this.stopLossPct,
+            });
+            if (exit !== null) {
+              const res = exitPosition(this.db, t.id, mid, exit.reason, nowMs);
+              if (res.status === 'exited') {
+                exited++;
+                this.emit('position_exited', {
+                  tradeId: t.id, slug: t.market_slug, outcomeLabel: t.outcome_label,
+                  reason: exit.reason, entryPrice: t.entry_price, exitPrice: mid,
+                  realizedPnl: res.realizedPnl ?? 0,
+                } satisfies PositionExitedEvent);
+              }
+              continue;
+            }
+          }
           // YES-side BUY only (Phase C): unrealized = shares * (mid - entry).
           const unrealized = t.shares * (mid - t.entry_price);
           this.db.prepare(
@@ -164,7 +214,7 @@ export class PnlTracker extends EventEmitter {
       }
     }
 
-    return { updatedOpen, resolved };
+    return { updatedOpen, resolved, exited };
   }
 
   /**
@@ -211,7 +261,7 @@ export function getDailyRealizedPnl(db: Database.Database, nowMs: number = Date.
   const row = db.prepare(
     `SELECT COALESCE(SUM(realized_pnl), 0) AS total
        FROM poly_paper_trades
-      WHERE status IN ('won','lost','voided')
+      WHERE status IN ('won','lost','voided','exited')
         AND resolved_at IS NOT NULL
         AND resolved_at >= ?`,
   ).get(startOfDaySecs) as { total: number };
