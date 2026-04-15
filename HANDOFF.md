@@ -1,7 +1,47 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-15 (Sprint 2.5 reflection pass shipped)
+- **Date**: 2026-04-15 (Sprints 2.5 + 7 + 8 shipped — reflection pass, confidence-weighted Kelly, intraday exits)
+- **Model**: Claude Opus 4.6 (1M context)
+- **Branches**: `main` only. 4 commits ahead of `origin/main` not yet pushed.
+
+## Current State (end of 2026-04-15)
+
+**Bot:** pm2 id 5, online, Phase C. Scans every 5 min, ~24 signals/hr evaluated. 6 approved signals cumulative, 4 trades open, 2 voided, 0 resolved yet.
+
+**Tests:** 518/518 green (excluding 3 pre-existing flaky schedule-cli tests that fail when pm2 holds the DB lock — orthogonal bug, not today's regressions). Typecheck + build clean.
+
+**Migration state:** v1.2.0 → v1.8.0 all applied. No new migrations this session (all three sprints were zero-migration).
+
+**Active crons (4):**
+- news-sync (2h cadence) — task `3d623e0e`
+- research-ingest Sun 06:00 ET — task `3de52de7`
+- resolution-fetch Sun 07:00 ET — task `a6e080bd` (new this session)
+- adversarial-review Sun 18:00 ET — task `2c87cdca`
+
+**Flag-gated features awaiting operator enable (all default off):**
+- `POLY_REFLECTION_ENABLED=false` — Sprint 2.5 second-LLM critic. 2× LLM call volume when on.
+- `POLY_EXIT_ENABLED=false` — Sprint 8 intraday take-profit (+30%) / stop-loss (-50%). Changes trade close semantics. Tier 3.
+
+**Live DB snapshot** (via `npx tsx scripts/bot-stats.ts`):
+- 1573 signals (6 approved, confidence mix: 1 high / 3 medium / 2 low)
+- 4 open paper trades, 2 voided, 0 resolved
+- 0 poly_resolutions (cron fires first time Sun 07:00 ET 2026-04-19)
+- 0 calibration snapshots (waits on resolutions)
+
+## Next Steps (ranked by unblocked marginal P&L)
+
+1. **Observation window** — first real data arrives Sun 2026-04-19 when resolution-fetch cron runs. Calibration + A/B Brier become meaningful only after ~5-20 resolved markets. Revisit all flag-gated sprints with actual numbers.
+2. **Operator decision — enable POLY_REFLECTION_ENABLED?** Doubles LLM call volume. Worth flipping once there's a first resolved batch to measure against.
+3. **Operator decision — enable POLY_EXIT_ENABLED?** Suggest validating 30%/50% thresholds by looking at any of the 4 open positions' price history first. Tier 3.
+4. **Sprint 9 candidates** (execution-side, unblocked):
+   - **Category-conditioned calibration** — by-category Brier buckets, surfaces where the LLM has edge (politics vs sports vs crypto). ~2 hrs.
+   - **Reflection-driven trust score into Kelly** — if v3 and v3-reflect disagree by >10pp, shrink size beyond the confidence multiplier. Compounds 2.5 + 7.
+   - **Position re-evaluation on new info** — re-run the primary evaluator on open positions every N hours; if probability drops below entry price, exit. Costs 4× LLM calls per scan.
+5. **Sprint 4.5 — NotebookLM upload wiring** — blocked on operator creating trading notebook + setting `POLY_RESEARCH_NOTEBOOK_ID`. Code path shipped.
+6. **Sprint Email-A** — blocked on `OPERATOR_EMAIL`.
+
+Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default first-move on next session: run `npx tsx scripts/bot-stats.ts` to check what the weekend's cron produced, then pick a category-conditioned measurement sprint vs observation vs enabling a flag.
 
 ## What Changed (2026-04-15 Sprint 8)
 
@@ -148,41 +188,7 @@ Operator directive: "make this a first-class trading bot, single focus." New pro
 - `docs/news/` gitignored (transient cron output, auto-pruned at 7 days).
 - `.env` carries `ANTHROPIC_API_KEY` + `AGENTMAIL_API_KEY` (both gitignored).
 
-## Current State
-
-**Bot live (pm2 id 5, PID 14028):** Phase C running, scans every 5 min. Reflection pass code shipped but POLY_REFLECTION_ENABLED=false until operator flips the flag (Tier 3 — enabling changes LLM call volume × 2 on every scan). Historical: pm2 id was 9 in older sessions, drifted to 5 after ecosystem reshuffle.
-
-**Test count:** 163/163 poly suite green. Typecheck clean. Build clean.
-
-**Migration state:** v1.2.0 + v1.3.0 + v1.4.0 all applied to prod DB at `C:/claudeclaw-store/claudeclaw.db`.
-
-**Branches:** Only `main`. Feature branches `feat/calibration-tracker` + `feat/strategy-versioning` merged FF + deleted.
-
-## Inventory (delta from 2026-04-12)
-
-- **Source files added:** calibration.ts, strategy-compare.ts, 2 migration files, 2 migration tests, 1 CLI script.
-- **Tests added:** 18 sprint-1 + 18 sprint-2 = 36 net new tests (66 → 163 total cumulative).
-- **Memory entries added (this session):** 9 new under `~/.claude/projects/.../memory/`:
-  trading_pivot, research_first, superpowers_tdd, trust_and_autonomy, news_sync_2h, mega_prompt, full_autonomy, partnership_identity, dont_derail, host_environment, sprint1_calibration_shipped, sprint2_versioning_shipped.
-- **Docs added:** TRUST/SOUL/MISSION/HEARTBEAT/EVOLUTION/BACKLOG (all project root), 2 research notes, 2 sprint plans.
-- **Crons added:** 1 (news sync, task 3d623e0e).
-
-## Next Steps
-
-1. **Sprint 5.5 — Market-price band filter.** Strategy-level fix for the long-shot tail bias the backtester exposed. Add `POLY_MIN_MARKET_PRICE` / `POLY_MAX_MARKET_PRICE` (defaults 0.15 / 0.85) to the candidate selector so we stop evaluating markets where the LLM has no meaningful informational edge. ~1 hr. **Highest-impact next sprint** — the bot will start generating actionable signals instead of 639 near-zero-edge ones.
-2. **Sprint 6 — Adversarial review cron** (EVOLUTION.md §4 #6). Weekly red-team report on recent decisions via `adversarial-review` skill. ~2-3 hrs.
-3. **Sprint 2.5 — Reflection pass on signals.** Second-LLM critic for self-contradiction detection. Measure Brier delta via Sprint 2's A/B harness. ~1 day.
-4. **Sprint 1.5 — Drift dashboards beyond Brier.** Scan latency, rejection mix drift, market-count drift. ~2 hrs. Interleaves.
-5. **Sprint 4.5 — NotebookLM upload wiring.** Operator creates a trading notebook, sets `POLY_RESEARCH_NOTEBOOK_ID`, research-ingest auto-uploads. Code path shipped.
-6. **Feed URL cleanup** (AQR, Star Spangled Gamblers). Low priority.
-7. **Sprint Email-A** — still blocked on `OPERATOR_EMAIL`.
-
-Selection rule: bot picks based on dependency order × marginal P&L impact (per `feedback_full_autonomy.md`). Default next sprint is **Sprint 1.5 (drift dashboards)** or **Sprint 2.5 (reflection pass)** — both ~2-hr, both compound with measurement infra already in place.
-
-**Operational watch items:**
-- Regime snapshots in `poly_regime_snapshots` every 15 min.
-- Weekly research ingest fires Sun 06:00 ET (task 3de52de7).
-- Resolution cache: refresh via `npx tsx scripts/fetch-resolutions.ts` before each backtest run. Consider scheduling weekly once closed-count > 20.
+_(The consolidated Current State / Next Steps now live at the top of this file. Historical per-sprint diffs remain above as a running log.)_
 
 ## Gotchas & Notes
 
