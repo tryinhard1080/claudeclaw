@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { EventEmitter } from 'events';
 import type { ClobBook, Market, ProbabilityEstimate } from './types.js';
-import { StrategyEngine, computeKellySize } from './strategy-engine.js';
+import { StrategyEngine, computeKellySize, confidenceMultiplier } from './strategy-engine.js';
 
 function bootDb(): Database.Database {
   const db = new Database(':memory:');
@@ -82,6 +82,42 @@ describe('computeKellySize', () => {
 
   it('clamps to 0 when ask >= 1 (degenerate)', () => {
     expect(computeKellySize({ probability: 0.99, ask: 1, kellyFraction: 0.25, paperCapital: 5000, maxTradeUsd: 50 })).toBe(0);
+  });
+
+  it('Sprint 7: confidenceMult=1 matches legacy behavior', () => {
+    const a = computeKellySize({ probability: 0.42, ask: 0.4, kellyFraction: 0.25, paperCapital: 1000, maxTradeUsd: 50 });
+    const b = computeKellySize({ probability: 0.42, ask: 0.4, kellyFraction: 0.25, paperCapital: 1000, maxTradeUsd: 50, confidenceMult: 1 });
+    expect(a).toBe(b);
+  });
+
+  it('Sprint 7: confidenceMult=0.3 scales size to 30% of the baseline', () => {
+    const base = computeKellySize({ probability: 0.42, ask: 0.4, kellyFraction: 0.25, paperCapital: 1000, maxTradeUsd: 50 });
+    const low  = computeKellySize({ probability: 0.42, ask: 0.4, kellyFraction: 0.25, paperCapital: 1000, maxTradeUsd: 50, confidenceMult: 0.3 });
+    expect(low).toBeCloseTo(base * 0.3, 6);
+  });
+
+  it('Sprint 7: confidenceMult=0 returns 0', () => {
+    expect(computeKellySize({ probability: 0.6, ask: 0.4, kellyFraction: 0.25, paperCapital: 1000, maxTradeUsd: 50, confidenceMult: 0 })).toBe(0);
+  });
+});
+
+describe('confidenceMultiplier', () => {
+  const mults = { low: 0.3, medium: 0.7, high: 1.0 };
+
+  it('maps enum to the configured bucket', () => {
+    expect(confidenceMultiplier('low', mults)).toBe(0.3);
+    expect(confidenceMultiplier('medium', mults)).toBe(0.7);
+    expect(confidenceMultiplier('high', mults)).toBe(1.0);
+  });
+
+  it('clamps values above 1 to 1', () => {
+    expect(confidenceMultiplier('high', { low: 0.3, medium: 0.7, high: 1.5 })).toBe(1);
+  });
+
+  it('returns 0 for non-finite / negative multipliers', () => {
+    expect(confidenceMultiplier('low', { low: NaN,       medium: 0.7, high: 1 })).toBe(0);
+    expect(confidenceMultiplier('low', { low: -0.1,      medium: 0.7, high: 1 })).toBe(0);
+    expect(confidenceMultiplier('low', { low: 0,         medium: 0.7, high: 1 })).toBe(0);
   });
 });
 
@@ -353,6 +389,34 @@ describe('StrategyEngine.onScanComplete', () => {
     const n = (db.prepare(`SELECT COUNT(*) AS n FROM poly_signals`).get() as { n: number }).n;
     expect(n).toBe(1);
     expect(criticCalls).toBe(0);
+  });
+
+  it('Sprint 7: low-confidence signal gets a smaller paper trade size than high-confidence at same edge', async () => {
+    // Raise both engine AND gate maxTradeUsd so size_usd isn't clamped — the
+    // gate enforces its own POLY_MAX_TRADE_USD regardless of engine config.
+    const run = async (confidence: 'low' | 'medium' | 'high'): Promise<number> => {
+      const freshDb = bootDb();
+      const freshScanner = new EventEmitter();
+      const { defaultGateConfig } = await import('./risk-gates.js');
+      const gateConfig = { ...defaultGateConfig(), maxTradeUsd: 5000 };
+      const engine = new StrategyEngine({
+        db: freshDb, scanner: freshScanner, paperCapital: 5000,
+        minVolumeUsd: 0, minTtrHours: 0, topN: 10,
+        maxTradeUsd: 5000, kellyFraction: 0.25,
+        evaluate: async () => mkEst(0.6, confidence),
+        fetchBook: async () => mkBook(0.4, 100_000),
+        confidenceMults: { low: 0.3, medium: 0.7, high: 1.0 },
+        gateConfig,
+      });
+      await engine.onScanComplete({ markets: [mkMarket()] });
+      const row = freshDb.prepare(`SELECT size_usd FROM poly_paper_trades`).get() as { size_usd: number };
+      return row.size_usd;
+    };
+    const [lowSize, medSize, highSize] = await Promise.all([run('low'), run('medium'), run('high')]);
+    expect(lowSize).toBeLessThan(medSize);
+    expect(medSize).toBeLessThan(highSize);
+    expect(lowSize).toBeCloseTo(highSize * 0.3, 2);
+    expect(medSize).toBeCloseTo(highSize * 0.7, 2);
   });
 
   it('Sprint 2.5: writes shadow row even when primary rejected by gates', async () => {

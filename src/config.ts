@@ -253,6 +253,15 @@ export const POLY_RESEARCH_NOTEBOOK_ID =
 // critic prompt is validated against a week of live signals.
 export const POLY_REFLECTION_ENABLED =
   (process.env.POLY_REFLECTION_ENABLED || envConfig.POLY_REFLECTION_ENABLED || 'false').toLowerCase() === 'true';
+// Sprint 7 — confidence-weighted Kelly multipliers. Applied on top of
+// POLY_KELLY_FRACTION so a low-confidence signal at the same edge gets a
+// smaller position than a high-confidence one. Defaults discount low
+// aggressively (0.3x) — sprint 2.5 reflection pass can force confidence
+// to 'low' on contradictions, so this doubles as reflection-trust scaling.
+// Range clamped to [0, 1] at read time; values above 1 are treated as 1.
+export const POLY_KELLY_LOW_MULT  = num('POLY_KELLY_LOW_MULT',  0.3);
+export const POLY_KELLY_MED_MULT  = num('POLY_KELLY_MED_MULT',  0.7);
+export const POLY_KELLY_HIGH_MULT = num('POLY_KELLY_HIGH_MULT', 1.0);
 export const ANTHROPIC_API_KEY =
   process.env.ANTHROPIC_API_KEY || envConfig.ANTHROPIC_API_KEY || '';
 

@@ -6,6 +6,7 @@ import {
   POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL, POLY_MODEL,
   POLY_MIN_MARKET_PRICE, POLY_MAX_MARKET_PRICE,
   POLY_REFLECTION_ENABLED,
+  POLY_KELLY_LOW_MULT, POLY_KELLY_MED_MULT, POLY_KELLY_HIGH_MULT,
 } from '../config.js';
 import type { Market, Signal, ProbabilityEstimate } from './types.js';
 import { bestAskAndDepth, fetchBook } from './clob-client.js';
@@ -60,10 +61,36 @@ export interface StrategyEngineOptions {
   reflectionEnabled?: boolean;
   /** Sprint 2.5: injectable critic for tests. */
   critic?: CriticFn;
+  /** Sprint 7: confidence-weighted Kelly multipliers. Defaults from config. */
+  confidenceMults?: ConfidenceMultipliers;
 }
 
 function emptyBook() {
   return { bids: [], asks: [] } as import('./types.js').ClobBook;
+}
+
+export interface ConfidenceMultipliers {
+  low: number;
+  medium: number;
+  high: number;
+}
+
+/**
+ * Sprint 7: map the strategy's confidence enum to a Kelly multiplier.
+ * Clamps each bucket to [0, 1] — values above 1 would let a 'high'-
+ * confidence signal bet more than fractional Kelly intends, which breaks
+ * the Sprint 2.5 contradiction path (it forces confidence='low' as the
+ * risk-reduction signal; higher-than-1 multipliers undo that).
+ */
+export function confidenceMultiplier(
+  confidence: 'low' | 'medium' | 'high',
+  mults: ConfidenceMultipliers,
+): number {
+  const raw = confidence === 'high' ? mults.high
+            : confidence === 'medium' ? mults.medium
+            : mults.low;
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(raw, 1);
 }
 
 export interface KellyArgs {
@@ -72,22 +99,28 @@ export interface KellyArgs {
   kellyFraction: number;
   paperCapital: number;
   maxTradeUsd: number;
+  /** Sprint 7: scales kellyFraction. Defaults to 1 (backward-compatible). */
+  confidenceMult?: number;
 }
 
 /**
  * Fractional Kelly for a binary YES bet.
  *   full Kelly f* = (p - ask) / (1 - ask)
- *   size_usd     = kellyFraction * f* * paperCapital, clamped to [0, maxTradeUsd]
+ *   size_usd     = kellyFraction * confidenceMult * f* * paperCapital
+ *                  clamped to [0, maxTradeUsd]
  * Degenerate asks (>= 1, <= 0) and non-positive edge return 0 so the caller
- * skips the trade without running gates.
+ * skips the trade without running gates. confidenceMult defaults to 1 so
+ * callers that don't pass it (older tests, CLI scripts) retain old behavior.
  */
 export function computeKellySize(args: KellyArgs): number {
   const { probability, ask, kellyFraction, paperCapital, maxTradeUsd } = args;
+  const mult = args.confidenceMult ?? 1;
   if (ask >= 1 || ask <= 0) return 0;
+  if (mult <= 0) return 0;
   const edge = probability - ask;
   if (edge <= 0) return 0;
   const kStar = edge / (1 - ask);
-  const raw = kellyFraction * kStar * paperCapital;
+  const raw = kellyFraction * mult * kStar * paperCapital;
   return Math.min(Math.max(raw, 0), maxTradeUsd);
 }
 
@@ -129,6 +162,7 @@ export class StrategyEngine extends EventEmitter {
   private readonly now: () => number;
   private readonly reflectionEnabled: boolean;
   private readonly critic: CriticFn;
+  private readonly confidenceMults: ConfidenceMultipliers;
   private running = false;
 
   constructor(opts: StrategyEngineOptions) {
@@ -148,6 +182,9 @@ export class StrategyEngine extends EventEmitter {
     this.now = opts.now ?? Date.now;
     this.reflectionEnabled = opts.reflectionEnabled ?? POLY_REFLECTION_ENABLED;
     this.critic = opts.critic ?? runCritic;
+    this.confidenceMults = opts.confidenceMults ?? {
+      low: POLY_KELLY_LOW_MULT, medium: POLY_KELLY_MED_MULT, high: POLY_KELLY_HIGH_MULT,
+    };
 
     // poly_kv isn't in the v1.2.0 migration — create on demand so the halt
     // switch works on fresh DBs without a new migration bump.
@@ -222,10 +259,12 @@ export class StrategyEngine extends EventEmitter {
     if (!est) return;
 
     const edgePct = computeEdgePct(est.probability, bestAsk);
+    const confMult = confidenceMultiplier(est.confidence, this.confidenceMults);
     const sizeUsd = computeKellySize({
       probability: est.probability, ask: bestAsk,
       kellyFraction: this.kellyFraction, paperCapital: this.paperCapital,
       maxTradeUsd: this.maxTradeUsd,
+      confidenceMult: confMult,
     });
     if (sizeUsd <= 0) return;
 

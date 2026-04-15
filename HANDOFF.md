@@ -3,6 +3,18 @@
 ## Last Session
 - **Date**: 2026-04-15 (Sprint 2.5 reflection pass shipped)
 
+## What Changed (2026-04-15 Sprint 7)
+
+**Sprint 7 shipped — Confidence-weighted Kelly + resolution-fetch cron.**
+- `confidenceMultiplier(conf, mults)` — pure map of `low/medium/high` → fraction, clamped to [0,1]. NaN / negative / zero → 0.
+- `computeKellySize` takes optional `confidenceMult` param (defaults 1 for backward compat). Zero multiplier short-circuits to 0 before edge math.
+- `StrategyEngine` reads `POLY_KELLY_LOW_MULT=0.3`, `POLY_KELLY_MED_MULT=0.7`, `POLY_KELLY_HIGH_MULT=1.0` (defaults discount low aggressively — also scales down Sprint 2.5 contradictions which force confidence=low).
+- Engine passes `est.confidence` through to Kelly sizing so low-conf signals get ~30% the position of high-conf at identical edge.
+- `scripts/bot-stats.ts` — quick inventory script (signals by approved/version/confidence, trades by status, resolution count, edge distribution). Promoted from a throwaway query.
+- **Cron registered**: weekly resolution-fetch `0 7 * * 0` ET (task `a6e080bd`). Populates `poly_resolutions` so calibration + Sprint 2.5 A/B Brier have data once markets close. Four live crons now: news-sync (2h), research-ingest (Sun 06:00), resolution-fetch (Sun 07:00), adversarial-review (Sun 18:00).
+- **Tests**: 500/500 green (+4 new: 3 Kelly-multiplier + 1 engine end-to-end showing low < med < high at identical edge). Typecheck + build clean.
+- **Live DB snapshot that drove this sprint**: 1573 signals, 6 approved (1 high, 3 medium, 2 low confidence), 4 trades open + 2 voided, 0 resolutions yet, 0 calibration snapshots. Mixed confidence on approvals meant Kelly was over-sizing low-conf positions relative to their trust signal.
+
 ## What Changed (2026-04-15 Sprint 2.5)
 
 **Sprint 2.5 shipped — Reflection pass (second-LLM critic).**
