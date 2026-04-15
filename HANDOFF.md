@@ -125,7 +125,7 @@ Operator directive: "make this a first-class trading bot, single focus." New pro
 
 ## Current State
 
-**Bot live (pm2 id 9, PID 21728):** Phase C running, scans every 5 min, ~24 signals/hour evaluated, 0 approvals so far (gates correctly blocking long-shot Polymarket markets). 745 pm2 restarts cumulative across all sessions.
+**Bot live (pm2 id 5, PID 14028):** Phase C running, scans every 5 min. Reflection pass code shipped but POLY_REFLECTION_ENABLED=false until operator flips the flag (Tier 3 — enabling changes LLM call volume × 2 on every scan). Historical: pm2 id was 9 in older sessions, drifted to 5 after ecosystem reshuffle.
 
 **Test count:** 163/163 poly suite green. Typecheck clean. Build clean.
 
