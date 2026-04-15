@@ -271,6 +271,13 @@ export const POLY_EXIT_ENABLED =
   (process.env.POLY_EXIT_ENABLED || envConfig.POLY_EXIT_ENABLED || 'false').toLowerCase() === 'true';
 export const POLY_TAKE_PROFIT_PCT = num('POLY_TAKE_PROFIT_PCT', 0.30);
 export const POLY_STOP_LOSS_PCT   = num('POLY_STOP_LOSS_PCT',   0.50);
+// Sprint 9 — exposure-aware Kelly sizing. When true, StrategyEngine sizes
+// each signal against paperCapital minus sum(size_usd) of currently-open
+// paper trades. Off by default — enable once Sun resolution-fetch has
+// produced at least one full cycle so we're confident the open-trade table
+// stays clean (voided trades exit the exposure pool correctly).
+export const POLY_EXPOSURE_AWARE_SIZING =
+  (process.env.POLY_EXPOSURE_AWARE_SIZING || envConfig.POLY_EXPOSURE_AWARE_SIZING || 'false').toLowerCase() === 'true';
 export const ANTHROPIC_API_KEY =
   process.env.ANTHROPIC_API_KEY || envConfig.ANTHROPIC_API_KEY || '';
 

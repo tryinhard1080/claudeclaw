@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { EventEmitter } from 'events';
 import type { ClobBook, Market, ProbabilityEstimate } from './types.js';
-import { StrategyEngine, computeKellySize, confidenceMultiplier } from './strategy-engine.js';
+import { StrategyEngine, computeKellySize, confidenceMultiplier, computeAvailableCapital } from './strategy-engine.js';
 
 function bootDb(): Database.Database {
   const db = new Database(':memory:');
@@ -121,6 +121,49 @@ describe('confidenceMultiplier', () => {
   });
 });
 
+describe('computeAvailableCapital', () => {
+  function insertTrade(db: Database.Database, sizeUsd: number, status: string): void {
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status)
+      VALUES (?, 'm', 't', 'Yes', 'BUY', 0.5, ?, 100, 0.25, 'ai-probability', ?)`)
+      .run(Math.floor(Date.now() / 1000), sizeUsd, status);
+  }
+
+  it('returns full paperCapital when no open trades', () => {
+    const db = bootDb();
+    expect(computeAvailableCapital(db, 5000)).toBe(5000);
+  });
+
+  it('subtracts only open-trade size_usd from paperCapital', () => {
+    const db = bootDb();
+    insertTrade(db, 100, 'open');
+    insertTrade(db, 250, 'open');
+    expect(computeAvailableCapital(db, 5000)).toBe(4650);
+  });
+
+  it('excludes voided and resolved trades from exposure', () => {
+    const db = bootDb();
+    insertTrade(db, 100, 'open');
+    insertTrade(db, 999, 'voided');
+    insertTrade(db, 999, 'resolved');
+    expect(computeAvailableCapital(db, 5000)).toBe(4900);
+  });
+
+  it('floors at 0 when exposure exceeds paperCapital', () => {
+    const db = bootDb();
+    insertTrade(db, 3000, 'open');
+    insertTrade(db, 3000, 'open');
+    expect(computeAvailableCapital(db, 5000)).toBe(0);
+  });
+
+  it('returns paperCapital unchanged when flag-off caller passes a fresh db', () => {
+    const db = bootDb();
+    insertTrade(db, 4000, 'open');
+    expect(computeAvailableCapital(db, 5000)).toBe(1000);
+  });
+});
+
 describe('StrategyEngine.onScanComplete', () => {
   let db: Database.Database;
   let scanner: EventEmitter;
@@ -174,6 +217,48 @@ describe('StrategyEngine.onScanComplete', () => {
     const trade = db.prepare(`SELECT status, size_usd FROM poly_paper_trades WHERE id = ?`).get(row.paper_trade_id) as { status: string; size_usd: number };
     expect(trade.status).toBe('open');
     expect(trade.size_usd).toBe(50);
+  });
+
+  it('Sprint 9: flag-off ignores open exposure (parity with pre-Sprint-9)', async () => {
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 500, minVolumeUsd: 10_000, minTtrHours: 24,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+      gateConfig: { ...(await import('./risk-gates.js')).defaultGateConfig(), maxTradeUsd: 50, maxDeployedPct: 0.95, maxOpenPositions: 10 },
+      exposureAwareSizing: false,
+    });
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status)
+      VALUES (?, 'other', 't', 'Yes', 'BUY', 0.5, 100, 200, 0.25, 'ai-probability', 'open')`)
+      .run(Math.floor(Date.now() / 1000));
+
+    await engine.onScanComplete({ markets: [mkMarket()] });
+    const trade = db.prepare(`SELECT size_usd FROM poly_paper_trades WHERE market_slug = 'will-x-happen'`).get() as { size_usd: number };
+    // Full paperCapital used: 0.25 * (0.2/0.6) * 500 = 41.67
+    expect(trade.size_usd).toBeCloseTo(41.67, 1);
+  });
+
+  it('Sprint 9: flag-on scales sizing against available capital', async () => {
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 500, minVolumeUsd: 10_000, minTtrHours: 24,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+      gateConfig: { ...(await import('./risk-gates.js')).defaultGateConfig(), maxTradeUsd: 50, maxDeployedPct: 0.95, maxOpenPositions: 10 },
+      exposureAwareSizing: true,
+    });
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status)
+      VALUES (?, 'other', 't', 'Yes', 'BUY', 0.5, 250, 500, 0.25, 'ai-probability', 'open')`)
+      .run(Math.floor(Date.now() / 1000));
+
+    await engine.onScanComplete({ markets: [mkMarket()] });
+    const trade = db.prepare(`SELECT size_usd FROM poly_paper_trades WHERE market_slug = 'will-x-happen'`).get() as { size_usd: number };
+    // Available capital = 500 - 250 = 250: 0.25 * (0.2/0.6) * 250 = 20.83
+    expect(trade.size_usd).toBeCloseTo(20.83, 1);
   });
 
   it('persists rejected signal when edge is below threshold', async () => {

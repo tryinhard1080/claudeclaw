@@ -7,6 +7,7 @@ import {
   POLY_MIN_MARKET_PRICE, POLY_MAX_MARKET_PRICE,
   POLY_REFLECTION_ENABLED,
   POLY_KELLY_LOW_MULT, POLY_KELLY_MED_MULT, POLY_KELLY_HIGH_MULT,
+  POLY_EXPOSURE_AWARE_SIZING,
 } from '../config.js';
 import type { Market, Signal, ProbabilityEstimate } from './types.js';
 import { bestAskAndDepth, fetchBook } from './clob-client.js';
@@ -63,6 +64,8 @@ export interface StrategyEngineOptions {
   critic?: CriticFn;
   /** Sprint 7: confidence-weighted Kelly multipliers. Defaults from config. */
   confidenceMults?: ConfidenceMultipliers;
+  /** Sprint 9: deduct live open-trade exposure from paperCapital before sizing. */
+  exposureAwareSizing?: boolean;
 }
 
 function emptyBook() {
@@ -112,6 +115,19 @@ export interface KellyArgs {
  * skips the trade without running gates. confidenceMult defaults to 1 so
  * callers that don't pass it (older tests, CLI scripts) retain old behavior.
  */
+/**
+ * Sprint 9: subtract live open-trade exposure from paperCapital so a 5th
+ * signal doesn't size as if positions 1-4 don't exist. Only 'open' trades
+ * count — voided/resolved have already returned their capital. Floors at 0.
+ */
+export function computeAvailableCapital(db: Database.Database, paperCapital: number): number {
+  const row = db.prepare(
+    `SELECT COALESCE(SUM(size_usd), 0) AS exposure FROM poly_paper_trades WHERE status = 'open'`
+  ).get() as { exposure: number };
+  const exposure = Number(row.exposure) || 0;
+  return Math.max(paperCapital - exposure, 0);
+}
+
 export function computeKellySize(args: KellyArgs): number {
   const { probability, ask, kellyFraction, paperCapital, maxTradeUsd } = args;
   const mult = args.confidenceMult ?? 1;
@@ -163,6 +179,7 @@ export class StrategyEngine extends EventEmitter {
   private readonly reflectionEnabled: boolean;
   private readonly critic: CriticFn;
   private readonly confidenceMults: ConfidenceMultipliers;
+  private readonly exposureAwareSizing: boolean;
   private running = false;
 
   constructor(opts: StrategyEngineOptions) {
@@ -185,6 +202,7 @@ export class StrategyEngine extends EventEmitter {
     this.confidenceMults = opts.confidenceMults ?? {
       low: POLY_KELLY_LOW_MULT, medium: POLY_KELLY_MED_MULT, high: POLY_KELLY_HIGH_MULT,
     };
+    this.exposureAwareSizing = opts.exposureAwareSizing ?? POLY_EXPOSURE_AWARE_SIZING;
 
     // poly_kv isn't in the v1.2.0 migration — create on demand so the halt
     // switch works on fresh DBs without a new migration bump.
@@ -260,9 +278,12 @@ export class StrategyEngine extends EventEmitter {
 
     const edgePct = computeEdgePct(est.probability, bestAsk);
     const confMult = confidenceMultiplier(est.confidence, this.confidenceMults);
+    const effectiveCapital = this.exposureAwareSizing
+      ? computeAvailableCapital(this.db, this.paperCapital)
+      : this.paperCapital;
     const sizeUsd = computeKellySize({
       probability: est.probability, ask: bestAsk,
-      kellyFraction: this.kellyFraction, paperCapital: this.paperCapital,
+      kellyFraction: this.kellyFraction, paperCapital: effectiveCapital,
       maxTradeUsd: this.maxTradeUsd,
       confidenceMult: confMult,
     });
