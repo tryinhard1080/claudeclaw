@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   pairedBrierDeltas, pairedTTest, compareStrategies,
+  compareStrategiesOnResolutions,
   type PairedSample,
 } from './strategy-compare.js';
 
@@ -181,5 +182,102 @@ describe('compareStrategies', () => {
     expect(r.nPaired).toBe(2);
     expect(r.winner).toBe('tie');
     expect(r.tTest.meanDelta).toBe(0);
+  });
+});
+
+function bootResolutionDb(): Database.Database {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE poly_signals (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at INTEGER NOT NULL, market_slug TEXT, outcome_token_id TEXT,
+      outcome_label TEXT, market_price REAL, estimated_prob REAL, edge_pct REAL,
+      confidence TEXT, reasoning TEXT, contrarian TEXT, approved INTEGER NOT NULL,
+      rejection_reasons TEXT, paper_trade_id INTEGER,
+      prompt_version TEXT, model TEXT);
+    CREATE TABLE poly_resolutions (slug TEXT PRIMARY KEY, closed INTEGER NOT NULL,
+      outcomes_json TEXT NOT NULL, fetched_at INTEGER NOT NULL, resolved_at INTEGER);
+  `);
+  return db;
+}
+
+function insertSignal(
+  db: Database.Database,
+  o: { slug: string; tokenId: string; prob: number; version: string; approved?: 0 | 1; shadow?: boolean },
+): number {
+  const rej = o.shadow ? 'shadow:reflect' : null;
+  const info = db.prepare(`INSERT INTO poly_signals (created_at,market_slug,outcome_token_id,outcome_label,market_price,estimated_prob,edge_pct,confidence,reasoning,approved,rejection_reasons,prompt_version,model) VALUES (0,?,?,'Yes',0.4,?,10,'high','r',?,?,?,'claude-opus-4-6')`)
+    .run(o.slug, o.tokenId, o.prob, o.approved ?? 0, rej, o.version);
+  return Number(info.lastInsertRowid);
+}
+
+function insertResolution(
+  db: Database.Database,
+  o: { slug: string; winningTokenId: string; losingTokenId: string },
+): void {
+  const outcomes = [
+    { label: 'Yes', tokenId: o.winningTokenId, price: 1 },
+    { label: 'No',  tokenId: o.losingTokenId,  price: 0 },
+  ];
+  db.prepare(`INSERT INTO poly_resolutions (slug, closed, outcomes_json, fetched_at, resolved_at) VALUES (?, 1, ?, 0, 0)`)
+    .run(o.slug, JSON.stringify(outcomes));
+}
+
+describe('compareStrategiesOnResolutions', () => {
+  it('pairs shadow signal with primary on the same resolved market', () => {
+    const db = bootResolutionDb();
+    // v3 said 0.4, v3-reflect said 0.6. Market resolved YES (t1 won).
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.4, version: 'v3', approved: 1 });
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.6, version: 'v3-reflect', shadow: true });
+    insertResolution(db, { slug: 'a', winningTokenId: 't1', losingTokenId: 't2' });
+
+    const r = compareStrategiesOnResolutions(db, 'v3', 'v3-reflect');
+    expect(r.nPaired).toBe(1);
+    // v3 brier: (0.4-1)^2 = 0.36. v3-reflect: (0.6-1)^2 = 0.16.
+    expect(r.brierA).toBeCloseTo(0.36, 6);
+    expect(r.brierB).toBeCloseTo(0.16, 6);
+  });
+
+  it('ignores unresolved (closed=0) markets', () => {
+    const db = bootResolutionDb();
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.4, version: 'v3', approved: 1 });
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.6, version: 'v3-reflect', shadow: true });
+    // Insert a row with closed=0. Can't use insertResolution which hardcodes closed=1.
+    db.prepare(`INSERT INTO poly_resolutions (slug, closed, outcomes_json, fetched_at) VALUES ('a', 0, ?, 0)`)
+      .run(JSON.stringify([
+        { label: 'Yes', tokenId: 't1', price: 0.5 },
+        { label: 'No',  tokenId: 't2', price: 0.5 },
+      ]));
+    const r = compareStrategiesOnResolutions(db, 'v3', 'v3-reflect');
+    expect(r.nPaired).toBe(0);
+  });
+
+  it('ignores malformed outcomes JSON (voided semantics)', () => {
+    const db = bootResolutionDb();
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.4, version: 'v3', approved: 1 });
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.6, version: 'v3-reflect', shadow: true });
+    db.prepare(`INSERT INTO poly_resolutions (slug, closed, outcomes_json, fetched_at) VALUES ('a', 1, 'not-json', 0)`).run();
+    const r = compareStrategiesOnResolutions(db, 'v3', 'v3-reflect');
+    expect(r.nPaired).toBe(0);
+  });
+
+  it('omits pairs where only one version has a signal on the resolved market', () => {
+    const db = bootResolutionDb();
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.4, version: 'v3', approved: 1 });
+    // No v3-reflect row for slug a.
+    insertSignal(db, { slug: 'b', tokenId: 't3', prob: 0.7, version: 'v3-reflect', shadow: true });
+    insertResolution(db, { slug: 'a', winningTokenId: 't1', losingTokenId: 't2' });
+    insertResolution(db, { slug: 'b', winningTokenId: 't3', losingTokenId: 't4' });
+    const r = compareStrategiesOnResolutions(db, 'v3', 'v3-reflect');
+    expect(r.nPaired).toBe(0);
+  });
+
+  it('counts shadow signals even when paper_trade_id is NULL', () => {
+    const db = bootResolutionDb();
+    // Neither signal is linked to a trade. compareStrategies (trade-joined) would return 0.
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.3, version: 'v3', approved: 0 });
+    insertSignal(db, { slug: 'a', tokenId: 't1', prob: 0.5, version: 'v3-reflect', shadow: true });
+    insertResolution(db, { slug: 'a', winningTokenId: 't1', losingTokenId: 't2' });
+    const r = compareStrategiesOnResolutions(db, 'v3', 'v3-reflect');
+    expect(r.nPaired).toBe(1);
   });
 });

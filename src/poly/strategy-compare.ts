@@ -1,4 +1,6 @@
 import type Database from 'better-sqlite3';
+import { classifyResolution } from './pnl-tracker.js';
+import type { Market } from './types.js';
 
 /**
  * Sprint 2 strategy comparison. Given two prompt versions that have both
@@ -216,6 +218,102 @@ export function compareStrategies(
 
   const winner: Winner = tTest.pValue < 0.05
     ? (tTest.meanDelta > 0 ? 'B' : 'A')  // meanDelta > 0 ⇒ A worse ⇒ B wins
+    : 'tie';
+
+  return { nPaired, brierA, brierB, tTest, winner, versionA, versionB };
+}
+
+interface ResolutionJoinRow {
+  estimated_prob: number;
+  prompt_version: string;
+  market_slug: string;
+  outcome_token_id: string;
+  closed: number;
+  outcomes_json: string;
+}
+
+/**
+ * Sprint 2.5 — resolution-based pairing. Unlike compareStrategies which
+ * joins via paper_trade_id (traded signals only), this joins poly_signals
+ * against poly_resolutions directly. Shadow signals (paper_trade_id NULL,
+ * rejection_reasons='shadow:reflect') participate here — that's the whole
+ * point, since primary and reflection can't both drive the same trade.
+ *
+ * Outcome derivation reuses classifyResolution so won/lost/voided semantics
+ * match the live P&L path. voided markets excluded — Brier undefined.
+ */
+export function compareStrategiesOnResolutions(
+  db: Database.Database,
+  versionA: string,
+  versionB: string,
+): CompareResult {
+  const rows = db.prepare(`
+    SELECT s.estimated_prob, s.prompt_version, s.market_slug, s.outcome_token_id,
+           r.closed, r.outcomes_json
+      FROM poly_signals s
+      INNER JOIN poly_resolutions r ON r.slug = s.market_slug
+     WHERE s.prompt_version IN (?, ?)
+       AND r.closed = 1
+  `).all(versionA, versionB) as ResolutionJoinRow[];
+
+  interface Bucket { a?: number; b?: number; outcome: 0 | 1 }
+  const buckets = new Map<string, Bucket>();
+
+  for (const r of rows) {
+    let outcomes: Array<{ label: string; tokenId: string; price: number }>;
+    try {
+      outcomes = JSON.parse(r.outcomes_json) as Array<{ label: string; tokenId: string; price: number }>;
+    } catch {
+      continue;
+    }
+    const synthetic: Market = {
+      slug: r.market_slug, conditionId: '', question: '',
+      outcomes, volume24h: 0, liquidity: 0, endDate: 0, closed: r.closed === 1,
+    };
+    const cls = classifyResolution(synthetic, r.outcome_token_id);
+    if (cls.status !== 'won' && cls.status !== 'lost') continue;
+
+    const key = JSON.stringify([r.market_slug, r.outcome_token_id]);
+    const outcome: 0 | 1 = cls.status === 'won' ? 1 : 0;
+    const bucket = buckets.get(key) ?? { outcome };
+    if (r.prompt_version === versionA) bucket.a = r.estimated_prob;
+    if (r.prompt_version === versionB) bucket.b = r.estimated_prob;
+    if (versionA === versionB && r.prompt_version === versionA) {
+      bucket.a = r.estimated_prob;
+      bucket.b = r.estimated_prob;
+    }
+    buckets.set(key, bucket);
+  }
+
+  const paired: PairedSample[] = [];
+  for (const b of buckets.values()) {
+    if (b.a !== undefined && b.b !== undefined) {
+      paired.push({ probA: b.a, probB: b.b, outcome: b.outcome });
+    }
+  }
+
+  const nPaired = paired.length;
+  if (nPaired === 0) {
+    return {
+      nPaired: 0, brierA: null, brierB: null,
+      tTest: { n: 0, meanDelta: 0, t: 0, pValue: 1 },
+      winner: 'tie', versionA, versionB,
+    };
+  }
+
+  let sumA = 0;
+  let sumB = 0;
+  for (const s of paired) {
+    sumA += (s.probA - s.outcome) ** 2;
+    sumB += (s.probB - s.outcome) ** 2;
+  }
+  const brierA = sumA / nPaired;
+  const brierB = sumB / nPaired;
+  const deltas = pairedBrierDeltas(paired);
+  const tTest = pairedTTest(deltas);
+
+  const winner: Winner = tTest.pValue < 0.05
+    ? (tTest.meanDelta > 0 ? 'B' : 'A')
     : 'tie';
 
   return { nPaired, brierA, brierB, tTest, winner, versionA, versionB };

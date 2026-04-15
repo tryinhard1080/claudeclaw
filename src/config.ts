@@ -245,6 +245,14 @@ export const POLY_MIN_MARKET_PRICE = num('POLY_MIN_MARKET_PRICE', 0.15);
 export const POLY_MAX_MARKET_PRICE = num('POLY_MAX_MARKET_PRICE', 0.85);
 export const POLY_RESEARCH_NOTEBOOK_ID =
   process.env.POLY_RESEARCH_NOTEBOOK_ID || envConfig.POLY_RESEARCH_NOTEBOOK_ID || '';
+// Sprint 2.5 reflection pass — when true, every approved primary evaluation
+// also triggers a critic call and records a shadow signal (approved=0,
+// rejection_reasons='shadow:reflect') tagged prompt_version='v3-reflect'.
+// The shadow drives no trade; it exists purely for A/B Brier measurement
+// via compareStrategiesOnResolutions. Off by default — enable once the
+// critic prompt is validated against a week of live signals.
+export const POLY_REFLECTION_ENABLED =
+  (process.env.POLY_REFLECTION_ENABLED || envConfig.POLY_REFLECTION_ENABLED || 'false').toLowerCase() === 'true';
 export const ANTHROPIC_API_KEY =
   process.env.ANTHROPIC_API_KEY || envConfig.ANTHROPIC_API_KEY || '';
 

@@ -9,7 +9,8 @@ import { latestSnapshot } from './calibration.js';
 import { latestRegimeSnapshot } from './regime.js';
 import { latestItems as latestResearchItems } from './research-ingest.js';
 import { composeDriftReport, formatDriftReport } from './drift.js';
-import { POLY_PAPER_CAPITAL } from '../config.js';
+import { compareStrategiesOnResolutions } from './strategy-compare.js';
+import { POLY_PAPER_CAPITAL, POLY_REFLECTION_ENABLED } from '../config.js';
 
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
   bot.command('poly', async (ctx) => {
@@ -45,6 +46,8 @@ export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): 
           return void await ctx.reply(truncateForTelegram(renderResearch(db)).text);
         case 'drift':
           return void await ctx.reply(truncateForTelegram(renderDrift(db)).text);
+        case 'reflect':
+          return void await ctx.reply(truncateForTelegram(renderReflect(db)).text);
         default:
           return void await ctx.reply(HELP);
       }
@@ -69,7 +72,8 @@ const HELP =
 /poly calibration — Brier / log loss / curve over recent resolutions
 /poly regime — latest macro regime snapshot (VIX / BTC dom / 10y yield)
 /poly research — last 10 ingested research items
-/poly drift — 24h scan latency, market count trend, rejection mix`;
+/poly drift — 24h scan latency, market count trend, rejection mix
+/poly reflect — Sprint 2.5 reflection pass: v3 vs v3-reflect Brier on resolved markets`;
 
 function renderMarkets(db: Database.Database): string {
   const rows = db.prepare(
@@ -377,5 +381,62 @@ export function renderRegime(db: Database.Database): string {
   return [
     `Latest regime: ${snap.regimeLabel}  (age ${ageMin}m)`,
     `VIX: ${fmt(snap.vix)}  BTC dominance: ${fmt(snap.btcDominance)}%  10y yield: ${fmt(snap.yield10y)}%`,
+  ].join('\n');
+}
+
+export function renderReflect(db: Database.Database): string {
+  // Count recent shadow signals and their largest pair-shifts vs primary.
+  // Pull last 20 (slug, tokenId) combos where both v3 and v3-reflect wrote
+  // rows since bot start.
+  const pairs = db.prepare(`
+    SELECT p.market_slug AS slug, p.outcome_token_id AS tok,
+           p.estimated_prob AS primary_p, s.estimated_prob AS shadow_p,
+           p.created_at AS ts
+      FROM poly_signals p
+      INNER JOIN poly_signals s
+         ON s.market_slug = p.market_slug
+        AND s.outcome_token_id = p.outcome_token_id
+        AND s.prompt_version = 'v3-reflect'
+        AND s.id > p.id
+        AND s.id < p.id + 10
+     WHERE p.prompt_version = 'v3'
+     ORDER BY p.id DESC LIMIT 20
+  `).all() as Array<{ slug: string; tok: string; primary_p: number; shadow_p: number; ts: number }>;
+
+  const header = `Reflection pass (Sprint 2.5) — enabled=${POLY_REFLECTION_ENABLED}`;
+  if (pairs.length === 0) {
+    return [
+      header,
+      POLY_REFLECTION_ENABLED
+        ? 'No reflection pairs yet. Wait one scan cycle.'
+        : 'Set POLY_REFLECTION_ENABLED=true in .env and restart pm2 to start shadow-logging v3-reflect.',
+    ].join('\n');
+  }
+
+  const shifts = pairs.map(p => ({
+    slug: p.slug,
+    shift: p.shadow_p - p.primary_p,
+    primary: p.primary_p,
+    shadow: p.shadow_p,
+  }));
+  shifts.sort((a, b) => Math.abs(b.shift) - Math.abs(a.shift));
+  const meanAbsShift = shifts.reduce((s, x) => s + Math.abs(x.shift), 0) / shifts.length;
+
+  const cmp = compareStrategiesOnResolutions(db, 'v3', 'v3-reflect');
+  const brierLine = cmp.nPaired === 0
+    ? 'A/B Brier: no resolved markets yet.'
+    : `A/B Brier on ${cmp.nPaired} resolved markets: v3=${(cmp.brierA ?? 0).toFixed(4)}, v3-reflect=${(cmp.brierB ?? 0).toFixed(4)}, winner=${cmp.winner}${cmp.tTest.pValue < 0.05 ? ` (p=${cmp.tTest.pValue.toFixed(3)})` : ''}`;
+
+  const top = shifts.slice(0, 5).map(s =>
+    `  ${truncateQuestion(s.slug, 40)}: ${s.primary.toFixed(3)} → ${s.shadow.toFixed(3)} (${s.shift >= 0 ? '+' : ''}${(s.shift * 100).toFixed(1)}pp)`,
+  );
+
+  return [
+    header,
+    `Pairs sampled: ${pairs.length}. Mean |shift|: ${(meanAbsShift * 100).toFixed(1)}pp.`,
+    brierLine,
+    '',
+    'Largest shifts (recent):',
+    ...top,
   ].join('\n');
 }

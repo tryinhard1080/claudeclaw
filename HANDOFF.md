@@ -1,7 +1,21 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-13 (Sprints 3 + 4 + 5 + 5.5 + 6 + 1.5 shipped same day)
+- **Date**: 2026-04-15 (Sprint 2.5 reflection pass shipped)
+
+## What Changed (2026-04-15 Sprint 2.5)
+
+**Sprint 2.5 shipped — Reflection pass (second-LLM critic).**
+- `src/poly/strategies/ai-probability-reflect.ts` — pure critic system prompt + `composeCriticUser` + `parseCriticResponse` + `applyReflectionRule` (confirm/revise/contradiction with midpoint-pull on contradictions). Async `runCritic` + `evaluateWithReflection` wrappers. `REFLECT_PROMPT_VERSION='v3-reflect'`.
+- `src/poly/strategy-compare.ts` — new `compareStrategiesOnResolutions(db, vA, vB)` that joins poly_signals ↔ poly_resolutions directly (not via paper_trade_id). Shadow signals participate in Brier math.
+- `src/poly/strategy-engine.ts` — new opts `reflectionEnabled` + injectable `critic`. After primary `insertSignal`, if enabled, `writeShadowReflection` logs a second row tagged v3-reflect with approved=0, rejection_reasons='shadow:reflect', paper_trade_id NULL. Shadow runs even when primary is gate-rejected (so reflection data accumulates on the full signal distribution).
+- `src/config.ts` — `POLY_REFLECTION_ENABLED=false` default. Enable via `.env` + pm2 restart.
+- `/poly reflect` Telegram command — shows reflection pair count, mean |shift|, live A/B Brier on resolved markets, top-5 largest recent shifts.
+- **Tests**: 496/496 green (+22 new: 12 reflect pure-fn + 5 A/B resolution + 5 engine dual-write). Typecheck + build clean.
+- **Zero-migration** sprint: no new tables. Reuses existing poly_signals + poly_resolutions schemas.
+- **Design note**: contradiction path pulls probability to midpoint(initial, ask) rather than collapsing to market. Full-collapse would zero-edge every contradiction and structurally bias the A/B Brier toward v3; midpoint preserves gradient so the delta means something.
+
+## Previous Session (2026-04-13, multi-sprint day)
 
 ## What Changed (2026-04-13 Sprint 1.5)
 

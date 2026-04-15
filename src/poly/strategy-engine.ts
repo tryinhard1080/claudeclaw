@@ -5,10 +5,15 @@ import {
   POLY_KELLY_FRACTION, POLY_MAX_TRADE_USD, POLY_MIN_VOLUME_USD,
   POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL, POLY_MODEL,
   POLY_MIN_MARKET_PRICE, POLY_MAX_MARKET_PRICE,
+  POLY_REFLECTION_ENABLED,
 } from '../config.js';
 import type { Market, Signal, ProbabilityEstimate } from './types.js';
 import { bestAskAndDepth, fetchBook } from './clob-client.js';
 import { computeEdgePct, evaluateMarket, PROMPT_VERSION } from './strategies/ai-probability.js';
+import {
+  applyReflectionRule, REFLECT_PROMPT_VERSION, runCritic,
+  type CriticJudgment,
+} from './strategies/ai-probability-reflect.js';
 import {
   runAllGates, defaultGateConfig, positionKey,
   type GateConfig, type PortfolioSnapshot, type OrderbookSnapshot, type GateRejection,
@@ -29,6 +34,13 @@ export interface EvaluateFn {
   }): Promise<ProbabilityEstimate | null>;
 }
 
+export interface CriticFn {
+  (args: {
+    question: string; category: string | null; endDateSec: number; ask: number;
+    initial: ProbabilityEstimate;
+  }): Promise<CriticJudgment | null>;
+}
+
 export interface StrategyEngineOptions {
   db: Database.Database;
   scanner: EventEmitter;
@@ -44,6 +56,10 @@ export interface StrategyEngineOptions {
   evaluate?: EvaluateFn;
   fetchBook?: (tokenId: string) => Promise<ReturnType<typeof emptyBook> | import('./types.js').ClobBook | null>;
   now?: () => number;
+  /** Sprint 2.5: when true, primary evaluations trigger a shadow reflection signal. */
+  reflectionEnabled?: boolean;
+  /** Sprint 2.5: injectable critic for tests. */
+  critic?: CriticFn;
 }
 
 function emptyBook() {
@@ -111,6 +127,8 @@ export class StrategyEngine extends EventEmitter {
   private readonly evaluate: EvaluateFn;
   private readonly fetchBookFn: NonNullable<StrategyEngineOptions['fetchBook']>;
   private readonly now: () => number;
+  private readonly reflectionEnabled: boolean;
+  private readonly critic: CriticFn;
   private running = false;
 
   constructor(opts: StrategyEngineOptions) {
@@ -128,6 +146,8 @@ export class StrategyEngine extends EventEmitter {
     this.evaluate = opts.evaluate ?? (args => evaluateMarket(args));
     this.fetchBookFn = opts.fetchBook ?? fetchBook;
     this.now = opts.now ?? Date.now;
+    this.reflectionEnabled = opts.reflectionEnabled ?? POLY_REFLECTION_ENABLED;
+    this.critic = opts.critic ?? runCritic;
 
     // poly_kv isn't in the v1.2.0 migration — create on demand so the halt
     // switch works on fresh DBs without a new migration bump.
@@ -224,6 +244,16 @@ export class StrategyEngine extends EventEmitter {
     });
 
     const signalId = this.insertSignal(signal, gates.passed, gates.rejections);
+
+    // Sprint 2.5: shadow-log reflection pass (when enabled). Runs regardless
+    // of primary gate outcome — a rejected primary still produces a shadow
+    // row, which lets us measure how reflection would have altered the
+    // estimate on rejected markets once they resolve. Shadow writes never
+    // drive trades; they exist only for A/B Brier comparison.
+    if (this.reflectionEnabled) {
+      await this.writeShadowReflection(market, yesOutcome, bestAsk, est);
+    }
+
     if (!gates.passed) {
       this.emit('signal_rejected', {
         slug: market.slug, outcomeLabel: yesOutcome.label, bestAsk,
@@ -246,6 +276,48 @@ export class StrategyEngine extends EventEmitter {
     } else {
       logger.info({ slug: market.slug, reason: res.reason }, 'signal approved but execution aborted');
     }
+  }
+
+  private async writeShadowReflection(
+    market: Market,
+    outcome: Market['outcomes'][number],
+    bestAsk: number,
+    primary: ProbabilityEstimate,
+  ): Promise<void> {
+    let reflected: ProbabilityEstimate;
+    try {
+      const judgment = await this.critic({
+        question: market.question,
+        category: market.category ?? null,
+        endDateSec: market.endDate,
+        ask: bestAsk,
+        initial: primary,
+      });
+      reflected = judgment === null ? primary : applyReflectionRule(primary, judgment, bestAsk);
+    } catch (err) {
+      logger.warn({ err: String(err), slug: market.slug }, 'reflection critic threw — shadow falls back to primary');
+      reflected = primary;
+    }
+
+    const edgePct = computeEdgePct(reflected.probability, bestAsk);
+    const nowSec = Math.floor(this.now() / 1000);
+    const regime = latestRegimeSnapshot(this.db);
+    // Shadow row: approved=0, rejection_reasons='shadow:reflect', no trade link.
+    // compareStrategiesOnResolutions ignores approved/rejection_reasons and pairs
+    // purely on (slug, tokenId, prompt_version). Voided/open markets excluded
+    // at resolve time.
+    this.db.prepare(`
+      INSERT INTO poly_signals
+        (created_at, market_slug, outcome_token_id, outcome_label, market_price,
+         estimated_prob, edge_pct, confidence, reasoning, contrarian, approved,
+         rejection_reasons, prompt_version, model, regime_label)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'shadow:reflect', ?, ?, ?)
+    `).run(
+      nowSec, market.slug, outcome.tokenId, outcome.label,
+      bestAsk, reflected.probability, edgePct,
+      reflected.confidence, reflected.reasoning, reflected.contrarian ?? null,
+      REFLECT_PROMPT_VERSION, POLY_MODEL, regime?.regimeLabel ?? null,
+    );
   }
 
   private insertSignal(signal: Signal, approved: boolean, rejections: GateRejection[]): number {

@@ -286,4 +286,94 @@ describe('StrategyEngine.onScanComplete', () => {
     await engine.onScanComplete({ markets });
     expect(evalCalls).toBe(2);
   });
+
+  it('Sprint 2.5: writes shadow reflection row when reflectionEnabled=true', async () => {
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+      reflectionEnabled: true,
+      critic: async () => ({
+        verdict: 'revise', revisedProbability: 0.52,
+        revisedConfidence: 'medium', rationale: 'tighter',
+      }),
+    });
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    const rows = db.prepare(`SELECT prompt_version, estimated_prob, approved, rejection_reasons, paper_trade_id FROM poly_signals ORDER BY id`).all() as Array<{
+      prompt_version: string; estimated_prob: number; approved: number;
+      rejection_reasons: string | null; paper_trade_id: number | null;
+    }>;
+    expect(rows).toHaveLength(2);
+    // Primary row
+    expect(rows[0]!.prompt_version).toBe('v3');
+    expect(rows[0]!.estimated_prob).toBe(0.6);
+    expect(rows[0]!.approved).toBe(1);
+    expect(rows[0]!.paper_trade_id).not.toBeNull();
+    // Shadow row
+    expect(rows[1]!.prompt_version).toBe('v3-reflect');
+    expect(rows[1]!.estimated_prob).toBe(0.52);
+    expect(rows[1]!.approved).toBe(0);
+    expect(rows[1]!.rejection_reasons).toBe('shadow:reflect');
+    expect(rows[1]!.paper_trade_id).toBeNull();
+  });
+
+  it('Sprint 2.5: shadow row equals primary when critic returns null', async () => {
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+      reflectionEnabled: true,
+      critic: async () => null,
+    });
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    const rows = db.prepare(`SELECT prompt_version, estimated_prob FROM poly_signals ORDER BY id`).all() as Array<{
+      prompt_version: string; estimated_prob: number;
+    }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[1]!.prompt_version).toBe('v3-reflect');
+    expect(rows[1]!.estimated_prob).toBe(0.6);
+  });
+
+  it('Sprint 2.5: no shadow row when reflectionEnabled=false (default)', async () => {
+    let criticCalls = 0;
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+      reflectionEnabled: false,
+      critic: async () => { criticCalls++; return null; },
+    });
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    const n = (db.prepare(`SELECT COUNT(*) AS n FROM poly_signals`).get() as { n: number }).n;
+    expect(n).toBe(1);
+    expect(criticCalls).toBe(0);
+  });
+
+  it('Sprint 2.5: writes shadow row even when primary rejected by gates', async () => {
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.41), // edge = 1pp → primary rejected
+      fetchBook: async () => mkBook(0.4, 1000),
+      reflectionEnabled: true,
+      critic: async () => ({
+        verdict: 'confirm', revisedProbability: 0.41,
+        revisedConfidence: 'low', rationale: 'ok',
+      }),
+    });
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    const rows = db.prepare(`SELECT prompt_version, approved FROM poly_signals ORDER BY id`).all() as Array<{
+      prompt_version: string; approved: number;
+    }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.approved).toBe(0);
+    expect(rows[1]!.prompt_version).toBe('v3-reflect');
+  });
 });
