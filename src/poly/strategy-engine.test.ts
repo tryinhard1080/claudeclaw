@@ -130,16 +130,18 @@ describe('computeAvailableCapital', () => {
       .run(Math.floor(Date.now() / 1000), sizeUsd, status);
   }
 
-  it('returns full paperCapital when no open trades', () => {
+  // Tests use explicit maxDeployedPct to pin semantics regardless of env.
+  it('returns deployment ceiling when no open trades', () => {
     const db = bootDb();
-    expect(computeAvailableCapital(db, 5000)).toBe(5000);
+    expect(computeAvailableCapital(db, 5000, 0.5)).toBe(2500);
   });
 
-  it('subtracts only open-trade size_usd from paperCapital', () => {
+  it('subtracts only open-trade size_usd from ceiling', () => {
     const db = bootDb();
     insertTrade(db, 100, 'open');
     insertTrade(db, 250, 'open');
-    expect(computeAvailableCapital(db, 5000)).toBe(4650);
+    // ceiling = 0.5 * 5000 = 2500; minus 350 exposure = 2150
+    expect(computeAvailableCapital(db, 5000, 0.5)).toBe(2150);
   });
 
   it('excludes voided and resolved trades from exposure', () => {
@@ -147,20 +149,30 @@ describe('computeAvailableCapital', () => {
     insertTrade(db, 100, 'open');
     insertTrade(db, 999, 'voided');
     insertTrade(db, 999, 'resolved');
-    expect(computeAvailableCapital(db, 5000)).toBe(4900);
+    expect(computeAvailableCapital(db, 5000, 0.5)).toBe(2400);
   });
 
-  it('floors at 0 when exposure exceeds paperCapital', () => {
+  it('floors at 0 when exposure exceeds ceiling', () => {
     const db = bootDb();
-    insertTrade(db, 3000, 'open');
-    insertTrade(db, 3000, 'open');
-    expect(computeAvailableCapital(db, 5000)).toBe(0);
+    insertTrade(db, 1500, 'open');
+    insertTrade(db, 1500, 'open');
+    // ceiling = 2500; exposure = 3000 > ceiling
+    expect(computeAvailableCapital(db, 5000, 0.5)).toBe(0);
   });
 
-  it('returns paperCapital unchanged when flag-off caller passes a fresh db', () => {
+  it('maxDeployedPct=1.0 makes ceiling = full paperCapital (back-compat with pre-alignment math)', () => {
     const db = bootDb();
     insertTrade(db, 4000, 'open');
-    expect(computeAvailableCapital(db, 5000)).toBe(1000);
+    expect(computeAvailableCapital(db, 5000, 1.0)).toBe(1000);
+  });
+
+  it('defaults maxDeployedPct to POLY_MAX_DEPLOYED_PCT when omitted', () => {
+    const db = bootDb();
+    // Just verify the signature works without a 3rd arg; exact value
+    // depends on env but must be >= 0 and <= paperCapital.
+    const result = computeAvailableCapital(db, 5000);
+    expect(result).toBeGreaterThanOrEqual(0);
+    expect(result).toBeLessThanOrEqual(5000);
   });
 });
 
@@ -257,8 +269,8 @@ describe('StrategyEngine.onScanComplete', () => {
 
     await engine.onScanComplete({ markets: [mkMarket()] });
     const trade = db.prepare(`SELECT size_usd FROM poly_paper_trades WHERE market_slug = 'will-x-happen'`).get() as { size_usd: number };
-    // Available capital = 500 - 250 = 250: 0.25 * (0.2/0.6) * 250 = 20.83
-    expect(trade.size_usd).toBeCloseTo(20.83, 1);
+    // Ceiling = 0.95 * 500 = 475; available = 475 - 250 = 225: 0.25 * (0.2/0.6) * 225 = 18.75
+    expect(trade.size_usd).toBeCloseTo(18.75, 1);
   });
 
   it('persists rejected signal when edge is below threshold', async () => {
