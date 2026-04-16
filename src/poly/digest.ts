@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 import { DateTime } from 'luxon';
 import { POLY_DIGEST_HOUR, POLY_TIMEZONE, POLY_MIN_EDGE_PCT } from '../config.js';
 import { fmtUsd, fmtPrice, truncateQuestion } from './format.js';
+import { latestRegimeSnapshot } from './regime.js';
+import { latestSnapshot as latestCalibrationSnapshot } from './calibration.js';
 
 export interface ShouldRunArgs {
   hour: number;
@@ -46,6 +48,22 @@ export function composeDigest(db: Database.Database): { text: string; ymd: strin
     `SELECT COALESCE(SUM(realized_pnl), 0) AS p FROM poly_paper_trades WHERE resolved_at >= ? AND status IN ('won','lost')`,
   ).get(dayStart) as { p: number }).p;
 
+  const regime = latestRegimeSnapshot(db);
+  const regimeLine = regime
+    ? `Regime: ${regime.regimeLabel} (VIX ${regime.vix?.toFixed(1) ?? '—'}, BTC-dom ${regime.btcDominance?.toFixed(1) ?? '—'}%, 10y ${regime.yield10y?.toFixed(2) ?? '—'}%)`
+    : 'Regime: (no data)';
+
+  const calib = latestCalibrationSnapshot(db);
+  const calibLine = calib && calib.brierScore !== null
+    ? `Calibration: Brier ${calib.brierScore.toFixed(3)}, log-loss ${calib.logLoss?.toFixed(2) ?? '—'}, N=${calib.nSamples}`
+    : 'Calibration: (no resolutions yet)';
+
+  const openPositions = db.prepare(
+    `SELECT market_slug, outcome_label, entry_price, size_usd
+       FROM poly_paper_trades WHERE status='open'
+       ORDER BY id ASC LIMIT 10`,
+  ).all() as Array<{ market_slug: string; outcome_label: string; entry_price: number; size_usd: number }>;
+
   const lines: string[] = [
     `Polymarket daily — ${ymd}`,
     '',
@@ -60,7 +78,11 @@ export function composeDigest(db: Database.Database): { text: string; ymd: strin
     highEdge.length === 0 ? '  (none)' : '',
     ...highEdge.map(h => `  • ${truncateQuestion(h.market_slug)} — market ${fmtPrice(h.market_price)}, model ${(h.estimated_prob * 100).toFixed(1)}%, edge +${h.edge_pct.toFixed(1)}%`),
     '',
+    regimeLine,
+    calibLine,
+    '',
     `Open paper positions: ${openCount}  |  Realized P&L today: $${dayPnl.toFixed(2)}`,
+    ...openPositions.map((p, i) => `  ${i + 1}. ${truncateQuestion(p.market_slug)} — ${p.outcome_label} @${fmtPrice(p.entry_price)} (${fmtUsd(p.size_usd)})`),
   ].filter(l => l !== '');
 
   return { text: lines.join('\n'), ymd };
