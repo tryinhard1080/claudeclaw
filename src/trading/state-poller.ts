@@ -1,9 +1,11 @@
-import { readFile } from 'fs/promises';
+import { readFile, stat } from 'fs/promises';
 import path from 'path';
 import { EventEmitter } from 'events';
 
 import { logger } from '../logger.js';
 import type { InstanceState } from './types.js';
+
+const DEFAULT_STALENESS_MS = 60 * 60 * 1000; // 1 hour
 
 export interface RegimeChangeEvent {
   instance: string;
@@ -22,6 +24,12 @@ export interface InstanceErrorEvent {
   error: string;
 }
 
+export interface InstanceStaleEvent {
+  instance: string;
+  stateFileMtime: number;
+  ageMs: number;
+}
+
 /**
  * Polls regime-trader instance state.json files and emits events
  * on regime changes, circuit breaker activations, and errors.
@@ -30,14 +38,20 @@ export class StatePoller extends EventEmitter {
   private states = new Map<string, InstanceState>();
   private previousRegimes = new Map<string, string>();
   private previousBreakers = new Map<string, Set<string>>();
+  private staleFlagged = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly stalenessMs: number;
+  private readonly now: () => number;
 
   constructor(
     private readonly basePath: string,
     private readonly instanceNames: readonly string[],
     private readonly intervalMs = 5000,
+    opts: { stalenessMs?: number; now?: () => number } = {},
   ) {
     super();
+    this.stalenessMs = opts.stalenessMs ?? DEFAULT_STALENESS_MS;
+    this.now = opts.now ?? (() => Date.now());
   }
 
   start(): void {
@@ -62,6 +76,19 @@ export class StatePoller extends EventEmitter {
   private async pollInstance(name: string): Promise<void> {
     const stateFile = path.join(this.basePath, 'instances', name, 'data', 'state.json');
     try {
+      const st = await stat(stateFile);
+      const ageMs = this.now() - st.mtimeMs;
+      if (ageMs > this.stalenessMs) {
+        if (!this.staleFlagged.has(name)) {
+          const event: InstanceStaleEvent = { instance: name, stateFileMtime: st.mtimeMs, ageMs };
+          this.emit('instance_stale', event);
+          logger.warn(event, 'Instance state file is stale (Python partner may be down)');
+          this.staleFlagged.add(name);
+        }
+      } else if (this.staleFlagged.has(name)) {
+        this.staleFlagged.delete(name);
+        logger.info({ instance: name }, 'Instance state file is fresh again');
+      }
       const raw = await readFile(stateFile, 'utf8');
       const state: InstanceState = JSON.parse(raw);
 

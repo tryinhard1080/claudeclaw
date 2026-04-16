@@ -1,9 +1,66 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-15 (Sprints 2.5 + 7 + 8 shipped — reflection pass, confidence-weighted Kelly, intraday exits)
+- **Date**: 2026-04-15 evening — **Audit remediation run, 7 phases headless**
 - **Model**: Claude Opus 4.6 (1M context)
-- **Branches**: `main` only. 4 commits ahead of `origin/main` not yet pushed.
+- **Branch**: `fix/audit-remediation` (6 commits, not yet merged to main). Main branch unchanged from morning Sprint 9.
+
+## Audit Remediation — 2026-04-15 evening
+
+Read the audit diagnostic in session transcript; 10 findings ranked H/M/L. Executed 7-phase remediation plan headless.
+
+**Phase 0 — Bot status check.** Scans healthy (544 runs, 18 signals/hr). **Telegram in 409 zombie loop** — multiple getUpdates conflicts. Not fixed this run; noted. Weekly crons never fired (bot hasn't been continuously running a full week yet).
+
+**Phase 1.5 — Discipline scaffolding** (commit `c53b9e5`):
+- `scripts/pre-commit-research-check.sh` — blocks src/poly + src/trading commits without a matching `docs/research/sprint-*.md` or `docs/plans/sprint-*.md`. Escape tags `[retro]` `[hotfix]` `[chore]` `[audit]` in commit message.
+- `.git/hooks/pre-commit` + `commit-msg` delegate to the script.
+- `docs/research/TEMPLATE-sprint.md` — 7-section required note.
+- `CLAUDE.md` gains "Build Discipline" section + 30-min speed tripwire.
+- `feedback_full_autonomy.md` memory amended: autonomy = scope, NOT process.
+- Weekly adversarial cron (`2c87cdca`) extended to audit sprint-vs-note pairing.
+
+**Phase 1 — Research backfill** (commit `caf8acf`):
+- `sprint-9-exposure-aware-sizing.md` — verdict **complement, not duplicate**. Minor `maxDeployedPct` ceiling misalignment; fold into flag-enable commit.
+- `regime-status-2026-04-15.md` — 35% NULL regime_label was a bug; threshold retune deferred until 30d + 3 distinct labels + 50 resolved trades.
+- `sprints-1-through-8-retro.md` — catalog stub.
+
+**Phase 2 — Regime NULL root cause fix** (commit `6dc9a6d`):
+- `regime.ts`: export `UNKNOWN_REGIME_TAG = 'vunk_bunk_yunk'`.
+- `strategy-engine.ts`: both signal-insert paths fall back to UNKNOWN_REGIME_TAG instead of NULL (lines 379, 402).
+- Test flipped to assert tag + no NULL rows.
+- `scripts/backfill-null-regime.ts` — applied: **626 NULL rows → `vunk_bunk_yunk`**.
+
+**Phase 3 — Trading revival** (commit `05f3116`):
+- `state-poller.ts`: new `instance_stale` event fires when state.json mtime > 1h (configurable). Fires exactly once per stale window; re-arms after fresh.
+- `alerts.ts` + `types.ts`: INSTANCE STALE alert type.
+- `index.ts`: wires event → Telegram alert.
+- `state-poller.test.ts`: **6 new tests** (first tests ever in src/trading/).
+- **Operator action owed**: restart regime-trader Python — `cd C:/Projects/regime-trader; python main.py --paper --instance spy-aggressive` (and spy-conservative). state.json mtime is 2026-04-11 → INSTANCE STALE alert will fire on next bot restart.
+
+**Phase 4 — PA surface gated** (commit `232c733`):
+- `POLY_PERSONAL_ASSISTANT_ENABLED=false` default.
+- `/wa`, `/slack`, `/profile` commands + WhatsApp/Slack state machines gated.
+- `/help` trimmed to trading commands.
+- `src/slack-cli.ts` deleted.
+- `voice.ts` + `loadProfile()` kept (partnership context).
+- **Phase 4b owed**: full strip of whatsapp.ts/slack.ts/profile.ts modules (tendrils through db.ts, memory.ts, registry.ts, auto-delegate.ts, dashboard-html.ts). Dedicated future sprint.
+
+**Phase 5 — Memory hygiene**: `project_architecture.md` memory fully refreshed to reflect trading-only post-pivot state.
+
+**Phase 6 — Resolution analysis** (commit `3883283`): `docs/research/resolution-rate-analysis.md`. 0.39% approval rate, 0 paper resolutions yet, 11 market-level resolutions. Recommend **hold parameters**; re-check 2026-04-29. Parameter changes are Tier 3.
+
+**Phase 7 — Wrap**: typecheck clean, full test suite 533/534 (one pre-existing schedule-cli isolation flake). dist rebuilt.
+
+## Still owed (operator decisions)
+
+1. **Restart regime-trader Python** — file-IPC partner has been down 4 days. See Phase 3 command above.
+2. **Fix Telegram 409 zombie loop** — multiple getUpdates. Check `tasklist | grep node`, kill duplicates.
+3. **Merge `fix/audit-remediation` → main** — no pushed commits yet. 6 commits ahead.
+4. **Phase 4b** — full strip of whatsapp/slack/profile modules.
+5. **Enable `POLY_EXPOSURE_AWARE_SIZING`?** — Tier 3. Sprint 9 audit says complement with one ceiling-misalignment fix owed.
+
+## Branch state
+`fix/audit-remediation`: 6 commits ahead of main. Typecheck clean. 533/534 tests pass. Ready to merge.
 
 ## Current State (end of 2026-04-15)
 

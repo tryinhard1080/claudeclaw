@@ -22,7 +22,7 @@ import {
 } from './risk-gates.js';
 import { execute, type SignalWithId } from './paper-broker.js';
 import { getDailyRealizedPnl } from './pnl-tracker.js';
-import { latestRegimeSnapshot } from './regime.js';
+import { latestRegimeSnapshot, UNKNOWN_REGIME_TAG } from './regime.js';
 
 const STRATEGY = 'ai-probability';
 const HALT_KEY = 'poly.halt';
@@ -376,7 +376,7 @@ export class StrategyEngine extends EventEmitter {
       nowSec, market.slug, outcome.tokenId, outcome.label,
       bestAsk, reflected.probability, edgePct,
       reflected.confidence, reflected.reasoning, reflected.contrarian ?? null,
-      REFLECT_PROMPT_VERSION, POLY_MODEL, regime?.regimeLabel ?? null,
+      REFLECT_PROMPT_VERSION, POLY_MODEL, regime?.regimeLabel ?? UNKNOWN_REGIME_TAG,
     );
   }
 
@@ -399,7 +399,7 @@ export class StrategyEngine extends EventEmitter {
       signal.marketPrice, signal.estimatedProb, signal.edgePct,
       signal.confidence, signal.reasoning, signal.contrarian ?? null,
       approved ? 1 : 0, rejections.length > 0 ? JSON.stringify(rejections) : null,
-      PROMPT_VERSION, POLY_MODEL, regime?.regimeLabel ?? null,
+      PROMPT_VERSION, POLY_MODEL, regime?.regimeLabel ?? UNKNOWN_REGIME_TAG,
     );
     return Number(info.lastInsertRowid);
   }
