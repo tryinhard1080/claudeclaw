@@ -1,9 +1,42 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-15 evening — **Audit remediation run, 7 phases headless**
+- **Date**: 2026-04-16 mid-day — **regime-trader 09:30 verification + Sprint 10 (outcomePrices nullish)**
 - **Model**: Claude Opus 4.6 (1M context)
-- **Branch**: `fix/audit-remediation` (6 commits, not yet merged to main). Main branch unchanged from morning Sprint 9.
+- **Branch**: `feat/sprint-10-outcomeprices-nullish` — 2 commits ahead of main, unpushed, unmerged.
+
+## Session 2026-04-16 — regime-trader verification + Sprint 10
+
+### What changed
+
+- **Research note**: `docs/research/sprint-10-outcomeprices-nullish.md` — all 7 template sections, verdict "complement" (mirrors endDate precedent).
+- **Code fix (Sprint 10)**: `src/poly/types.ts` — `GammaMarketSchema.outcomePrices` → `.nullish()` with comment. `src/poly/gamma-client.ts` — null-guard in `normalizeMarket`, `!` on `.map` callback access. 5 new tests in `types.test.ts` + `gamma-client.test.ts`.
+- **Handoff brief**: `docs/research/handoff-regime-trader-hmm-debug.md` — starter prompt for a separate session opened in `C:/Projects/regime-trader/` (Python repo) to debug the HMM prediction size-0 bug.
+- **Memory**: `project_2026-04-16_regime_trader_auto_start.md` in session memory dir; MEMORY.md index updated.
+
+### Verification results
+
+- **pm2 `cron_restart: '30 9 * * 1-5'`** in `ecosystem.regime-trader.config.cjs` fired on schedule at 09:30 ET. Both `regime-trader-spy-agg` and `regime-trader-spy-cons` online with restart_time=0 (first start).
+- **Alpaca handshake**: `Account connected: equity=$100000.00 cash=$100000.00 status=ACTIVE` at 09:30:13 / 09:30:19.
+- **HMM training**: completed, 7-state model selected by BIC (`CRASH`, `STRONG_BEAR`, `WEAK_BEAR`, `NEUTRAL`, `WEAK_BULL`, `STRONG_BULL`, `EUPHORIA`).
+- **HMM live prediction**: BROKEN. Every 5-min bar since 09:35 throws `IndexError: index 0 is out of bounds for axis 0 with size 0`. Fail-closed (no bad trades) but also zero trades. Bug lives in `C:/Projects/regime-trader/` Python repo, out of scope for ClaudeClaw.
+- **Tests**: 540/540 vitest pass on branch. tsc clean. Pre-commit research-check hook approved Sprint 10 commit.
+
+### Secondary findings (queued, not acted on)
+
+1. **Migration tracker missing in live DB.** `C:/claudeclaw-store/claudeclaw.db` has no `schema_migrations` table but has all tables through v1.8.0. Tables were created via `CREATE TABLE IF NOT EXISTS` in module init, not through the migration runner. Startup warning "pending v1.5.0" is misleading. **Do NOT run `npm run migrate` blind** — depends on DDL idempotency. Needs a reconciliation sprint (Tier 3, touches DB).
+2. **Zombie pre-pivot tables in live DB.** `wa_messages`, `wa_outbox`, `wa_message_map`, `slack_messages`, `hive_mind`, `inter_agent_tasks`, `mission_tasks`, `consolidations`. Cosmetic. Clean up with migration sprint.
+3. **`pm2 env <id>` leaks secrets** (OpenRouter API key appeared in stdout during this session). Avoid on screenshare.
+4. **Memory `project_architecture.md`** claims "v1.2.0 applied" — stale. Real state: schema effectively v1.8.0 with no tracker.
+
+### Next session action items (priority order)
+
+1. **Merge** `feat/sprint-10-outcomeprices-nullish` → `main` and push. (Tier 3 push, operator approval.)
+2. **Rebuild + pm2 restart** claudeclaw to pick up Sprint 10. Running dist still spams malformed-market warns.
+3. **Open separate session** in `C:/Projects/regime-trader/` with `docs/research/handoff-regime-trader-hmm-debug.md` as starter prompt. Fix HMM prediction.
+4. **Deferred sprint candidate**: migration-tracker reconciliation + zombie-table cleanup.
+5. **2026-04-19 (Sun)**: resolution-fetch cron `a6e080bd` first fire. Check output Mon AM with `npx tsx scripts/bot-stats.ts`.
+6. **2026-04-29**: re-run resolution-rate analysis.
 
 ## Audit Remediation — 2026-04-15 evening
 
