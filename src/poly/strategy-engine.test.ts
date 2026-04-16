@@ -351,7 +351,7 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(row.regime_label).toBe('vnorm_bmix_ymid');
   });
 
-  it('regime_label is null when no snapshot yet (cold start)', async () => {
+  it('regime_label falls back to UNKNOWN_REGIME_TAG (not NULL) when no snapshot yet (cold start)', async () => {
     const engine = new StrategyEngine({
       db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
       topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
@@ -360,7 +360,9 @@ describe('StrategyEngine.onScanComplete', () => {
     });
     await engine.onScanComplete({ markets: [mkMarket()] });
     const row = db.prepare(`SELECT regime_label FROM poly_signals`).get() as { regime_label: string | null };
-    expect(row.regime_label).toBeNull();
+    expect(row.regime_label).toBe('vunk_bunk_yunk');
+    const nullRows = db.prepare(`SELECT COUNT(*) c FROM poly_signals WHERE regime_label IS NULL`).get() as { c: number };
+    expect(nullRows.c).toBe(0);
   });
 
   it('filters out markets outside the YES-price band (Sprint 5.5)', async () => {

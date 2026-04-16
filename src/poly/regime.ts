@@ -11,6 +11,9 @@ export type VixLabel = 'calm' | 'norm' | 'stress' | 'unk';
 export type BtcDomLabel = 'alt' | 'mix' | 'btc' | 'unk';
 export type YieldLabel = 'low' | 'mid' | 'high' | 'unk';
 
+/** Fallback tag when no regime snapshot exists yet (cold start) or all fetchers failed. Matches composeRegimeTag({vix:null,btcDominance:null,yield10y:null}). Per Sprint 3 design rule: failed components become 'unk', never NULL. */
+export const UNKNOWN_REGIME_TAG = 'vunk_bunk_yunk';
+
 function numOrUnk<T extends string>(v: number | null | undefined, fn: (n: number) => T): T | 'unk' {
   if (v === null || v === undefined || !Number.isFinite(v)) return 'unk';
   return fn(v);
