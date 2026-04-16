@@ -43,7 +43,7 @@ const AGENT_PATTERNS: readonly AgentPattern[] = Object.freeze([
     agentId: 'comms',
     keywords: [
       'email', 'gmail', 'inbox', 'reply to', 'send message',
-      'slack', 'whatsapp', 'linkedin', 'dm', 'message',
+      'dm', 'message',
       'respond to', 'draft a reply', 'follow up',
     ],
     threshold: 1,

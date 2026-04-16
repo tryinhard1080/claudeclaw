@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
 import { buildRuntimeContext, renderContextForDashboard } from './context-builder.js';
 import crypto from 'crypto';
 import {
@@ -363,8 +363,6 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       sessionAge,
       model: agentDefaultModel || 'sonnet-4-6',
       telegramConnected: getTelegramConnected(),
-      waConnected: WHATSAPP_ENABLED,
-      slackConnected: !!SLACK_USER_TOKEN,
     });
   });
 

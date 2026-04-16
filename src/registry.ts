@@ -39,8 +39,6 @@ const BUILTIN_COMMANDS: readonly CommandEntry[] = Object.freeze([
   { command: 'model', description: 'Switch model (opus/sonnet/haiku)', source: 'builtin' },
   { command: 'memory', description: 'View recent memories', source: 'builtin' },
   { command: 'forget', description: 'Clear session', source: 'builtin' },
-  { command: 'wa', description: 'Recent WhatsApp messages', source: 'builtin' },
-  { command: 'slack', description: 'Recent Slack messages', source: 'builtin' },
   { command: 'dashboard', description: 'Open web dashboard', source: 'builtin' },
   { command: 'stop', description: 'Stop current processing', source: 'builtin' },
   { command: 'agents', description: 'List available agents', source: 'builtin' },
@@ -49,7 +47,6 @@ const BUILTIN_COMMANDS: readonly CommandEntry[] = Object.freeze([
   { command: 'status', description: 'Show security status', source: 'builtin' },
   { command: 'pin', description: 'Pin a memory', source: 'builtin' },
   { command: 'unpin', description: 'Unpin a memory', source: 'builtin' },
-  { command: 'profile', description: 'View or edit your user profile', source: 'builtin' },
 ]);
 
 // ── Skill discovery ─────────────────────────────────────────────────

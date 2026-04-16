@@ -8,8 +8,6 @@ import {
   getRecentHighImportanceMemories,
   logConversationTurn,
   pruneConversationLog,
-  pruneSlackMessages,
-  pruneWaMessages,
   searchConsolidations,
   searchConversationHistory,
   searchMemories,
@@ -201,25 +199,10 @@ export function saveConversationTurn(
 /**
  * Run the daily decay sweep. Call once on startup and every 24h.
  * Also prunes old conversation_log entries to prevent unbounded growth.
- *
- * MESSAGE RETENTION POLICY:
- * WhatsApp and Slack messages are auto-deleted after 3 days.
- * This is a security measure: message bodies contain personal
- * conversations that must not persist on disk indefinitely.
  */
 export function runDecaySweep(): void {
   decayMemories();
   pruneConversationLog(500);
-
-  // Enforce 3-day retention on messaging data
-  const wa = pruneWaMessages(3);
-  const slack = pruneSlackMessages(3);
-  if (wa.messages + wa.outbox + wa.map + slack > 0) {
-    logger.info(
-      { wa_messages: wa.messages, wa_outbox: wa.outbox, wa_map: wa.map, slack },
-      'Retention pruning complete',
-    );
-  }
 }
 
 /**

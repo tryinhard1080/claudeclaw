@@ -11,8 +11,6 @@ vi.mock('./db.js', () => ({
   decayMemories: vi.fn(),
   logConversationTurn: vi.fn(),
   pruneConversationLog: vi.fn(),
-  pruneWaMessages: vi.fn(() => ({ messages: 0, outbox: 0, map: 0 })),
-  pruneSlackMessages: vi.fn(() => 0),
   searchConsolidations: vi.fn(),
   getRecentConsolidations: vi.fn(),
 }));

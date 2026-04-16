@@ -463,9 +463,7 @@ export function getDashboardHtml(token: string, chatId: string): string {
   </div>
   <div class="flex gap-3 mt-1">
     <span class="pill" id="tg-pill">Telegram</span>
-    <span class="pill" id="wa-pill">WhatsApp</span>
-    <span class="pill" id="slack-pill">Slack</span>
-    <span class="info-tip"><span class="info-icon">\u24D8</span><span class="info-tooltip">Connection status for messaging platforms (Telegram, WhatsApp, Slack). Green = connected, Red = disconnected.</span></span>
+    <span class="info-tip"><span class="info-icon">\u24D8</span><span class="info-tooltip">Telegram connection status. Green = connected, Red = disconnected.</span></span>
   </div>
 </div>
 
@@ -877,10 +875,6 @@ async function loadHealth() {
 
     const tgPill = document.getElementById('tg-pill');
     tgPill.className = 'pill ' + (data.telegramConnected ? 'pill-connected' : 'pill-disconnected');
-    const waPill = document.getElementById('wa-pill');
-    waPill.className = 'pill ' + (data.waConnected ? 'pill-connected' : 'pill-disconnected');
-    const slackPill = document.getElementById('slack-pill');
-    slackPill.className = 'pill ' + (data.slackConnected ? 'pill-connected' : 'pill-disconnected');
   } catch(e) {
     drawGauge(0);
   }
