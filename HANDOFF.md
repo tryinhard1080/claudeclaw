@@ -53,11 +53,19 @@ Read the audit diagnostic in session transcript; 10 findings ranked H/M/L. Execu
 
 ## Still owed (operator decisions)
 
-1. **Restart regime-trader Python** — file-IPC partner has been down 4 days. See Phase 3 command above.
-2. **Fix Telegram 409 zombie loop** — multiple getUpdates. Check `tasklist | grep node`, kill duplicates.
-3. **Merge `fix/audit-remediation` → main** — no pushed commits yet. 6 commits ahead.
-4. **Phase 4b** — full strip of whatsapp/slack/profile modules.
-5. **Enable `POLY_EXPOSURE_AWARE_SIZING`?** — Tier 3. Sprint 9 audit says complement with one ceiling-misalignment fix owed.
+1. ~~Restart regime-trader Python~~ **DONE** — registered under pm2 as `regime-trader-spy-agg` and `regime-trader-spy-cons`. **Currently stopped** because regime-trader exits when market is closed (next open 2026-04-16 09:30 ET). Connected to Alpaca paper successfully (equity $100k). Operator can start both via `pm2 start regime-trader-spy-agg regime-trader-spy-cons` at market open, or add an ecosystem.config.js with `cron_restart: '30 9 * * 1-5'` for auto-start. `instance_stale` alert on TS side will correctly fire until state.json is refreshed during market hours.
+2. ~~Fix Telegram 409 zombie loop~~ **NOT HAPPENING** — earlier 409 logs were from a stale `store/bot-live.log` dated 2026-03-29. Current bot (pm2 id 5, PID 56312) shows no 409 errors since restart.
+3. ~~Merge `fix/audit-remediation` → main~~ **DONE** — merge commit `b78e448`. 7 commits on feature branch + merge commit now on main. Not yet pushed to origin.
+4. ~~`pm2 restart claudeclaw` after merge~~ **DONE** — bot restarted with fresh dist. PID 56312, uptime verified.
+5. **Phase 4b** — full strip of whatsapp/slack/profile modules. Still owed, separate session.
+6. **Enable `POLY_EXPOSURE_AWARE_SIZING`?** — Tier 3. Sprint 9 audit says complement with one ceiling-misalignment fix owed.
+7. **`git push origin main`** — 8 local commits (7 feature + 1 merge) not yet pushed.
+
+## Post-restart verification (2026-04-16 05:28 ET)
+
+- pm2 id 5 claudeclaw: online, PID 56312, no migration warnings in fresh stdout, no 409 errors.
+- regime-trader-spy-agg + spy-cons: registered in pm2, currently stopped (market closed). Alpaca auth verified on first run.
+- state.json last-modified 2026-04-11 → new `instance_stale` alert fires on next scan, surfacing this in Telegram. Alert clears automatically after regime-trader runs at market open.
 
 ## Branch state
 `fix/audit-remediation`: 6 commits ahead of main. Typecheck clean. 533/534 tests pass. Ready to merge.
