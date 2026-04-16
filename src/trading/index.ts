@@ -59,6 +59,17 @@ export function initTrading(
     void alertManager.send(alert);
   });
 
+  poller.on('instance_stale', (data: { instance: string; stateFileMtime: number; ageMs: number }) => {
+    const ageMin = Math.round(data.ageMs / 60000);
+    const alert: TradingAlert = {
+      type: 'instance_stale',
+      instance: data.instance,
+      message: `state.json not updated for ${ageMin}m (regime-trader Python partner may be stopped)`,
+      timestamp: Date.now(),
+    };
+    void alertManager.send(alert);
+  });
+
   poller.start();
   logger.info({ path: regimeTraderPath, instances: instanceNames }, 'Trading integration initialized');
 

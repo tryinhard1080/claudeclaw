@@ -67,7 +67,7 @@ export interface InstanceState {
 }
 
 export interface TradingAlert {
-  type: 'regime_change' | 'circuit_breaker' | 'instance_down' | 'instance_halted';
+  type: 'regime_change' | 'circuit_breaker' | 'instance_down' | 'instance_halted' | 'instance_stale';
   instance: string;
   message: string;
   timestamp: number;

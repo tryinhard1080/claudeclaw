@@ -60,6 +60,8 @@ export class TradingAlertManager {
         return `INSTANCE DOWN [${alert.instance}]\n${alert.message}\nTime: ${timestamp}`;
       case 'instance_halted':
         return `INSTANCE HALTED [${alert.instance}]\n${alert.message}\nTime: ${timestamp}`;
+      case 'instance_stale':
+        return `INSTANCE STALE [${alert.instance}]\n${alert.message}\nTime: ${timestamp}`;
       default:
         return `TRADING ALERT [${alert.instance}]\n${alert.message}`;
     }
