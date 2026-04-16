@@ -69,4 +69,43 @@ describe('normalizeMarket', () => {
     expect(m!.endDate).toBe(0);
     expect(m!.outcomes[0]!.price).toBe(1);  // resolution still readable
   });
+
+  it('returns null when outcomePrices missing (scanner mode)', () => {
+    // Real failure mode observed 2026-04-16: Gamma API returned markets
+    // with outcomePrices: undefined, Zod threw, per-item warn spammed logs.
+    // Post-fix: parse cleanly, skip the market without warn.
+    const raw = {
+      conditionId: '0xabc', slug: 'x', question: 'Will X?',
+      outcomes: '["Yes","No"]',
+      clobTokenIds: '["t1","t2"]',
+      volume24hr: 100, liquidity: 50,
+      endDate: '2026-12-31T23:59:59Z', closed: false,
+    };
+    expect(normalizeMarket(raw)).toBeNull();
+  });
+
+  it('returns null when outcomePrices missing (resolution mode)', () => {
+    // In resolution mode we usually tolerate partial data (e.g. missing
+    // endDate). But a market with no prices has nothing to resolve at —
+    // PnlTracker has no P&L to compute. Skip cleanly instead of throwing.
+    const raw = {
+      conditionId: '0xabc', slug: 'x', question: 'Will X?',
+      outcomes: '["Yes","No"]',
+      clobTokenIds: '["t1","t2"]',
+      volume24hr: 100, liquidity: 50,
+      closed: true,
+    };
+    expect(normalizeMarket(raw, { requireEndDate: false })).toBeNull();
+  });
+
+  it('returns null when outcomePrices is explicitly null', () => {
+    const raw = {
+      conditionId: '0xabc', slug: 'x', question: 'Will X?',
+      outcomes: '["Yes","No"]', outcomePrices: null,
+      clobTokenIds: '["t1","t2"]',
+      volume24hr: 100, liquidity: 50,
+      endDate: '2026-12-31T23:59:59Z', closed: false,
+    };
+    expect(normalizeMarket(raw)).toBeNull();
+  });
 });

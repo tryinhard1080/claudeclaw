@@ -42,7 +42,11 @@ export const GammaMarketSchema = z.object({
   category: z.string().optional(),
   description: z.string().optional(),
   outcomes: stringArrayFromJson,
-  outcomePrices: numberArrayFromJson,
+  // Gamma returns pre-listed / transitional markets without outcomePrices
+  // (observed 2026-04-16 live spam). Accept missing; `normalizeMarket`
+  // returns null because an unpriced market has no tradeable edge and
+  // no resolvable P&L.
+  outcomePrices: numberArrayFromJson.nullish(),
   clobTokenIds: stringArrayFromJson,
   volume24hr: z.coerce.number().default(0),
   liquidity: z.coerce.number().default(0),

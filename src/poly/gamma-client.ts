@@ -41,13 +41,14 @@ export function normalizeMarket(
   const requireEndDate = opts.requireEndDate ?? true;
   const g: GammaMarket = GammaMarketSchema.parse(raw);
   if (!g.endDate && requireEndDate) return null;
+  if (!g.outcomePrices) return null;
   if (g.outcomes.length !== g.outcomePrices.length || g.outcomes.length !== g.clobTokenIds.length) {
     throw new Error(`market ${g.slug}: outcome/price/tokenId length mismatch`);
   }
   const outcomes = g.outcomes.map((label, i) => ({
     label,
     tokenId: g.clobTokenIds[i]!,
-    price: g.outcomePrices[i]!,
+    price: g.outcomePrices![i]!,
   }));
   return {
     slug: g.slug,
