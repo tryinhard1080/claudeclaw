@@ -20,6 +20,7 @@ import {
   AGENT_TIMEOUT_MS,
   STREAM_STRATEGY,
   PROJECT_ROOT,
+  PERSONAL_ASSISTANT_ENABLED,
 } from './config.js';
 import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage } from './db.js';
 import { logger } from './logger.js';
@@ -843,15 +844,12 @@ export function createBot(): Bot {
       '/model — Switch model (opus/sonnet/haiku)\n' +
       '/memory — View recent memories\n' +
       '/forget — Clear session\n' +
-      '/wa — WhatsApp messages\n' +
-      '/slack — Slack messages\n' +
       '/dashboard — Web dashboard\n' +
       '/stop — Stop current processing\n' +
       '/agents — List available agents\n' +
       '/delegate — Delegate task to agent\n' +
       '/lock — Lock session (PIN required to unlock)\n' +
-      '/status — Security status\n' +
-      '/profile — View your profile (edit/refresh)\n\n' +
+      '/status — Security status\n\n' +
       'Delegation: @agentId: prompt or /delegate agentId prompt\n\n' +
       'You can also send voice notes, photos, files, and videos.'
     );
@@ -1059,6 +1057,9 @@ export function createBot(): Bot {
     await ctx.reply('Session cleared. Memories will fade naturally over time.');
   });
 
+  // /wa, /slack — personal-assistant surfaces, gated behind
+  // PERSONAL_ASSISTANT_ENABLED. Off by default per Phase 4 audit.
+  if (PERSONAL_ASSISTANT_ENABLED) {
   // /wa — pull recent WhatsApp chats on demand
   bot.command('wa', async (ctx) => {
     const chatIdStr = ctx.chat!.id.toString();
@@ -1127,6 +1128,7 @@ export function createBot(): Bot {
       await ctx.reply('Slack not connected. Make sure SLACK_USER_TOKEN is set in .env.');
     }
   });
+  } // end if (PERSONAL_ASSISTANT_ENABLED) — /wa + /slack
 
   // /dashboard — send a clickable link to the web dashboard
   bot.command('dashboard', async (ctx) => {
@@ -1216,6 +1218,9 @@ export function createBot(): Bot {
     messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, `/delegate ${args}`));
   });
 
+  // /profile — personal-assistant surface, gated behind
+  // PERSONAL_ASSISTANT_ENABLED. Off by default per Phase 4 audit.
+  if (PERSONAL_ASSISTANT_ENABLED) {
   // /profile — view or manage user profile
   bot.command('profile', async (ctx) => {
     if (await replyIfLocked(ctx)) return;
@@ -1240,6 +1245,7 @@ export function createBot(): Bot {
 
     await ctx.reply(formatProfileForTelegram());
   });
+  } // end if (PERSONAL_ASSISTANT_ENABLED) — /profile
 
   // Text messages — and any slash commands not owned by this bot (skills, e.g. /todo /gmail)
   bot.on('message:text', async (ctx) => {
@@ -1275,6 +1281,8 @@ export function createBot(): Bot {
     }
     touchActivity();
 
+    // ── WhatsApp + Slack state machines — PA surfaces, gated off by default.
+    if (PERSONAL_ASSISTANT_ENABLED) {
     // ── WhatsApp state machine ──────────────────────────────────────
     const state = waState.get(chatIdStr);
 
@@ -1425,6 +1433,7 @@ export function createBot(): Bot {
     // Clear WA/Slack state and pass through to Claude
     if (state) waState.delete(chatIdStr);
     if (slkState) slackState.delete(chatIdStr);
+    } // end if (PERSONAL_ASSISTANT_ENABLED) — WA/Slack state machines
     // Fire-and-forget so grammY can process /stop while agent runs
     messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, text));
   });
