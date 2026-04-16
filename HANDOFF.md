@@ -51,15 +51,43 @@ Read the audit diagnostic in session transcript; 10 findings ranked H/M/L. Execu
 
 **Phase 7 — Wrap**: typecheck clean, full test suite 533/534 (one pre-existing schedule-cli isolation flake). dist rebuilt.
 
-## Still owed (operator decisions)
+## Closed this run
 
-1. ~~Restart regime-trader Python~~ **DONE** — registered under pm2 as `regime-trader-spy-agg` and `regime-trader-spy-cons`. **Currently stopped** because regime-trader exits when market is closed (next open 2026-04-16 09:30 ET). Connected to Alpaca paper successfully (equity $100k). Operator can start both via `pm2 start regime-trader-spy-agg regime-trader-spy-cons` at market open, or add an ecosystem.config.js with `cron_restart: '30 9 * * 1-5'` for auto-start. `instance_stale` alert on TS side will correctly fire until state.json is refreshed during market hours.
-2. ~~Fix Telegram 409 zombie loop~~ **NOT HAPPENING** — earlier 409 logs were from a stale `store/bot-live.log` dated 2026-03-29. Current bot (pm2 id 5, PID 56312) shows no 409 errors since restart.
-3. ~~Merge `fix/audit-remediation` → main~~ **DONE** — merge commit `b78e448`. 7 commits on feature branch + merge commit now on main. Not yet pushed to origin.
-4. ~~`pm2 restart claudeclaw` after merge~~ **DONE** — bot restarted with fresh dist. PID 56312, uptime verified.
-5. **Phase 4b** — full strip of whatsapp/slack/profile modules. Still owed, separate session.
-6. **Enable `POLY_EXPOSURE_AWARE_SIZING`?** — Tier 3. Sprint 9 audit says complement with one ceiling-misalignment fix owed.
-7. **`git push origin main`** — 8 local commits (7 feature + 1 merge) not yet pushed.
+All audit-remediation items now landed on `origin/main` (pushed 2026-04-16 06:57).
+
+1. ~~Restart regime-trader Python~~ **DONE** — registered under pm2 via `ecosystem.regime-trader.config.cjs` with `cron_restart: '30 9 * * 1-5'` + `autorestart: false`. Will auto-start weekday 09:30 ET and exit naturally at close. Alpaca paper auth verified ($100k equity).
+2. ~~Telegram 409~~ **NOT HAPPENING** — stale log misread; current bot shows clean Telegram.
+3. ~~Merge `fix/audit-remediation` → main~~ **DONE** (`b78e448`).
+4. ~~pm2 restart with fresh dist~~ **DONE** — PID 57992, scanning every 5 min, new sizing + PA-stripped code active.
+5. ~~Phase 4b full PA strip~~ **DONE** (`f63dae2`). 1014 deletions. Stripped: `whatsapp.ts`, `slack.ts`, most of `profile.ts` (kept `loadProfile` + `getSection`). Trimmed: `bot.ts` (-315 LOC), `db.ts` (-213 LOC), `config.ts` (-18 LOC), plus surgical touches to memory, dashboard, registry, auto-delegate. `POLY_PERSONAL_ASSISTANT_ENABLED` flag removed (no longer needed).
+6. ~~`POLY_EXPOSURE_AWARE_SIZING` Tier-3 decision~~ **DONE** (`e2b6899`). Applied ceiling alignment per my Sprint 9 audit (`computeAvailableCapital` now uses `maxDeployedPct * paperCapital - exposure`), then flipped flag to `true` in `.env`. Conservative direction only.
+7. ~~`git push origin main`~~ **DONE** — `5e2ee0f..ce41604`, 14 commits.
+
+## Final pm2 state (post-restart)
+
+```
+5  claudeclaw              online   new dist, scanning, Sprint 9 sizing active
+7  regime-trader-spy-agg   stopped  (cron_restart 09:30 ET weekdays)
+10 regime-trader-spy-cons  stopped  (cron_restart 09:30 ET weekdays)
+```
+
+## Verification receipts
+
+- Typecheck: clean (`npx tsc --noEmit` exit 0).
+- Tests: 532/535 pass (3 failures all in pre-existing `schedule-cli.test.ts` DB-lock flake).
+- Build: clean (`npm run build` exit 0).
+- Git: `origin/main` up to date; no uncommitted work.
+- Bot: PID 57992, 5 scans in last 30 min, no errors in fresh stderr, no migration warnings in fresh stdout.
+
+## Active enforcement (will catch future drift)
+
+- Pre-commit research-note hook — blocks src/poly + src/trading commits without note.
+- Weekly Sun 18:00 ET adversarial cron — audits sprint-vs-note pairing.
+- INSTANCE STALE alert — fires when regime-trader state.json > 1h stale.
+
+## Next session
+
+Richard's call on what to work on. Charter is clean, code is aligned with SOUL.md identity, discipline scaffolding is mechanical (not memory-only). Resolution-rate analysis says hold parameters, re-check 2026-04-29.
 
 ## Post-restart verification (2026-04-16 05:28 ET)
 
