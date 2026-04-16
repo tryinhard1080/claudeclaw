@@ -7,7 +7,7 @@ import {
   POLY_MIN_MARKET_PRICE, POLY_MAX_MARKET_PRICE,
   POLY_REFLECTION_ENABLED,
   POLY_KELLY_LOW_MULT, POLY_KELLY_MED_MULT, POLY_KELLY_HIGH_MULT,
-  POLY_EXPOSURE_AWARE_SIZING,
+  POLY_EXPOSURE_AWARE_SIZING, POLY_MAX_DEPLOYED_PCT,
 } from '../config.js';
 import type { Market, Signal, ProbabilityEstimate } from './types.js';
 import { bestAskAndDepth, fetchBook } from './clob-client.js';
@@ -116,16 +116,25 @@ export interface KellyArgs {
  * callers that don't pass it (older tests, CLI scripts) retain old behavior.
  */
 /**
- * Sprint 9: subtract live open-trade exposure from paperCapital so a 5th
- * signal doesn't size as if positions 1-4 don't exist. Only 'open' trades
- * count — voided/resolved have already returned their capital. Floors at 0.
+ * Sprint 9 + ceiling alignment (2026-04-16): subtract live open-trade
+ * exposure from the DEPLOYMENT CAP (maxDeployedPct × paperCapital), not
+ * from full paperCapital. Aligns sizer's frontier with gate1's
+ * maxDeployedPct check in risk-gates.ts, so sizer doesn't produce sizes
+ * likely to be rejected by gate 1. Only 'open' trades count. Floors at 0.
+ * `maxDeployedPct` optional (defaults to POLY_MAX_DEPLOYED_PCT) to keep
+ * the signature usable from existing callers.
  */
-export function computeAvailableCapital(db: Database.Database, paperCapital: number): number {
+export function computeAvailableCapital(
+  db: Database.Database,
+  paperCapital: number,
+  maxDeployedPct: number = POLY_MAX_DEPLOYED_PCT,
+): number {
   const row = db.prepare(
     `SELECT COALESCE(SUM(size_usd), 0) AS exposure FROM poly_paper_trades WHERE status = 'open'`
   ).get() as { exposure: number };
   const exposure = Number(row.exposure) || 0;
-  return Math.max(paperCapital - exposure, 0);
+  const ceiling = maxDeployedPct * paperCapital;
+  return Math.max(ceiling - exposure, 0);
 }
 
 export function computeKellySize(args: KellyArgs): number {
@@ -279,7 +288,7 @@ export class StrategyEngine extends EventEmitter {
     const edgePct = computeEdgePct(est.probability, bestAsk);
     const confMult = confidenceMultiplier(est.confidence, this.confidenceMults);
     const effectiveCapital = this.exposureAwareSizing
-      ? computeAvailableCapital(this.db, this.paperCapital)
+      ? computeAvailableCapital(this.db, this.paperCapital, this.gateConfig.maxDeployedPct)
       : this.paperCapital;
     const sizeUsd = computeKellySize({
       probability: est.probability, ask: bestAsk,

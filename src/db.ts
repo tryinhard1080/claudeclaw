@@ -127,35 +127,6 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_consolidations_chat ON consolidations(chat_id, created_at DESC);
 
-    CREATE TABLE IF NOT EXISTS wa_message_map (
-      telegram_msg_id INTEGER PRIMARY KEY,
-      wa_chat_id      TEXT NOT NULL,
-      contact_name    TEXT NOT NULL,
-      created_at      INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS wa_outbox (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      to_chat_id  TEXT NOT NULL,
-      body        TEXT NOT NULL,
-      created_at  INTEGER NOT NULL,
-      sent_at     INTEGER
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_wa_outbox_unsent ON wa_outbox(sent_at) WHERE sent_at IS NULL;
-
-    CREATE TABLE IF NOT EXISTS wa_messages (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      chat_id      TEXT NOT NULL,
-      contact_name TEXT NOT NULL,
-      body         TEXT NOT NULL,
-      timestamp    INTEGER NOT NULL,
-      is_from_me   INTEGER NOT NULL DEFAULT 0,
-      created_at   INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_wa_messages_chat ON wa_messages(chat_id, timestamp DESC);
-
     CREATE TABLE IF NOT EXISTS conversation_log (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       chat_id     TEXT NOT NULL,
@@ -182,19 +153,6 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_token_usage_chat ON token_usage(chat_id, created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS slack_messages (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      channel_id   TEXT NOT NULL,
-      channel_name TEXT NOT NULL,
-      user_name    TEXT NOT NULL,
-      body         TEXT NOT NULL,
-      timestamp    TEXT NOT NULL,
-      is_from_me   INTEGER NOT NULL DEFAULT 0,
-      created_at   INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_slack_messages_channel ON slack_messages(channel_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS hive_mind (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1067,103 +1025,6 @@ export function getRecentTaskOutputs(
     .all(agentId, cutoff) as Array<{ prompt: string; last_result: string; last_run: number }>;
 }
 
-// ── WhatsApp message map ──────────────────────────────────────────────
-
-export function saveWaMessageMap(telegramMsgId: number, waChatId: string, contactName: string): void {
-  const now = Math.floor(Date.now() / 1000);
-  db.prepare(
-    `INSERT OR REPLACE INTO wa_message_map (telegram_msg_id, wa_chat_id, contact_name, created_at)
-     VALUES (?, ?, ?, ?)`,
-  ).run(telegramMsgId, waChatId, contactName, now);
-}
-
-export function lookupWaChatId(telegramMsgId: number): { waChatId: string; contactName: string } | null {
-  const row = db
-    .prepare('SELECT wa_chat_id, contact_name FROM wa_message_map WHERE telegram_msg_id = ?')
-    .get(telegramMsgId) as { wa_chat_id: string; contact_name: string } | undefined;
-  if (!row) return null;
-  return { waChatId: row.wa_chat_id, contactName: row.contact_name };
-}
-
-export function getRecentWaContacts(limit = 20): Array<{ waChatId: string; contactName: string; lastSeen: number }> {
-  const rows = db.prepare(
-    `SELECT wa_chat_id, contact_name, MAX(created_at) as lastSeen
-     FROM wa_message_map
-     GROUP BY wa_chat_id
-     ORDER BY lastSeen DESC
-     LIMIT ?`,
-  ).all(limit) as Array<{ wa_chat_id: string; contact_name: string; lastSeen: number }>;
-  return rows.map((r) => ({ waChatId: r.wa_chat_id, contactName: r.contact_name, lastSeen: r.lastSeen }));
-}
-
-// ── WhatsApp outbox ──────────────────────────────────────────────────
-
-export interface WaOutboxItem {
-  id: number;
-  to_chat_id: string;
-  body: string;
-  created_at: number;
-}
-
-export function enqueueWaMessage(toChatId: string, body: string): number {
-  const now = Math.floor(Date.now() / 1000);
-  const result = db.prepare(
-    `INSERT INTO wa_outbox (to_chat_id, body, created_at) VALUES (?, ?, ?)`,
-  ).run(toChatId, encryptField(body), now);
-  return result.lastInsertRowid as number;
-}
-
-export function getPendingWaMessages(): WaOutboxItem[] {
-  const rows = db.prepare(
-    `SELECT id, to_chat_id, body, created_at FROM wa_outbox WHERE sent_at IS NULL ORDER BY created_at`,
-  ).all() as WaOutboxItem[];
-  return rows.map((r) => ({ ...r, body: decryptField(r.body) }));
-}
-
-export function markWaMessageSent(id: number): void {
-  const now = Math.floor(Date.now() / 1000);
-  db.prepare(`UPDATE wa_outbox SET sent_at = ? WHERE id = ?`).run(now, id);
-}
-
-// ── WhatsApp messages ────────────────────────────────────────────────
-
-/**
- * Prune WhatsApp messages older than the given number of days.
- * Covers wa_messages, wa_outbox (sent only), and wa_message_map.
- */
-export function pruneWaMessages(retentionDays = 3): { messages: number; outbox: number; map: number } {
-  const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
-
-  const msgResult = db.prepare(
-    'DELETE FROM wa_messages WHERE created_at < ?',
-  ).run(cutoff);
-
-  const outboxResult = db.prepare(
-    'DELETE FROM wa_outbox WHERE sent_at IS NOT NULL AND created_at < ?',
-  ).run(cutoff);
-
-  const mapResult = db.prepare(
-    'DELETE FROM wa_message_map WHERE created_at < ?',
-  ).run(cutoff);
-
-  return {
-    messages: msgResult.changes,
-    outbox: outboxResult.changes,
-    map: mapResult.changes,
-  };
-}
-
-/**
- * Prune Slack messages older than the given number of days.
- */
-export function pruneSlackMessages(retentionDays = 3): number {
-  const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
-  const result = db.prepare(
-    'DELETE FROM slack_messages WHERE created_at < ?',
-  ).run(cutoff);
-  return result.changes;
-}
-
 // ── Conversation Log ──────────────────────────────────────────────────
 
 export interface ConversationTurn {
@@ -1290,80 +1151,6 @@ export function pruneConversationLog(keepPerChat = 500): void {
   for (const chat of chats) {
     deleteStmt.run(chat.chat_id, chat.chat_id, keepPerChat);
   }
-}
-
-// ── WhatsApp messages ────────────────────────────────────────────────
-
-export function saveWaMessage(
-  chatId: string,
-  contactName: string,
-  body: string,
-  timestamp: number,
-  isFromMe: boolean,
-): void {
-  const now = Math.floor(Date.now() / 1000);
-  db.prepare(
-    `INSERT INTO wa_messages (chat_id, contact_name, body, timestamp, is_from_me, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(chatId, contactName, encryptField(body), timestamp, isFromMe ? 1 : 0, now);
-}
-
-export interface WaMessageRow {
-  id: number;
-  chat_id: string;
-  contact_name: string;
-  body: string;
-  timestamp: number;
-  is_from_me: number;
-  created_at: number;
-}
-
-export function getRecentWaMessages(chatId: string, limit = 20): WaMessageRow[] {
-  const rows = db
-    .prepare(
-      `SELECT * FROM wa_messages WHERE chat_id = ?
-       ORDER BY timestamp DESC LIMIT ?`,
-    )
-    .all(chatId, limit) as WaMessageRow[];
-  return rows.map((r) => ({ ...r, body: decryptField(r.body) }));
-}
-
-// ── Slack messages ────────────────────────────────────────────────
-
-export function saveSlackMessage(
-  channelId: string,
-  channelName: string,
-  userName: string,
-  body: string,
-  timestamp: string,
-  isFromMe: boolean,
-): void {
-  const now = Math.floor(Date.now() / 1000);
-  db.prepare(
-    `INSERT INTO slack_messages (channel_id, channel_name, user_name, body, timestamp, is_from_me, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(channelId, channelName, userName, encryptField(body), timestamp, isFromMe ? 1 : 0, now);
-}
-
-export interface SlackMessageRow {
-  id: number;
-  channel_id: string;
-  channel_name: string;
-  user_name: string;
-  body: string;
-  timestamp: string;
-  is_from_me: number;
-  created_at: number;
-}
-
-export function getRecentSlackMessages(channelId: string, limit = 20): SlackMessageRow[] {
-  const rows = db
-    .prepare(
-      `SELECT * FROM slack_messages WHERE channel_id = ?
-       ORDER BY created_at DESC LIMIT ?`,
-    )
-    .all(channelId, limit) as SlackMessageRow[];
-  return rows.map((r) => ({ ...r, body: decryptField(r.body) }));
 }
 
 // ── Token Usage ──────────────────────────────────────────────────────

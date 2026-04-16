@@ -10,8 +10,6 @@ const envConfig = readEnvFile([
   'GROQ_API_KEY',
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_VOICE_ID',
-  'WHATSAPP_ENABLED',
-  'SLACK_USER_TOKEN',
   'CONTEXT_LIMIT',
   'DASHBOARD_PORT',
   'DASHBOARD_TOKEN',
@@ -84,12 +82,6 @@ export const TELEGRAM_BOT_TOKEN =
 // Only respond to this Telegram chat ID. Set this after getting your ID via /chatid.
 export const ALLOWED_CHAT_ID =
   process.env.ALLOWED_CHAT_ID || envConfig.ALLOWED_CHAT_ID || '';
-
-export const WHATSAPP_ENABLED =
-  (process.env.WHATSAPP_ENABLED || envConfig.WHATSAPP_ENABLED || '').toLowerCase() === 'true';
-
-export const SLACK_USER_TOKEN =
-  process.env.SLACK_USER_TOKEN || envConfig.SLACK_USER_TOKEN || '';
 
 // Voice — read via readEnvFile, not process.env
 export const GROQ_API_KEY = envConfig.GROQ_API_KEY ?? '';
@@ -278,16 +270,6 @@ export const POLY_STOP_LOSS_PCT   = num('POLY_STOP_LOSS_PCT',   0.50);
 // stays clean (voided trades exit the exposure pool correctly).
 export const POLY_EXPOSURE_AWARE_SIZING =
   (process.env.POLY_EXPOSURE_AWARE_SIZING || envConfig.POLY_EXPOSURE_AWARE_SIZING || 'false').toLowerCase() === 'true';
-// Phase 4 audit remediation — personal-assistant Telegram surfaces.
-// ClaudeClaw's identity is trading-only (SOUL.md 2026-04-13 pivot). The
-// /wa, /slack, /profile commands plus the WhatsApp/Slack text state
-// machines in bot.ts are drift from that identity. Gated off by default;
-// flip to 'true' only if PA features are intentionally reintroduced. Module
-// files (whatsapp.ts, slack.ts, profile.ts) remain in tree because data-
-// layer tendrils run through db.ts/memory.ts/registry.ts/auto-delegate.ts;
-// full strip is a dedicated future sprint (Phase 4b).
-export const PERSONAL_ASSISTANT_ENABLED =
-  (process.env.POLY_PERSONAL_ASSISTANT_ENABLED || envConfig.POLY_PERSONAL_ASSISTANT_ENABLED || 'false').toLowerCase() === 'true';
 export const ANTHROPIC_API_KEY =
   process.env.ANTHROPIC_API_KEY || envConfig.ANTHROPIC_API_KEY || '';
 
