@@ -1,9 +1,40 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-16 mid-day — **regime-trader 09:30 verification + Sprint 10 (outcomePrices nullish)**
+- **Date**: 2026-04-16/17 — **Phase A complete: Sprints 10+11 deployed, regime-trader fully fixed**
 - **Model**: Claude Opus 4.6 (1M context)
-- **Branch**: `feat/sprint-10-outcomeprices-nullish` — 2 commits ahead of main, unpushed, unmerged.
+- **Branch**: `main` — all work merged + pushed to origin. Clean tree.
+
+## Session 2026-04-16/17 — Full Phase A execution
+
+### What shipped (4 items to production)
+
+1. **Sprint 10** — `outcomePrices` nullish in `GammaMarketSchema` (`src/poly/types.ts:45`, `src/poly/gamma-client.ts:44`). Kills Zod warn spam when Polymarket returns pre-listed markets. 5 new tests. Merged `3aa81d7..d6493ae`.
+2. **Sprint 11** — digest expansion (`src/poly/digest.ts`). Added regime / calibration / per-position-detail sections to daily digest. Prior-art audit caught near-duplicate (plan called for new `briefing.ts`; `digest.ts` already existed). 6 new tests. Merged `d6493ae..e32458b`.
+3. **regime-trader HMM defensive guard** (`C:/Projects/regime-trader/core/hmm_engine.py:284-300`). Returns safe sentinel `RegimeDetection(confidence=0, is_stable=False)` on T=0 feature array. 2 new pytest tests.
+4. **regime-trader fetch window + atomic state writer** (`C:/Projects/regime-trader/main.py:378` and `:130`). Extended fetch from 600→900 calendar days (~414→630 trading days, above 452-row warmup floor). Replaced `Path.write_text()` with `tempfile.mkstemp()` + `os.replace()`. 7 new pytest tests, 143/143 pass.
+
+### Current state
+
+- **Polymarket trader**: pm2 id 5 claudeclaw PID 24676, scanning 5-min, Sprint 10+11 dist live. 2023+ signals, 9 approved, 5 open paper trades.
+- **regime-trader**: pm2 instances online, both restarted with fix. Market closed at restart time. **First live verification: Fri 2026-04-17 09:35 ET** — expect >69 training samples + successful regime prediction on first bar.
+- **Tests**: ClaudeClaw 543/546 (3 pre-existing schedule-cli flakes). regime-trader 143/143 (10 skipped Alpaca live).
+- **Git**: main up to date with origin, working tree clean.
+
+### Next steps (priority order)
+
+1. **Fri 2026-04-17 09:35 ET**: verify regime-trader first bar produces real prediction (not sentinel). Check `pm2 logs regime-trader-spy-agg --lines 20`.
+2. **Sun 2026-04-19 07:00 ET**: resolution-fetch cron first fire. Check Mon AM with `npx tsx scripts/bot-stats.ts`.
+3. **Phase B validation window (04-19 → 04-26)**: observe resolution count, calibration data arrival, daily digest new sections.
+4. **Fri 2026-04-24**: kill-switch drill (MISSION.md gate box 6). Write runbook in `docs/runbooks/kill-switch-drill.md`.
+5. **Sprint 12**: category-conditioned calibration (`src/poly/calibration.ts`). Next in queue per approved plan.
+6. **Deferred**: migration-tracker reconciliation (Tier 3), zombie-table cleanup, Sprint Email-A (blocked on `OPERATOR_EMAIL`), Sprint 4.5 (blocked on `POLY_RESEARCH_NOTEBOOK_ID`).
+
+### Gotchas
+
+- **`pm2 env <id>` leaks secrets** — OpenRouter API key appeared in stdout. Don't use on screenshare.
+- **Live DB has no `schema_migrations` table** but has all tables through v1.8.0. Startup warning "pending v1.5.0" is misleading. Do NOT run `npm run migrate` blind.
+- **Comprehensive plan file** at `C:\Users\Richard\.claude\plans\cached-wishing-quill.md` — full Phase A-E sequence with risk register. Reference for future sessions.
 
 ## Session 2026-04-16 — regime-trader verification + Sprint 10
 
