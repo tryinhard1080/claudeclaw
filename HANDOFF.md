@@ -1,9 +1,52 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-16/17 — **Phase A complete: Sprints 10+11 deployed, regime-trader fully fixed**
-- **Model**: Claude Opus 4.6 (1M context)
-- **Branch**: `main` — all work merged + pushed to origin. Clean tree.
+- **Date**: 2026-04-18 — **Sector-cap fix deployed; real-money-gate plan approved; Phase 0 housekeeping complete**
+- **Model**: Claude Opus 4.7 (1M context)
+- **Branch**: `main` — sector-cap fix shipped in regime-trader local main (no origin remote). ClaudeClaw clean.
+- **Authoritative plan**: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md` — approved sequence from today through real-money gate (earliest 2026-06-20).
+
+## Session 2026-04-18 — Sector-cap fix + approved 9-week plan
+
+### What shipped
+
+1. **regime-trader sector-cap fix** (`instances/spy-*/settings.yaml` + regression test in `tests/test_risk.py`). `max_sector_exposure` raised to match `max_total_exposure` per instance (0.85 agg / 0.60 cons). Unblocks first live rebalance after the 2026-04-16 HMM fix started producing real predictions. 144/144 tests pass. Research note: `C:/Projects/regime-trader/docs/research/sprint-sector-cap-single-etf.md`.
+2. **Retroactive regime-trader commits** — 2026-04-16 HMM guard + fetch-window 600→900 + atomic state writer (previously deployed but uncommitted) committed as `8e33adb`; sector-cap fix as `104d76f`. Both on regime-trader local main. **regime-trader has no origin remote** — local-only repo; pushing requires operator to configure GitHub remote.
+3. **Kronos foundation model research** (github.com/shiyu-coder/Kronos, MIT, AAAI 2026). Deferred to BACKLOG as a Phase E+ candidate for regime-trader augmentation; can't adopt now per MISSION.md anti-goal (no new strategy until 30-day track record).
+4. **Approved 9-week plan** (Phase 0 → Phase 5) to drive MISSION.md gate 0/7 → 7/7. Earliest real-money evaluation 2026-06-20.
+
+### Current state
+
+- **Polymarket trader**: pm2 id 5 claudeclaw, running with Sprint 10+11 dist. 2023+ signals, 9 approved, 5 open paper trades. First `poly_resolutions` expected Sun 04-19 07:00 ET via cron `a6e080bd`.
+- **regime-trader**: pm2 instances restarted with sector-cap config loaded. 2 trades executed Fri 2026-04-17 (equity $100,005.66 final). Market closed at restart; first live verification Mon 2026-04-20 09:35 ET.
+- **Tests**: ClaudeClaw 543/546 (3 pre-existing schedule-cli flakes). regime-trader 144/144.
+- **Git**: claudeclaw main clean + pushed. regime-trader 2 local commits not pushed (no remote).
+
+### Next steps — see approved plan
+
+Full detail: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md`. Summary:
+
+- **Phase 1 — Mon 2026-04-20**: verify sector-cap fix executes rebalance (spy-agg + spy-cons pm2 logs); check resolution-fetch cron output via `npx tsx scripts/bot-stats.ts`; write `docs/handoff/2026-04-20-phase-b-start.md`.
+- **Phase 2 — 04-21 → 04-26 validation window**: daily digest checks (Sprint 11 already renders regime + calibration + positions), Wed 04-22 mid-window diagnostic, **Fri 04-24 kill-switch drill** (gate box 6 — calendar-locked), Sun 04-26 flag-enable decisions.
+- **Phase 3 — 04-27 → 05-17 sprint queue**: Sprint 12 (category calibration) → Sprint 13 (migration tracker + zombie cleanup) → Sprint 14 (reflection Kelly) → Sprints Email-A + 4.5 (gated on operator env vars).
+- **Phase 4 — 05-18 → 06-20**: accumulation window; weekly review + monthly gate check.
+- **Phase 5 — 06-20+**: final gate eval; operator sign-off; flip `POLY_PAPER_MODE=false` + regime-trader to Alpaca live.
+
+### Operator asks (deferrable)
+
+- `OPERATOR_EMAIL` — unblocks Sprint Email-A in Phase 3.4
+- `POLY_RESEARCH_NOTEBOOK_ID` — create NotebookLM notebook "Polymarket Trading Research", paste ID; unblocks Sprint 4.5
+- **Optional**: configure a GitHub remote for regime-trader if cross-machine sync / backup is desired.
+
+### Gotchas carried forward
+
+- **`pm2 env <id>` leaks secrets** — OpenRouter API key. Don't use on screenshare.
+- **Live DB has no `schema_migrations` table** but has v1.8.0 schema. Startup warning "pending v1.5.0" is misleading. Do NOT run `npm run migrate` blind — wait for Sprint 13.
+- **regime-trader `state.json` and `hmm_model.pkl` are now gitignored** — runtime artifacts no longer dirty the working tree.
+
+---
+
+## Prior session archive (for reference)
 
 ## Session 2026-04-16/17 — Full Phase A execution
 
@@ -21,20 +64,33 @@
 - **Tests**: ClaudeClaw 543/546 (3 pre-existing schedule-cli flakes). regime-trader 143/143 (10 skipped Alpaca live).
 - **Git**: main up to date with origin, working tree clean.
 
-### Next steps (priority order)
+## Session 2026-04-16/17 — Full Phase A execution
 
-1. **Fri 2026-04-17 09:35 ET**: verify regime-trader first bar produces real prediction (not sentinel). Check `pm2 logs regime-trader-spy-agg --lines 20`.
-2. **Sun 2026-04-19 07:00 ET**: resolution-fetch cron first fire. Check Mon AM with `npx tsx scripts/bot-stats.ts`.
-3. **Phase B validation window (04-19 → 04-26)**: observe resolution count, calibration data arrival, daily digest new sections.
-4. **Fri 2026-04-24**: kill-switch drill (MISSION.md gate box 6). Write runbook in `docs/runbooks/kill-switch-drill.md`.
-5. **Sprint 12**: category-conditioned calibration (`src/poly/calibration.ts`). Next in queue per approved plan.
-6. **Deferred**: migration-tracker reconciliation (Tier 3), zombie-table cleanup, Sprint Email-A (blocked on `OPERATOR_EMAIL`), Sprint 4.5 (blocked on `POLY_RESEARCH_NOTEBOOK_ID`).
+### What shipped (4 items to production)
+
+1. **Sprint 10** — `outcomePrices` nullish in `GammaMarketSchema` (`src/poly/types.ts:45`, `src/poly/gamma-client.ts:44`). Kills Zod warn spam when Polymarket returns pre-listed markets. 5 new tests. Merged `3aa81d7..d6493ae`.
+2. **Sprint 11** — digest expansion (`src/poly/digest.ts`). Added regime / calibration / per-position-detail sections to daily digest. Prior-art audit caught near-duplicate (plan called for new `briefing.ts`; `digest.ts` already existed). 6 new tests. Merged `d6493ae..e32458b`.
+3. **regime-trader HMM defensive guard** (`C:/Projects/regime-trader/core/hmm_engine.py:284-300`). Returns safe sentinel `RegimeDetection(confidence=0, is_stable=False)` on T=0 feature array. 2 new pytest tests.
+4. **regime-trader fetch window + atomic state writer** (`C:/Projects/regime-trader/main.py:378` and `:130`). Extended fetch from 600→900 calendar days (~414→630 trading days, above 452-row warmup floor). Replaced `Path.write_text()` with `tempfile.mkstemp()` + `os.replace()`. 7 new pytest tests, 143/143 pass.
+
+### Current state
+
+- **Polymarket trader**: pm2 id 5 claudeclaw PID 24676, scanning 5-min, Sprint 10+11 dist live. 2023+ signals, 9 approved, 5 open paper trades.
+- **regime-trader**: pm2 instances online, both restarted with fix. Market closed at restart time. **First live verification: Fri 2026-04-17 09:35 ET** — expect >69 training samples + successful regime prediction on first bar.
+- **Tests**: ClaudeClaw 543/546 (3 pre-existing schedule-cli flakes). regime-trader 143/143 (10 skipped Alpaca live).
+- **Git**: main up to date with origin, working tree clean.
+
+### Prior session next-steps (superseded by 2026-04-18 plan — kept for audit)
+
+1. ~~Fri 2026-04-17 09:35 ET: verify regime-trader first bar.~~ **Done 2026-04-17** — HMM prediction worked (conf=1.00), but sector-cap blocked trades. Sector-cap fix shipped 2026-04-18.
+2. ~~Sun 2026-04-19 07:00 ET: resolution-fetch cron first fire.~~ **Carried forward to 2026-04-18 plan Phase 1.2.**
+3. ~~Phase B validation window~~, ~~Fri 2026-04-24 kill-switch drill~~, ~~Sprint 12~~, ~~Deferred items~~ — all carried forward to the 2026-04-18 plan (Phase 2 + 3).
 
 ### Gotchas
 
 - **`pm2 env <id>` leaks secrets** — OpenRouter API key appeared in stdout. Don't use on screenshare.
 - **Live DB has no `schema_migrations` table** but has all tables through v1.8.0. Startup warning "pending v1.5.0" is misleading. Do NOT run `npm run migrate` blind.
-- **Comprehensive plan file** at `C:\Users\Richard\.claude\plans\cached-wishing-quill.md` — full Phase A-E sequence with risk register. Reference for future sessions.
+- **Prior plan file** at `C:\Users\Richard\.claude\plans\cached-wishing-quill.md` is superseded by `createa-plan-to-get-twinkling-dragon.md`.
 
 ## Session 2026-04-16 — regime-trader verification + Sprint 10
 
