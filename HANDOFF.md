@@ -1,10 +1,54 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-18 — **Sector-cap fix deployed; real-money-gate plan approved; Phase 0 housekeeping complete**
-- **Model**: Claude Opus 4.7 (1M context)
-- **Branch**: `main` — sector-cap fix shipped in regime-trader local main (no origin remote). ClaudeClaw clean.
-- **Authoritative plan**: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md` — approved sequence from today through real-money gate (earliest 2026-06-20).
+- **Date**: 2026-04-18 — **🛑 CLAUDECLAW BOT HALTED — API spend incident $150 in 48h.** Sector-cap fix shipped; real-money plan approved and then suspended pending cost/auth rearchitecture.
+- **Model**: Claude Opus 4.7 (1M context) — this session on Max OAuth ($0). The halted bot was on a separate Anthropic API key that billed $150.
+- **Branch**: `main` — ClaudeClaw clean. regime-trader pushed to private GitHub `tryinhard1080/regime-trader`.
+- **Authoritative plan**: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md` — **on hold until API-auth decision is made.** Phase 1 (Mon 2026-04-20 verification) paused; bot is offline.
+
+## 🛑 2026-04-18 — claudeclaw halted (API spend incident)
+
+### Incident
+
+Operator discovery: ClaudeClaw pm2 service accumulated **~$150** in Anthropic API charges over ~48h by hitting `https://api.anthropic.com` directly via the `ANTHROPIC_API_KEY` in `claudeclaw/.env` (fingerprint `sk-ant-api03-VO-mkZ7w…`). Calls came from the Polymarket strategy modules (`src/poly/strategies/ai-probability.ts` + `ai-probability-reflect.ts`), which import `ANTHROPIC_API_KEY` from `config.ts:273-274` and call the Anthropic SDK directly per 5-min scan cycle. 2023+ signals × LLM evaluation per signal = plausible $150 at Opus rates.
+
+### Immediate actions taken (2026-04-18)
+
+1. **pm2 stop/delete/save** (operator ran) — claudeclaw no longer in `pm2 list`. Auto-start chain broken at `pm2 save`.
+2. **`.env` scrubbed** — `ANTHROPIC_API_KEY=` blanked; `POLY_ENABLED=false`. Rationale documented inline.
+3. **Halt marker** — this HANDOFF entry.
+4. **regime-trader** — also stopped in pm2 (status: stopped). No cost implication (uses Alpaca, not Anthropic), but flagged here so restart is deliberate.
+
+### Still TODO — operator
+
+1. **Rotate keys** (all of these were either in the `.env` that produced the incident, or were read into an assistant transcript during triage):
+   - `ANTHROPIC_API_KEY` (the burner — rotate first at `console.anthropic.com/settings/keys`)
+   - `TELEGRAM_BOT_TOKEN`
+   - `GOOGLE_API_KEY`
+   - `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` — **highest priority after Anthropic** if any real-money flip is ever on the table
+   - `AGENTMAIL_API_KEY`
+   - `DASHBOARD_TOKEN`
+   - `DB_ENCRYPTION_KEY` — rotating this reseeds the SQLite store; plan a migration path before rotating
+2. **Confirm spend** — pull usage report for the `VO-` key at `console.anthropic.com/settings/usage` to verify $150 attribution and date range.
+3. **Move project out of OneDrive** — `C:/Users/Richard/OneDrive - Greystar/Documents/Code Projects/CCBot1080/claudeclaw` lives in synced storage. Consider relocating to `C:/Projects/claudeclaw/` alongside `regime-trader` to eliminate that exposure vector.
+
+### Architecture decision needed before restart
+
+The strategy code hard-depends on the Anthropic SDK with API-key auth. Three paths:
+
+| Option | Effort | Cost profile | Tradeoff |
+|---|---|---|---|
+| **A. Switch model to Haiku** | 1-line env change (`POLY_MODEL=claude-haiku-4-5-20251001`) + fresh API key | ~90% cheaper than Opus | Slight quality drop on probability estimates; likely acceptable for paper phase |
+| **B. Switch provider to GLM 5.1** | Rewrite strategy modules to use OpenAI-compatible SDK (GLM is OAI-shaped); add `GLM_API_KEY` to env | Operator has existing account; cost TBD per operator | Non-trivial rewrite; different prompt tuning required |
+| **C. Route via Agent SDK + `CLAUDE_CODE_OAUTH_TOKEN`** | Larger rewrite of strategy modules to call Agent SDK like `src/agent.ts` does | Uses Max subscription (within limits) | Best cost, biggest rewrite; subscription rate-limits may clash with 5-min scan cadence |
+
+Recommend **A** as immediate unblock (matches existing code shape, fastest return to paper trading) with **C** as Phase 3 sprint candidate. **B** only if GLM 5.1's probability-estimation quality has been validated on similar tasks.
+
+### Plan impact
+
+All subsequent plan phases paused. Phase 1 Mon 2026-04-20 verification cannot run while bot is offline. Real-money-gate clock on MISSION.md box 1 (30-day no-intervention) **resets** — the 04-17 start was invalidated by today's halt.
+
+Next session first move: read this HANDOFF entry, make the A/B/C decision above, then rebuild the plan from Phase 1 with the new auth model confirmed.
 
 ## Session 2026-04-18 — Sector-cap fix + approved 9-week plan
 
