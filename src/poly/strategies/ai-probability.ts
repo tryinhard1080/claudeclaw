@@ -1,7 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import crypto from 'crypto';
 import type Database from 'better-sqlite3';
-import { ANTHROPIC_API_KEY, POLY_MODEL } from '../../config.js';
+import { GLM_API_KEY, GLM_BASE_URL, GLM_MODEL } from '../../config.js';
 import { ProbabilityEstimateSchema, type ProbabilityEstimate, type Market } from '../types.js';
 import { logger } from '../../logger.js';
 
@@ -32,13 +32,15 @@ Output ONLY the JSON object. No prose, no markdown fences, no commentary.`;
 const USER_PROMPT_SKELETON = `{question, category, end_date, ask, spread, depth, volume}`;
 
 // Lazy client init — keeps module importable without a real API key (tests, dry runs).
-let _client: Anthropic | null = null;
-function getClient(): Anthropic {
+// Targets Z.ai's OpenAI-compatible GLM endpoint (subscription-billed) after the
+// 2026-04-18 cost migration. See docs/research/sprint-glm-migration.md.
+let _client: OpenAI | null = null;
+function getClient(): OpenAI {
   if (!_client) {
-    if (!ANTHROPIC_API_KEY) {
-      throw new Error('ANTHROPIC_API_KEY not set — cannot evaluate markets');
+    if (!GLM_API_KEY) {
+      throw new Error('GLM_API_KEY not set — cannot evaluate markets');
     }
-    _client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    _client = new OpenAI({ apiKey: GLM_API_KEY, baseURL: GLM_BASE_URL });
   }
   return _client;
 }
@@ -152,21 +154,23 @@ export async function evaluateMarket(args: EvaluateArgs): Promise<ProbabilityEst
   ].join('\n');
 
   try {
-    const resp = await getClient().messages.create({
-      model: POLY_MODEL,
+    const resp = await getClient().chat.completions.create({
+      model: GLM_MODEL,
       max_tokens: 400,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: user }],
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: user },
+      ],
     });
-    const block = resp.content.find(b => b.type === 'text');
-    if (!block || block.type !== 'text') return null;
-    const json = extractJson(block.text);
+    const content = resp.choices[0]?.message?.content;
+    if (typeof content !== 'string' || content.length === 0) return null;
+    const json = extractJson(content);
     let obj: unknown;
     try {
       obj = JSON.parse(json);
     } catch {
       logger.warn(
-        { raw: block.text.slice(0, 200) },
+        { raw: content.slice(0, 200) },
         'probability estimate JSON parse failed'
       );
       return null;

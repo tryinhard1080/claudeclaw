@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
 import {
   POLY_KELLY_FRACTION, POLY_MAX_TRADE_USD, POLY_MIN_VOLUME_USD,
-  POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL, POLY_MODEL,
+  POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL, GLM_MODEL,
   POLY_MIN_MARKET_PRICE, POLY_MAX_MARKET_PRICE,
   POLY_REFLECTION_ENABLED,
   POLY_KELLY_LOW_MULT, POLY_KELLY_MED_MULT, POLY_KELLY_HIGH_MULT,
@@ -385,7 +385,7 @@ export class StrategyEngine extends EventEmitter {
       nowSec, market.slug, outcome.tokenId, outcome.label,
       bestAsk, reflected.probability, edgePct,
       reflected.confidence, reflected.reasoning, reflected.contrarian ?? null,
-      REFLECT_PROMPT_VERSION, POLY_MODEL, regime?.regimeLabel ?? UNKNOWN_REGIME_TAG,
+      REFLECT_PROMPT_VERSION, GLM_MODEL, regime?.regimeLabel ?? UNKNOWN_REGIME_TAG,
     );
   }
 
@@ -408,7 +408,7 @@ export class StrategyEngine extends EventEmitter {
       signal.marketPrice, signal.estimatedProb, signal.edgePct,
       signal.confidence, signal.reasoning, signal.contrarian ?? null,
       approved ? 1 : 0, rejections.length > 0 ? JSON.stringify(rejections) : null,
-      PROMPT_VERSION, POLY_MODEL, regime?.regimeLabel ?? UNKNOWN_REGIME_TAG,
+      PROMPT_VERSION, GLM_MODEL, regime?.regimeLabel ?? UNKNOWN_REGIME_TAG,
     );
     return Number(info.lastInsertRowid);
   }

@@ -50,6 +50,9 @@ const envConfig = readEnvFile([
   'ANTHROPIC_API_KEY',
   'MEMORY_ENABLED',
   'VOICE_ENABLED',
+  'GLM_API_KEY',
+  'GLM_BASE_URL',
+  'GLM_MODEL',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -283,4 +286,14 @@ export const VOICE_ENABLED =
   (process.env.VOICE_ENABLED || envConfig.VOICE_ENABLED || 'false').toLowerCase() === 'true';
 export const ANTHROPIC_API_KEY =
   process.env.ANTHROPIC_API_KEY || envConfig.ANTHROPIC_API_KEY || '';
+
+// GLM 5.1 via Z.ai (OpenAI-compatible). Subscription-billed; replaces the
+// per-token Anthropic path in src/poly/strategies/* after the 2026-04-18
+// cost incident. See docs/research/sprint-glm-migration.md.
+export const GLM_API_KEY =
+  process.env.GLM_API_KEY || envConfig.GLM_API_KEY || '';
+export const GLM_BASE_URL =
+  process.env.GLM_BASE_URL || envConfig.GLM_BASE_URL || 'https://api.z.ai/api/paas/v4';
+export const GLM_MODEL =
+  process.env.GLM_MODEL || envConfig.GLM_MODEL || 'glm-5.1';
 

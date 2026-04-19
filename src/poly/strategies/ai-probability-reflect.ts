@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import type Database from 'better-sqlite3';
-import { ANTHROPIC_API_KEY, POLY_MODEL } from '../../config.js';
+import { GLM_API_KEY, GLM_BASE_URL, GLM_MODEL } from '../../config.js';
 import type { Market, ProbabilityEstimate } from '../types.js';
 import { logger } from '../../logger.js';
 import { evaluateMarket, extractJson, PROMPT_VERSION as PRIMARY_VERSION } from './ai-probability.js';
@@ -140,13 +140,15 @@ export function applyReflectionRule(
 }
 
 // Lazy client init — matches ai-probability.ts so tests don't need an API key.
-let _client: Anthropic | null = null;
-function getClient(): Anthropic {
+// Targets Z.ai's OpenAI-compatible GLM endpoint (subscription-billed) after the
+// 2026-04-18 cost migration. See docs/research/sprint-glm-migration.md.
+let _client: OpenAI | null = null;
+function getClient(): OpenAI {
   if (!_client) {
-    if (!ANTHROPIC_API_KEY) {
-      throw new Error('ANTHROPIC_API_KEY not set — cannot run reflection critic');
+    if (!GLM_API_KEY) {
+      throw new Error('GLM_API_KEY not set — cannot run reflection critic');
     }
-    _client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    _client = new OpenAI({ apiKey: GLM_API_KEY, baseURL: GLM_BASE_URL });
   }
   return _client;
 }
@@ -157,15 +159,17 @@ export interface RunCriticArgs extends ComposeCriticArgs {
 
 export async function runCritic(args: RunCriticArgs): Promise<CriticJudgment | null> {
   try {
-    const resp = await getClient().messages.create({
-      model: args.model ?? POLY_MODEL,
+    const resp = await getClient().chat.completions.create({
+      model: args.model ?? GLM_MODEL,
       max_tokens: 300,
-      system: CRITIC_SYSTEM,
-      messages: [{ role: 'user', content: composeCriticUser(args) }],
+      messages: [
+        { role: 'system', content: CRITIC_SYSTEM },
+        { role: 'user', content: composeCriticUser(args) },
+      ],
     });
-    const block = resp.content.find(b => b.type === 'text');
-    if (!block || block.type !== 'text') return null;
-    return parseCriticResponse(block.text);
+    const content = resp.choices[0]?.message?.content;
+    if (typeof content !== 'string' || content.length === 0) return null;
+    return parseCriticResponse(content);
   } catch (err) {
     logger.warn({ err: String(err) }, 'reflection critic call failed');
     return null;
