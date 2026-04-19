@@ -16,7 +16,7 @@ function bootDb(): Database.Database {
       market_price REAL, estimated_prob REAL, edge_pct REAL, confidence TEXT,
       reasoning TEXT, contrarian TEXT, approved INTEGER NOT NULL,
       rejection_reasons TEXT, paper_trade_id INTEGER,
-      prompt_version TEXT, model TEXT, regime_label TEXT);
+      prompt_version TEXT, model TEXT, regime_label TEXT, provider TEXT);
     CREATE TABLE poly_regime_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
       vix REAL, btc_dominance REAL, yield_10y REAL, regime_label TEXT NOT NULL);

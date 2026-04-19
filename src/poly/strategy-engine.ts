@@ -379,8 +379,8 @@ export class StrategyEngine extends EventEmitter {
       INSERT INTO poly_signals
         (created_at, market_slug, outcome_token_id, outcome_label, market_price,
          estimated_prob, edge_pct, confidence, reasoning, contrarian, approved,
-         rejection_reasons, prompt_version, model, regime_label)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'shadow:reflect', ?, ?, ?)
+         rejection_reasons, prompt_version, model, regime_label, provider)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'shadow:reflect', ?, ?, ?, 'glm')
     `).run(
       nowSec, market.slug, outcome.tokenId, outcome.label,
       bestAsk, reflected.probability, edgePct,
@@ -397,12 +397,14 @@ export class StrategyEngine extends EventEmitter {
     const regime = latestRegimeSnapshot(this.db);
     // prompt_version + model (Sprint 2 versioning) let us A/B compare
     // strategy variants on the overlap set using Sprint 1's Brier metric.
+    // provider ('glm' | 'anthropic') added 2026-04-19 post-GLM migration for
+    // coarser-grained vendor partitioning in Brier reports; see v1.9.0 migration.
     const info = this.db.prepare(`
       INSERT INTO poly_signals
         (created_at, market_slug, outcome_token_id, outcome_label, market_price,
          estimated_prob, edge_pct, confidence, reasoning, contrarian, approved,
-         rejection_reasons, prompt_version, model, regime_label)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         rejection_reasons, prompt_version, model, regime_label, provider)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'glm')
     `).run(
       nowSec, signal.marketSlug, signal.outcomeTokenId, signal.outcomeLabel,
       signal.marketPrice, signal.estimatedProb, signal.edgePct,

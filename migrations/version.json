@@ -6,6 +6,7 @@
     "v1.5.0": ["v1.5.0-regime-tagging"],
     "v1.6.0": ["v1.6.0-research-ingest"],
     "v1.7.0": ["v1.7.0-resolutions-cache"],
-    "v1.8.0": ["v1.8.0-scan-runs"]
+    "v1.8.0": ["v1.8.0-scan-runs"],
+    "v1.9.0": ["v1.9.0-signal-provider"]
   }
 }
