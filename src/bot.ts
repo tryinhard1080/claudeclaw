@@ -20,6 +20,7 @@ import {
   AGENT_TIMEOUT_MS,
   STREAM_STRATEGY,
   PROJECT_ROOT,
+  VOICE_ENABLED,
 } from './config.js';
 import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, saveTokenUsage } from './db.js';
 import { logger } from './logger.js';
@@ -625,7 +626,8 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
 
     // Voice response: send audio if user sent a voice note (forceVoiceReply)
     // OR if they've toggled /voice on for text messages.
-    const caps = voiceCapabilities();
+    // Gated by VOICE_ENABLED — default false after the 2026-04-18 cost-audit.
+    const caps = VOICE_ENABLED ? voiceCapabilities() : { tts: false, stt: false };
     const shouldSpeakBack = caps.tts && (forceVoiceReply || voiceEnabledChats.has(chatIdStr));
 
     // Send text response (if there's any left after stripping markers)

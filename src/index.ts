@@ -5,7 +5,7 @@ import path from 'path';
 import { loadAgentConfig, resolveAgentDir, resolveAgentClaudeMd } from './agent-config.js';
 import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
-import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, REGIME_TRADER_PATH, REGIME_TRADER_INSTANCES } from './config.js';
+import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, MEMORY_ENABLED, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, REGIME_TRADER_PATH, REGIME_TRADER_INSTANCES } from './config.js';
 import { startDashboard } from './dashboard.js';
 import { initDatabase, cleanupOldMissionTasks, insertAuditLog, getDb } from './db.js';
 import { initSecurity, setAuditCallback } from './security.js';
@@ -144,7 +144,8 @@ async function main(): Promise<void> {
   // Decay and consolidation run ONLY in the main process to prevent
   // multi-process over-decay (5x decay on simultaneous restart) and
   // duplicate consolidation records from overlapping memory batches.
-  if (AGENT_ID === 'main') {
+  // Gated by MEMORY_ENABLED — default false after the 2026-04-18 cost incident.
+  if (AGENT_ID === 'main' && MEMORY_ENABLED) {
     runDecaySweep();
     cleanupOldMissionTasks(7);
     setInterval(() => { runDecaySweep(); cleanupOldMissionTasks(7); }, 24 * 60 * 60 * 1000);
@@ -164,6 +165,11 @@ async function main(): Promise<void> {
       }, 30 * 60 * 1000);
       logger.info('Memory consolidation enabled (every 30 min)');
     }
+  } else if (AGENT_ID === 'main') {
+    // Main process still needs mission-task cleanup even when memory subsystem is off.
+    cleanupOldMissionTasks(7);
+    setInterval(() => { cleanupOldMissionTasks(7); }, 24 * 60 * 60 * 1000);
+    logger.info('Memory subsystem disabled (MEMORY_ENABLED=false)');
   } else {
     logger.info({ agentId: AGENT_ID }, 'Skipping decay/consolidation (main process owns these)');
   }

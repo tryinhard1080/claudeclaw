@@ -48,6 +48,8 @@ const envConfig = readEnvFile([
   'POLY_MAX_MARKET_PRICE',
   'POLY_RESEARCH_NOTEBOOK_ID',
   'ANTHROPIC_API_KEY',
+  'MEMORY_ENABLED',
+  'VOICE_ENABLED',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -270,6 +272,15 @@ export const POLY_STOP_LOSS_PCT   = num('POLY_STOP_LOSS_PCT',   0.50);
 // stays clean (voided trades exit the exposure pool correctly).
 export const POLY_EXPOSURE_AWARE_SIZING =
   (process.env.POLY_EXPOSURE_AWARE_SIZING || envConfig.POLY_EXPOSURE_AWARE_SIZING || 'false').toLowerCase() === 'true';
+// Memory consolidation + decay (PA-era subsystem). Disabled by default after the
+// 2026-04-18 cost incident — the 30-min Gemini consolidation cron was ambient spend
+// with no remaining consumer. Re-enable only if memory features are reinstated.
+export const MEMORY_ENABLED =
+  (process.env.MEMORY_ENABLED || envConfig.MEMORY_ENABLED || 'false').toLowerCase() === 'true';
+// Voice transcription (Groq) + TTS (ElevenLabs/Gradium). Dormant on idle; fires on
+// voice messages or /voice toggle. Disabled by default post-trading-pivot.
+export const VOICE_ENABLED =
+  (process.env.VOICE_ENABLED || envConfig.VOICE_ENABLED || 'false').toLowerCase() === 'true';
 export const ANTHROPIC_API_KEY =
   process.env.ANTHROPIC_API_KEY || envConfig.ANTHROPIC_API_KEY || '';
 
