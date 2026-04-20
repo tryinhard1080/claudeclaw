@@ -49,3 +49,4 @@ Anything less is a draft.
 (Date — Decision — Reason)
 
 - _2026-04-13_ — Pivot to trading-only identity (this MISSION + SOUL + HEARTBEAT) — "make this a first class trading bot, single focus".
+- _2026-04-20_ — Authorized restart on GLM 5.1 subscription after $150 Anthropic API spend incident. Keys retained (private repo, acceptable). Stage 3 eval showed GLM more calibrated than pre-halt Claude (which was hallucinating 2025 data). 30-day gate-box-1 clock starts now. — "A" (restart now option selected in Phase 0.5 Stage 4 decision).

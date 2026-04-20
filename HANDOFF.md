@@ -1,10 +1,61 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-18 — **🛑 CLAUDECLAW BOT HALTED — API spend incident $150 in 48h.** Sector-cap fix shipped; real-money plan approved and then suspended pending cost/auth rearchitecture.
-- **Model**: Claude Opus 4.7 (1M context) — this session on Max OAuth ($0). The halted bot was on a separate Anthropic API key that billed $150.
-- **Branch**: `main` — ClaudeClaw clean. regime-trader pushed to private GitHub `tryinhard1080/regime-trader`.
-- **Authoritative plan**: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md` — **on hold until API-auth decision is made.** Phase 1 (Mon 2026-04-20 verification) paused; bot is offline.
+- **Date**: 2026-04-20 — **✅ CLAUDECLAW BOT BACK ONLINE on GLM 5.1 subscription.** Phase 0.5 cost migration complete. 30-day no-intervention clock restarts now.
+- **Model**: Claude Opus 4.7 (1M context) — planning/review on Max OAuth. Bot is on Z.ai GLM Coding Plan (flat monthly quota, no API billing).
+- **Branch**: `main` — all Phase 0.5 work pushed. claudeclaw pm2 id 12, PID 6000, uptime climbing.
+- **Authoritative plan**: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md` — halt block cleared; Phase 1 verification now runs on the live GLM-era bot.
+
+## ✅ 2026-04-20 — claudeclaw restart on GLM 5.1
+
+### What made this possible
+
+1. **Anthropic ToS research** clarified Agent SDK + Max OAuth is NOT a legal path for headless production services. Forced migration to GLM 5.1 (operator's existing Z.ai subscription). See plan §Architecture Decision and `docs/research/sprint-glm-migration.md` §2.
+2. **Z.ai Coding Plan endpoint discovery** — standard `/api/paas/v4` returned 429 "Insufficient balance" despite valid key. Subscription is tied to `/api/coding/paas/v4`. `GLM_BASE_URL` in `.env` updated.
+3. **`thinking: { type: 'disabled' }` extra param** — glm-4.6 is a reasoning model that burns `max_tokens` on `reasoning_content` and returns empty `content`. Disabling thinking dropped completion tokens 30x and produced clean JSON responses. Probe + fix at `scripts/glm-probe-thinking.ts` and the two strategy modules.
+4. **glm-4.6 > glm-5.1 for this use case** — glm-5.1 has heavier reasoning overhead. glm-4.6 on Coding Plan is the right choice. `GLM_MODEL=glm-4.6` in `.env`.
+
+### Stage 3 eval result (docs/handoff/glm-eval-2026-04-19.md)
+
+Quantitatively fails preregistered thresholds (median 10pp, directional 50%). Qualitatively passes — the largest GLM-vs-Claude disagreements all show Claude hallucinating (e.g. citing April 2025 BTC prices for April 2026 markets). GLM anchors to market ask when uncertain, which is what the SYSTEM_PROMPT instructs. The eval's Claude-as-ground-truth metric was flawed; resolved-market Brier is the real calibration test (30-day post-restart window).
+
+### Restart sequence (executed 2026-04-20)
+
+1. Committed thinking-disabled patches + Stage 3 eval report + probe scripts (`8078e6f`).
+2. Flipped `POLY_ENABLED=true` in `.env`; `ANTHROPIC_API_KEY` stays empty (GLM path doesn't need it).
+3. Ran `npm run migrate` — applied v1.9.0 (poly_signals.provider column + backfill). `.applied.json` now shows `v1.9.0`.
+4. `pm2 start dist/index.js --name claudeclaw` → id 12 PID 6000, uptime clean, restart_count 0.
+5. `pm2 save` persisted the new process state.
+
+### Observability
+
+- `poly_signals.provider` column populated `'glm'` on new rows; pre-halt rows backfilled to `'anthropic'`.
+- First 5-min scan cycle should fire within 5 minutes of restart. Watch `pm2 logs claudeclaw --lines 50` for "scan_complete" event and any GLM 400/429 errors.
+
+### regime-trader status
+
+pm2 instances `regime-trader-spy-agg` + `-cons` stopped. They auto-start via `cron_restart: '30 9 * * 1-5'` ET when Monday market opens (09:30 ET). Today's verification of the sector-cap fix (Phase 1.1) now runs against the live market.
+
+### Monitor over next 24h
+
+- Parse-error rate: `SELECT COUNT(*) FROM poly_signals WHERE reasoning='' OR estimated_prob IS NULL AND created_at > <restart_timestamp>` — expect 0.
+- GLM quota consumption: Z.ai Coding Plan dashboard. First day of production traffic is the signal for whether the subscription tier covers the load.
+- Signal count ramp: ~42 signals/hr expected at steady state, matching pre-halt pattern.
+- MISSION.md gate box 1 (30-day no-intervention) clock started at restart timestamp.
+
+### Remaining from HANDOFF.md §halt — now resolved or deferred
+
+- ~~Rotate keys~~ → operator decision: keep existing, private repo.
+- ~~Architecture decision~~ → GLM 5.1 locked, shipped.
+- ~~Eval gate~~ → run, qualitative pass.
+- ~~Restart authorization~~ → operator approved option A, executed.
+- **Still deferred**: migration-tracker reconciliation (Sprint 13 Phase 3.2) — `.applied.json` is working now but the test-schema drift the sprint addresses is still a real concern.
+
+---
+
+## Prior session archive (for reference)
+
+## 🛑 2026-04-18 — claudeclaw halted (API spend incident)
 
 ## 🛑 2026-04-18 — claudeclaw halted (API spend incident)
 
