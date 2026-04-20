@@ -1,9 +1,23 @@
 import { EventEmitter } from 'events';
 import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
+import { POLY_SCAN_DEBUG } from '../config.js';
 import { fetchActiveMarkets } from './gamma-client.js';
 import type { Market } from './types.js';
 import { recordScanRun } from './drift.js';
+
+// Diagnostic instrumentation for the 2026-04-20 scanner hang bug. Writes
+// directly to process.stdout (bypassing pino's worker thread) so it produces
+// output even if pino-pretty stalls. Enable with POLY_SCAN_DEBUG=1 in .env.
+// Kept as a permanent knob — zero cost when off, single source of truth when on.
+// POLY_SCAN_DEBUG is read via config.ts/readEnvFile so it respects the project's
+// "don't leak env into child processes" convention.
+function scanTrace(tag: string, extra: Record<string, unknown> = {}): void {
+  if (!POLY_SCAN_DEBUG) return;
+  const ts = new Date().toISOString();
+  const kv = Object.entries(extra).map(([k, v]) => `${k}=${String(v)}`).join(' ');
+  process.stdout.write(`[SCAN ${ts}] ${tag}${kv ? ' ' + kv : ''}\n`);
+}
 
 export class MarketScanner extends EventEmitter {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -15,8 +29,10 @@ export class MarketScanner extends EventEmitter {
 
   start(): void {
     if (this.timer) return;
+    scanTrace('start() scheduling first runOnce', { intervalMs: this.intervalMs });
     void this.runOnce();
     this.timer = setInterval(() => void this.runOnce(), this.intervalMs);
+    scanTrace('start() returned; setInterval armed');
   }
 
   stop(): void {
@@ -27,14 +43,18 @@ export class MarketScanner extends EventEmitter {
   }
 
   private async runOnce(): Promise<void> {
+    scanTrace('runOnce entry', { scanning: this.scanning });
     if (this.scanning) return;
     this.scanning = true;
     const started = Date.now();
     try {
+      scanTrace('pre-fetch');
       const markets = await fetchActiveMarkets();
+      scanTrace('post-fetch', { count: markets.length, ms: Date.now() - started });
       upsertMarkets(this.db, markets);
       capturePrices(this.db, markets);
       pruneOldPrices(this.db);
+      scanTrace('post-db');
       const duration = Date.now() - started;
       logger.info({ count: markets.length, ms: duration }, 'poly scan complete');
       // Sprint 1.5: persist per-run metrics for drift dashboards. Wrapped
@@ -50,7 +70,9 @@ export class MarketScanner extends EventEmitter {
         logger.warn({ err: String(e) }, 'recordScanRun failed');
       }
       this.emit('scan_complete', { markets });
+      scanTrace('post-emit scan_complete');
     } catch (err) {
+      scanTrace('catch', { err: String(err).slice(0, 120) });
       logger.error({ err: String(err) }, 'poly scan failed');
       try {
         recordScanRun(this.db, {
@@ -62,6 +84,7 @@ export class MarketScanner extends EventEmitter {
       this.emit('scan_error', { error: String(err) });
     } finally {
       this.scanning = false;
+      scanTrace('finally — scanning=false');
     }
   }
 }

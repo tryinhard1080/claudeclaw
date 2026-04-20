@@ -38,6 +38,7 @@ const envConfig = readEnvFile([
   'POLY_KELLY_FRACTION',
   'POLY_MODEL',
   'POLY_SCAN_INTERVAL_MIN',
+  'POLY_SCAN_DEBUG',
   'POLY_DIGEST_HOUR',
   'POLY_TIMEZONE',
   'POLY_CALIBRATION_HOUR',
@@ -227,6 +228,10 @@ export const POLY_KELLY_FRACTION = num('POLY_KELLY_FRACTION', 0.25);
 export const POLY_MODEL =
   process.env.POLY_MODEL || envConfig.POLY_MODEL || 'claude-opus-4-6';
 export const POLY_SCAN_INTERVAL_MIN = num('POLY_SCAN_INTERVAL_MIN', 15);
+// 2026-04-20 scanner-hang diagnostic: when '1', MarketScanner writes [SCAN ...]
+// markers directly to stdout to bisect where runOnce() is stalling.
+export const POLY_SCAN_DEBUG =
+  (process.env.POLY_SCAN_DEBUG || envConfig.POLY_SCAN_DEBUG || '0') === '1';
 export const POLY_DIGEST_HOUR = num('POLY_DIGEST_HOUR', 6);
 export const POLY_TIMEZONE =
   process.env.POLY_TIMEZONE || envConfig.POLY_TIMEZONE || 'America/New_York';
