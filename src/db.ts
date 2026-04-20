@@ -258,6 +258,19 @@ export function initDatabase(): void {
 
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  // 2026-04-20 DB bloat fix: the pre-incident WAL grew to 5.5 GB because
+  // SQLite's default wal_autocheckpoint (1000 pages = ~4 MB) was outrun by
+  // the scanner's 100k-row-per-tick writes. Four tunings below restore
+  // healthy steady state.
+  // - wal_autocheckpoint=2000: ~8 MB between automatic checkpoints.
+  // - synchronous=NORMAL: safe under WAL per SQLite docs; 2-3x faster writes
+  //   vs FULL. Paper-trading tolerates the torn-write risk.
+  // - cache_size=-20000: 20 MB page cache (negative = KB).
+  // - mmap_size=256 MB: mmap window for large reads (e.g., drift dashboards).
+  db.pragma('wal_autocheckpoint = 2000');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('cache_size = -20000');
+  db.pragma('mmap_size = 268435456');
   createSchema(db);
   runMigrations(db);
 

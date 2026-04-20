@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { EventEmitter } from 'events';
 import type { ClobBook, Market, ProbabilityEstimate } from './types.js';
-import { StrategyEngine, computeKellySize, confidenceMultiplier, computeAvailableCapital } from './strategy-engine.js';
+import {
+  StrategyEngine,
+  computeKellySize,
+  confidenceMultiplier,
+  computeAvailableCapital,
+  selectPriceCaptureCandidates,
+} from './strategy-engine.js';
 
 function bootDb(): Database.Database {
   const db = new Database(':memory:');
@@ -538,5 +544,68 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]!.approved).toBe(0);
     expect(rows[1]!.prompt_version).toBe('v3-reflect');
+  });
+});
+
+describe('selectPriceCaptureCandidates', () => {
+  const baseOpts = {
+    nowSec: Math.floor(Date.now() / 1000),
+    minVolumeUsd: 10_000,
+    minTtrHours: 24,
+    minYesPrice: 0.15,
+    maxYesPrice: 0.85,
+    topN: 3,
+  };
+
+  it('filters out closed markets', () => {
+    const markets = [
+      mkMarket({ slug: 'open-1' }),
+      mkMarket({ slug: 'closed-1', closed: true }),
+    ];
+    const out = selectPriceCaptureCandidates(markets, baseOpts);
+    expect(out.map(m => m.slug)).toEqual(['open-1']);
+  });
+
+  it('filters out markets below volume / TTR / price-band', () => {
+    const soonEnd = baseOpts.nowSec + 3600; // 1h — below minTtrHours=24
+    const markets = [
+      mkMarket({ slug: 'low-vol', volume24h: 1_000 }),
+      mkMarket({ slug: 'too-soon', endDate: soonEnd }),
+      mkMarket({
+        slug: 'too-cheap',
+        outcomes: [{ label: 'Yes', tokenId: 'c-y', price: 0.05 }, { label: 'No', tokenId: 'c-n', price: 0.95 }],
+      }),
+      mkMarket({
+        slug: 'too-certain',
+        outcomes: [{ label: 'Yes', tokenId: 'd-y', price: 0.95 }, { label: 'No', tokenId: 'd-n', price: 0.05 }],
+      }),
+      mkMarket({ slug: 'just-right' }),
+    ];
+    const out = selectPriceCaptureCandidates(markets, baseOpts);
+    expect(out.map(m => m.slug)).toEqual(['just-right']);
+  });
+
+  it('sorts by volume desc and slices to topN', () => {
+    const markets = [
+      mkMarket({ slug: 'med', volume24h: 50_000 }),
+      mkMarket({ slug: 'huge', volume24h: 500_000 }),
+      mkMarket({ slug: 'small', volume24h: 15_000 }),
+      mkMarket({ slug: 'big', volume24h: 200_000 }),
+      mkMarket({ slug: 'tiny', volume24h: 11_000 }),
+    ];
+    const out = selectPriceCaptureCandidates(markets, { ...baseOpts, topN: 3 });
+    expect(out.map(m => m.slug)).toEqual(['huge', 'big', 'med']);
+  });
+
+  it('skips markets without a YES outcome', () => {
+    const noYes = mkMarket({
+      slug: 'no-yes-outcome',
+      outcomes: [
+        { label: 'Trump', tokenId: 't-1', price: 0.4 },
+        { label: 'Biden', tokenId: 't-2', price: 0.6 },
+      ],
+    });
+    const out = selectPriceCaptureCandidates([noYes, mkMarket({ slug: 'normal' })], baseOpts);
+    expect(out.map(m => m.slug)).toEqual(['normal']);
   });
 });

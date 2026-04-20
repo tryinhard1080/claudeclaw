@@ -1,10 +1,19 @@
 import { EventEmitter } from 'events';
 import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
-import { POLY_SCAN_DEBUG } from '../config.js';
+import {
+  POLY_SCAN_DEBUG,
+  POLY_PRICE_HISTORY_HOURS,
+  POLY_SCAN_TOP_N,
+  POLY_MIN_VOLUME_USD,
+  POLY_MIN_TTR_HOURS,
+  POLY_MIN_MARKET_PRICE,
+  POLY_MAX_MARKET_PRICE,
+} from '../config.js';
 import { fetchActiveMarkets } from './gamma-client.js';
 import type { Market } from './types.js';
 import { recordScanRun } from './drift.js';
+import { selectPriceCaptureCandidates } from './strategy-engine.js';
 
 // Diagnostic instrumentation for the 2026-04-20 scanner hang bug. Writes
 // directly to process.stdout (bypassing pino's worker thread) so it produces
@@ -19,12 +28,41 @@ function scanTrace(tag: string, extra: Record<string, unknown> = {}): void {
   process.stdout.write(`[SCAN ${ts}] ${tag}${kv ? ' ' + kv : ''}\n`);
 }
 
+export interface ScannerOptions {
+  retentionHours?: number;
+  topN?: number;
+  minVolumeUsd?: number;
+  minTtrHours?: number;
+  minYesPrice?: number;
+  maxYesPrice?: number;
+  /** Emit `scan_slow` when a scan exceeds this duration in ms. Default 120_000. */
+  slowThresholdMs?: number;
+}
+
 export class MarketScanner extends EventEmitter {
   private timer: ReturnType<typeof setInterval> | null = null;
   private scanning = false;
+  private readonly retentionHours: number;
+  private readonly topN: number;
+  private readonly minVolumeUsd: number;
+  private readonly minTtrHours: number;
+  private readonly minYesPrice: number;
+  private readonly maxYesPrice: number;
+  private readonly slowThresholdMs: number;
 
-  constructor(private db: Database.Database, private intervalMs: number) {
+  constructor(
+    private db: Database.Database,
+    private intervalMs: number,
+    opts: ScannerOptions = {},
+  ) {
     super();
+    this.retentionHours = opts.retentionHours ?? POLY_PRICE_HISTORY_HOURS;
+    this.topN = opts.topN ?? POLY_SCAN_TOP_N;
+    this.minVolumeUsd = opts.minVolumeUsd ?? POLY_MIN_VOLUME_USD;
+    this.minTtrHours = opts.minTtrHours ?? POLY_MIN_TTR_HOURS;
+    this.minYesPrice = opts.minYesPrice ?? POLY_MIN_MARKET_PRICE;
+    this.maxYesPrice = opts.maxYesPrice ?? POLY_MAX_MARKET_PRICE;
+    this.slowThresholdMs = opts.slowThresholdMs ?? 120_000;
   }
 
   start(): void {
@@ -51,12 +89,29 @@ export class MarketScanner extends EventEmitter {
       scanTrace('pre-fetch');
       const markets = await fetchActiveMarkets();
       scanTrace('post-fetch', { count: markets.length, ms: Date.now() - started });
-      upsertMarkets(this.db, markets);
-      capturePrices(this.db, markets);
-      pruneOldPrices(this.db);
+
+      // 2026-04-20 DB bloat fix: only capture prices for markets the
+      // StrategyEngine would actually evaluate. Cut writes from ~100k/tick
+      // to ~40/tick (2500x reduction). Selection logic shared with the
+      // engine via selectPriceCaptureCandidates.
+      const candidates = selectPriceCaptureCandidates(markets, {
+        nowSec: Math.floor(Date.now() / 1000),
+        minVolumeUsd: this.minVolumeUsd,
+        minTtrHours: this.minTtrHours,
+        minYesPrice: this.minYesPrice,
+        maxYesPrice: this.maxYesPrice,
+        topN: this.topN,
+      });
+      scanTrace('candidates', { count: candidates.length });
+
+      // B4: upsert + capture + prune in ONE transaction. Atomic per-scan,
+      // gives the checkpointer a single clean cut point, and prevents the
+      // pre-fix scenario where prune failed mid-scan but captures succeeded.
+      scanWrite(this.db, markets, candidates, this.retentionHours);
       scanTrace('post-db');
+
       const duration = Date.now() - started;
-      logger.info({ count: markets.length, ms: duration }, 'poly scan complete');
+      logger.info({ count: markets.length, captured: candidates.length, ms: duration }, 'poly scan complete');
       // Sprint 1.5: persist per-run metrics for drift dashboards. Wrapped
       // in try/catch so a scan-run write failure can't break the tick.
       try {
@@ -68,6 +123,10 @@ export class MarketScanner extends EventEmitter {
         });
       } catch (e) {
         logger.warn({ err: String(e) }, 'recordScanRun failed');
+      }
+
+      if (duration >= this.slowThresholdMs) {
+        this.emit('scan_slow', { durationMs: duration, marketCount: markets.length });
       }
       this.emit('scan_complete', { markets });
       scanTrace('post-emit scan_complete');
@@ -87,6 +146,59 @@ export class MarketScanner extends EventEmitter {
       scanTrace('finally — scanning=false');
     }
   }
+}
+
+/**
+ * Atomic scan write: upsert all markets, capture prices for candidates only,
+ * prune old price history. Single db.transaction() so a mid-scan crash
+ * either fully applies or fully rolls back, and the checkpointer sees one
+ * commit per scan instead of three.
+ */
+export function scanWrite(
+  db: Database.Database,
+  markets: Market[],
+  candidates: Market[],
+  retentionHours: number,
+): void {
+  const upsertStmt = db.prepare(`
+    INSERT INTO poly_markets (slug, condition_id, question, category, outcomes_json, volume_24h, liquidity, end_date, closed, last_scan_at)
+    VALUES (@slug, @condition_id, @question, @category, @outcomes_json, @volume_24h, @liquidity, @end_date, @closed, @last_scan_at)
+    ON CONFLICT(slug) DO UPDATE SET
+      question=excluded.question, category=excluded.category, outcomes_json=excluded.outcomes_json,
+      volume_24h=excluded.volume_24h, liquidity=excluded.liquidity, end_date=excluded.end_date,
+      closed=excluded.closed, last_scan_at=excluded.last_scan_at
+  `);
+  const priceStmt = db.prepare(
+    `INSERT OR REPLACE INTO poly_price_history (token_id, captured_at, price) VALUES (?, ?, ?)`,
+  );
+  const pruneStmt = db.prepare(`DELETE FROM poly_price_history WHERE captured_at < ?`);
+
+  const now = Math.floor(Date.now() / 1000);
+  const cutoff = now - retentionHours * 3600;
+
+  const tx = db.transaction(() => {
+    for (const m of markets) {
+      upsertStmt.run({
+        slug: m.slug,
+        condition_id: m.conditionId,
+        question: m.question,
+        category: m.category ?? null,
+        outcomes_json: JSON.stringify(m.outcomes),
+        volume_24h: m.volume24h,
+        liquidity: m.liquidity,
+        end_date: m.endDate,
+        closed: m.closed ? 1 : 0,
+        last_scan_at: now,
+      });
+    }
+    for (const m of candidates) {
+      for (const o of m.outcomes) {
+        priceStmt.run(o.tokenId, now, o.price);
+      }
+    }
+    pruneStmt.run(cutoff);
+  });
+  tx();
 }
 
 export function upsertMarkets(db: Database.Database, markets: Market[]): void {
@@ -129,7 +241,12 @@ export function capturePrices(db: Database.Database, markets: Market[]): void {
   tx(markets);
 }
 
-export function pruneOldPrices(db: Database.Database): void {
-  const cutoff = Math.floor(Date.now() / 1000) - 36 * 3600;
+/**
+ * Delete poly_price_history rows older than `retentionHours`. Called by
+ * scanWrite inside the scan transaction; kept as a standalone export for
+ * one-off maintenance scripts.
+ */
+export function pruneOldPrices(db: Database.Database, retentionHours: number = POLY_PRICE_HISTORY_HOURS): void {
+  const cutoff = Math.floor(Date.now() / 1000) - retentionHours * 3600;
   db.prepare(`DELETE FROM poly_price_history WHERE captured_at < ?`).run(cutoff);
 }

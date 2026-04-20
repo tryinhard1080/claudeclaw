@@ -111,6 +111,15 @@ export function initPoly(opts: {
       ON poly_scan_runs(started_at DESC);
   `);
 
+  // v1.10.0 — defensive index on poly_price_history.captured_at. Without
+  // it, pruneOldPrices does a full table scan on ~43M rows and the WAL
+  // outruns the auto-checkpoint. See migrations/v1.10.0/ and
+  // docs/research/sprint-scanner-bloat-fix.md.
+  opts.db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_poly_price_history_captured
+      ON poly_price_history(captured_at);
+  `);
+
   // Sprint 3: regime snapshots table. Defensive create so an upgraded
   // install without `npm run migrate` doesn't crash every 5 minutes.
   opts.db.exec(`
