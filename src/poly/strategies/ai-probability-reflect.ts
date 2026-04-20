@@ -159,14 +159,18 @@ export interface RunCriticArgs extends ComposeCriticArgs {
 
 export async function runCritic(args: RunCriticArgs): Promise<CriticJudgment | null> {
   try {
-    const resp = await getClient().chat.completions.create({
+    // `thinking.type='disabled'` — same reasoning-mode workaround as the
+    // primary evaluator. See ai-probability.ts for the probe rationale.
+    const resp = (await getClient().chat.completions.create({
       model: args.model ?? GLM_MODEL,
       max_tokens: 300,
       messages: [
         { role: 'system', content: CRITIC_SYSTEM },
         { role: 'user', content: composeCriticUser(args) },
       ],
-    });
+      // @ts-expect-error -- GLM-specific param, not in OpenAI SDK typings
+      thinking: { type: 'disabled' },
+    })) as OpenAI.Chat.Completions.ChatCompletion;
     const content = resp.choices[0]?.message?.content;
     if (typeof content !== 'string' || content.length === 0) return null;
     return parseCriticResponse(content);

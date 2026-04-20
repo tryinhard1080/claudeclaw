@@ -158,6 +158,8 @@ async function main(): Promise<void> {
     ].join('\n');
 
     try {
+      // Disable GLM's thinking mode — see scripts/glm-probe-thinking.ts:
+      // without this, reasoning_content eats max_tokens and content is empty.
       const resp = await client.chat.completions.create({
         model: GLM_MODEL,
         max_tokens: 400,
@@ -165,7 +167,8 @@ async function main(): Promise<void> {
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: user },
         ],
-      });
+        thinking: { type: 'disabled' },
+      } as unknown as Parameters<typeof client.chat.completions.create>[0]);
       const content = resp.choices[0]?.message?.content;
       if (typeof content !== 'string' || content.length === 0) {
         results.push({ ...r, error: 'empty response' });

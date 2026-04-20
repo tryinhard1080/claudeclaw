@@ -154,14 +154,20 @@ export async function evaluateMarket(args: EvaluateArgs): Promise<ProbabilityEst
   ].join('\n');
 
   try {
-    const resp = await getClient().chat.completions.create({
+    // `thinking.type='disabled'` is a GLM-specific extra_body param that
+    // turns off the reasoning_content stream. Without it, glm-4.6 burns
+    // max_tokens on reasoning and returns empty content. Verified via
+    // scripts/glm-probe-thinking.ts 2026-04-19.
+    const resp = (await getClient().chat.completions.create({
       model: GLM_MODEL,
       max_tokens: 400,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: user },
       ],
-    });
+      // @ts-expect-error -- GLM-specific param, not in OpenAI SDK typings
+      thinking: { type: 'disabled' },
+    })) as OpenAI.Chat.Completions.ChatCompletion;
     const content = resp.choices[0]?.message?.content;
     if (typeof content !== 'string' || content.length === 0) return null;
     const json = extractJson(content);
