@@ -52,3 +52,6 @@ docs/news/
 
 # Sprint 4 research ingestion run summaries — content is also in SQLite
 docs/research/ingestions/
+
+# External skill scratch clones (nested .git dirs, unrelated to trading)
+caveman-skill-tmp/
