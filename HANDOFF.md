@@ -1,10 +1,44 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-20 — **✅ CLAUDECLAW BOT BACK ONLINE on GLM 5.1 subscription.** Phase 0.5 cost migration complete. 30-day no-intervention clock restarts now.
-- **Model**: Claude Opus 4.7 (1M context) — planning/review on Max OAuth. Bot is on Z.ai GLM Coding Plan (flat monthly quota, no API billing).
-- **Branch**: `main` — all Phase 0.5 work pushed. claudeclaw pm2 id 12, PID 6000, uptime climbing.
-- **Authoritative plan**: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md` — halt block cleared; Phase 1 verification now runs on the live GLM-era bot.
+- **Date**: 2026-04-20 — **⚠️ CLAUDECLAW STOPPED AGAIN — scanner hung silently after GLM migration.** Phase 0.5 code shipped but runtime is broken.
+- **Model**: Claude Opus 4.7 (1M context) — planning/review on Max OAuth.
+- **Branch**: `main` — all Phase 0.5 commits pushed up to `2d538fb`.
+- **Authoritative plan**: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md` — Phase 0.5 code complete; runtime verification failed, must diagnose before re-restart.
+
+## 🐛 2026-04-20 — Scanner hang bug (BLOCKS next session)
+
+**Symptom**: claudeclaw starts cleanly, logs "Polymarket module initialized (Phase C: scanner + strategy + pnl tracker)", then goes idle. Over 83 minutes of uptime on pid 64276: **zero new `poly_scan_runs` rows, zero new `poly_signals` rows**. CPU 0%. No error in logs. Scanner's `setInterval` never produces a completion event.
+
+**Proven NOT the cause**:
+- ✅ Gamma API reachable — standalone `fetchActiveMarkets(500)` completes in 28s, returns 48,617 markets.
+- ✅ DB migration v1.9.0 applied, `.applied.json` shows `v1.9.0`.
+- ✅ Config correct: `POLY_ENABLED=true`, `GLM_API_KEY` + `GLM_BASE_URL=…/coding/paas/v4` + `GLM_MODEL=glm-4.6` + `thinking.type=disabled` all set.
+- ✅ Build clean, 546/546 tests pass.
+- ✅ Bot process alive (restart_count 0, pm2 status online).
+
+**Suspected causes (prioritized)**:
+1. **Pino logger flush stall** — a log.info at some specific code path triggers a flush issue that deadlocks the event loop. Would explain silent hang with no error.
+2. **OpenAI SDK module-load side effect** — `import OpenAI from 'openai'` at the top of `ai-probability.ts` may have a top-level await or connection test that silently hangs. Possible but unusual.
+3. **Four overdue cron tasks at startup fighting for event loop** — weekly tasks (news-sync, research-ingest, resolution-fetch, adversarial-review) all fired at startup because the bot was halted 2+ days. Agent SDK subprocess (`claude` CLI) may not be completing, blocking the message queue.
+4. **Ambient-service flag-gate side effect** — less likely, but my `if (AGENT_ID === 'main' && MEMORY_ENABLED)` edit in `src/index.ts` changed a previously unconditional block. Re-verify the else branch doesn't swallow something the scanner depends on.
+
+**Diagnostic plan for next session**:
+1. Restart claudeclaw. Watch first 60 seconds of `pm2 logs claudeclaw` actively.
+2. If no "poly scan complete" appears in 5 minutes, attach Node `--inspect` (add `node --inspect ./dist/index.js` to ecosystem or run directly) and profile what the main thread is doing.
+3. Temporarily null out the 4 overdue cron tasks (stop the bot, delete from `scheduled_tasks` WHERE last_run_at IS NULL AND... or flip their paused flag) to test whether that's the blocking factor.
+4. If still hung, add `console.log('SCANNER TICK', new Date())` directly to `src/poly/market-scanner.ts::runOnce()` entry + exit as a brute-force logger bypass.
+
+**Current state**:
+- claudeclaw pm2 id 12 **STOPPED** (was consuming nothing, but stopped to avoid ambiguity — not online-but-idle).
+- `POLY_ENABLED=true` still in `.env`. No need to flip for diagnosis.
+- regime-trader instances stopped; will auto-start Mon 09:30 ET via their own cron (independent of claudeclaw).
+
+**Recovery is not blocked on GLM spend** — bot was idle, burned nothing. Take time to diagnose properly.
+
+---
+
+## ✅ 2026-04-20 — claudeclaw restart on GLM 5.1 (CODE-SIDE COMPLETE)
 
 ## ✅ 2026-04-20 — claudeclaw restart on GLM 5.1
 
