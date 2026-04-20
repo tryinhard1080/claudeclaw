@@ -340,6 +340,13 @@ function runMigrations(database: Database.Database): void {
   if (!taskColNames.includes('routine_type')) {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN routine_type TEXT`);
   }
+  // v1.11.0 — kind + script_path for scheduler dispatch.
+  if (!taskColNames.includes('kind')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'claude-agent'`);
+  }
+  if (!taskColNames.includes('script_path')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN script_path TEXT`);
+  }
 
   // ── Memory V2 migration ──────────────────────────────────────────────
   // Detect old schema (has 'sector' column but no 'importance') and migrate.
@@ -897,6 +904,8 @@ export function searchConsolidations(chatId: string, query: string, limit = 3): 
 
 // ── Scheduled Tasks ──────────────────────────────────────────────────
 
+export type ScheduledTaskKind = 'claude-agent' | 'shell';
+
 export interface ScheduledTask {
   id: string;
   prompt: string;
@@ -909,6 +918,10 @@ export interface ScheduledTask {
   agent_id: string;
   started_at: number | null;
   last_status: 'success' | 'failed' | 'timeout' | null;
+  /** v1.11.0 — 'claude-agent' spawns Claude CLI via runAgent; 'shell' spawns `npx tsx script_path`. */
+  kind: ScheduledTaskKind;
+  /** v1.11.0 — relative script path for kind='shell' tasks (e.g. 'scripts/fetch-resolutions.ts'). */
+  script_path: string | null;
 }
 
 export function createScheduledTask(
