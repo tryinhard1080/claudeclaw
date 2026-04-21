@@ -229,6 +229,23 @@ export function getDashboardHtml(token: string, chatId: string): string {
     <div id="poly-pnl-empty" class="text-xs text-gray-500 mt-1" style="display:none">No resolutions yet. First batch expected Sun 2026-04-26.</div>
   </div>
 
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+    <div class="card">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Calibration</h3>
+        <span id="poly-cal-age" class="text-xs text-gray-500">-</span>
+      </div>
+      <div id="poly-cal-body" class="text-xs"><div class="text-gray-500">Loading...</div></div>
+    </div>
+    <div class="card">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Drift (24h)</h3>
+        <span id="poly-drift-window" class="text-xs text-gray-500">-</span>
+      </div>
+      <div id="poly-drift-body" class="text-xs"><div class="text-gray-500">Loading...</div></div>
+    </div>
+  </div>
+
   <div class="card">
     <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Recent signals (last 15)</h3>
     <div id="poly-signals" class="text-xs" style="max-height:320px;overflow-y:auto"><div class="text-gray-500">Loading...</div></div>
@@ -1958,12 +1975,14 @@ function escapeHtml(s) {
 }
 async function loadPoly() {
   try {
-    const [overview, live, signals, regime, pnlChart] = await Promise.all([
+    const [overview, live, signals, regime, pnlChart, calibration, drift] = await Promise.all([
       fetch('/api/poly/overview?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/positions/live?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/signals/recent?limit=15&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/regime?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/pnl/chart?width=360&height=72&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+      fetch('/api/poly/calibration?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+      fetch('/api/poly/drift?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
     ]);
 
     // Overview pills
@@ -2086,6 +2105,77 @@ async function loadPoly() {
         cumEl.innerHTML = '<span style="color:' + color + ';font-weight:600">cum ' + fmtUsd(cum) + '</span>' +
           ' <span class="text-gray-600">·</span> <span class="text-gray-500">' + bars.length + ' days</span>';
       }
+    }
+
+    // Calibration card
+    const calBody = document.getElementById('poly-cal-body');
+    const calAge = document.getElementById('poly-cal-age');
+    if (calBody) {
+      const snap = calibration && calibration.snapshot;
+      const n = (calibration && calibration.nResolvedAllTime) || 0;
+      if (!snap) {
+        calBody.innerHTML =
+          '<div class="text-gray-500">No snapshot yet.</div>' +
+          '<div class="text-gray-600 mt-1">Resolved all-time: <span class="text-gray-400">' + n + '</span>. First batch expected Sun 2026-04-26.</div>';
+        if (calAge) calAge.textContent = '-';
+      } else {
+        const brier = snap.brierScore === null ? '-' : Number(snap.brierScore).toFixed(3);
+        const ll = snap.logLoss === null ? '-' : Number(snap.logLoss).toFixed(3);
+        const wr = (snap.winRate !== null && snap.winRate !== undefined) ? (snap.winRate * 100).toFixed(1) + '%' : '-';
+        calBody.innerHTML =
+          '<div class="grid grid-cols-4 gap-2">' +
+            '<div><div class="stat-val">' + brier + '</div><div class="stat-label">Brier</div></div>' +
+            '<div><div class="stat-val">' + ll + '</div><div class="stat-label">Log loss</div></div>' +
+            '<div><div class="stat-val">' + wr + '</div><div class="stat-label">Win rate</div></div>' +
+            '<div><div class="stat-val">' + (snap.nSamples || 0) + '</div><div class="stat-label">Samples</div></div>' +
+          '</div>' +
+          '<div class="text-gray-600 mt-2">All-time resolved: <span class="text-gray-400">' + n + '</span></div>';
+        if (calAge) calAge.textContent = fmtAgo(Math.floor(Date.now() / 1000) - snap.createdAt);
+      }
+    }
+
+    // Drift card
+    const driftBody = document.getElementById('poly-drift-body');
+    const driftWin = document.getElementById('poly-drift-window');
+    if (driftBody && drift) {
+      if (driftWin) driftWin.textContent = (drift.windowHours || 24) + 'h window';
+      const lat = drift.latency || {};
+      const mc = drift.marketCount || {};
+      const rej = drift.rejection || { total: 0, byGate: [] };
+
+      const fmtMs = v => v === null || v === undefined ? '-' : v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms';
+      const mcDelta = mc.deltaPct === null || mc.deltaPct === undefined ? '' :
+        ' <span style="color:' + (mc.deltaPct >= 0 ? '#6ee7b7' : '#f87171') + '">(' + (mc.deltaPct >= 0 ? '+' : '') + mc.deltaPct.toFixed(1) + '%)</span>';
+
+      let rejectionRows = '';
+      const gateLabels = { position_limits: 'Position limits', signal_quality: 'Signal quality', min_edge: 'Min edge', min_confidence: 'Min confidence', band_filter: 'Band filter', exposure: 'Exposure cap', sector_cap: 'Sector cap' };
+      if (rej.total > 0 && rej.byGate && rej.byGate.length > 0) {
+        rejectionRows = rej.byGate.slice(0, 5).map(g => {
+          const pct = (g.count / rej.total) * 100;
+          const label = gateLabels[g.gate] || g.gate;
+          return '<div class="flex items-center gap-2 py-0.5">' +
+            '<div class="text-gray-300" style="min-width:120px">' + escapeHtml(label) + '</div>' +
+            '<div class="flex-1 bg-gray-800 h-1.5 rounded overflow-hidden"><div class="h-full bg-gray-500" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+            '<div class="text-gray-400 text-[10px]" style="min-width:60px;text-align:right">' + g.count + ' (' + pct.toFixed(0) + '%)</div>' +
+            '</div>';
+        }).join('');
+      } else {
+        rejectionRows = '<div class="text-gray-500">No rejections in window</div>';
+      }
+
+      driftBody.innerHTML =
+        '<div class="grid grid-cols-4 gap-2 mb-3">' +
+          '<div><div class="stat-val">' + fmtMs(lat.p50) + '</div><div class="stat-label">p50</div></div>' +
+          '<div><div class="stat-val">' + fmtMs(lat.p95) + '</div><div class="stat-label">p95</div></div>' +
+          '<div><div class="stat-val">' + fmtMs(lat.p99) + '</div><div class="stat-label">p99</div></div>' +
+          '<div><div class="stat-val">' + (lat.count || 0) + '</div><div class="stat-label">Scans</div></div>' +
+        '</div>' +
+        '<div class="text-gray-500 mb-2">Markets: <span class="text-gray-300">' + (mc.latest ?? '-') + '</span>' + mcDelta +
+          (mc.rollingAvg !== null && mc.rollingAvg !== undefined ? ' <span class="text-gray-600">(avg ' + Math.round(mc.rollingAvg) + ')</span>' : '') +
+          (lat.errorCount > 0 ? ' <span class="ml-2" style="color:#f87171">errors: ' + lat.errorCount + '</span>' : '') +
+          '</div>' +
+        '<div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Rejection mix</div>' +
+        rejectionRows;
     }
 
     // Recent signals

@@ -64,6 +64,8 @@ import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
 import { buildPositionsLivePayload } from './poly/positions-view.js';
 import { buildPnlBars, type DailyPnlPoint } from './dashboard-charts.js';
+import { latestSnapshot as latestCalibrationSnapshot, fetchResolvedSamples, calibrationCurve } from './poly/calibration.js';
+import { composeDriftReport } from './poly/drift.js';
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -486,6 +488,31 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   app.get('/api/poly/positions/live', (c) => {
     const db = getDb();
     return c.json(buildPositionsLivePayload(db));
+  });
+
+  app.get('/api/poly/calibration', (c) => {
+    const db = getDb();
+    const snapshot = latestCalibrationSnapshot(db);
+    const resolvedRow = db.prepare(
+      `SELECT COUNT(*) AS n FROM poly_paper_trades WHERE status IN ('won','lost')`
+    ).get() as { n: number };
+    return c.json({ snapshot, nResolvedAllTime: resolvedRow.n });
+  });
+
+  app.get('/api/poly/drift', (c) => {
+    const db = getDb();
+    const windowHours = Math.min(Math.max(parseInt(c.req.query('windowHours') || '24', 10) || 24, 1), 168);
+    const report = composeDriftReport(db, Math.floor(Date.now() / 1000), windowHours);
+    const rejectionArr = [...report.rejection.entries()]
+      .map(([gate, count]) => ({ gate, count }))
+      .sort((a, b) => b.count - a.count);
+    const rejectionTotal = rejectionArr.reduce((s, r) => s + r.count, 0);
+    return c.json({
+      windowHours: report.windowHours,
+      latency: report.latency,
+      marketCount: report.marketCount,
+      rejection: { total: rejectionTotal, byGate: rejectionArr },
+    });
   });
 
   app.get('/api/poly/pnl/chart', (c) => {
