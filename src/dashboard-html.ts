@@ -2100,16 +2100,60 @@ async function loadPoly() {
         const edge = Number(s.edge_pct).toFixed(1);
         const edgeColor = Number(s.edge_pct) >= 5 ? '#6ee7b7' : '#f87171';
         const ageSec = Math.floor(Date.now() / 1000) - s.created_at;
-        return '<div class="border-b border-gray-800 py-1 flex items-center gap-2">' +
-          '<span class="text-gray-500 text-xs" style="min-width:52px">' + fmtAgo(ageSec) + '</span>' +
-          approvedPill +
-          '<span class="text-gray-500">' + escapeHtml(s.confidence ?? '-') + '</span>' +
-          '<span style="color:' + edgeColor + ';min-width:50px;text-align:right">' + edge + 'pp</span>' +
-          '<span class="text-gray-400" style="min-width:60px;text-align:right">$' + Number(s.market_price).toFixed(3) + '→' + Number(s.estimated_prob).toFixed(3) + '</span>' +
-          '<span class="text-gray-300" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(s.market_slug) + '</span>' +
+        const hasDetail = (s.reasoning && s.reasoning.length > 0) || (s.contrarian && s.contrarian.length > 0) || (s.rejection_reasons && s.rejection_reasons.length > 0);
+        const caret = hasDetail ? '<span class="text-gray-600 text-xs" style="min-width:10px">▸</span>' : '<span style="min-width:10px"></span>';
+        const rowCursor = hasDetail ? 'cursor:pointer' : '';
+
+        let detailBlock = '';
+        if (hasDetail) {
+          const parts = [];
+          if (s.reasoning) {
+            parts.push('<div class="text-gray-300 text-xs mt-1"><span class="text-gray-500 uppercase tracking-wider text-[10px]">Reasoning</span><div class="whitespace-pre-wrap mt-0.5">' + escapeHtml(s.reasoning) + '</div></div>');
+          }
+          if (s.contrarian) {
+            parts.push('<div class="text-gray-400 text-xs mt-2"><span class="text-gray-500 uppercase tracking-wider text-[10px]">Contrarian</span><div class="whitespace-pre-wrap mt-0.5">' + escapeHtml(s.contrarian) + '</div></div>');
+          }
+          if (s.rejection_reasons) {
+            parts.push('<div class="text-xs mt-2" style="color:#f87171"><span class="text-gray-500 uppercase tracking-wider text-[10px]">Rejection</span><div class="whitespace-pre-wrap mt-0.5">' + escapeHtml(s.rejection_reasons) + '</div></div>');
+          }
+          const meta = '<div class="text-gray-600 text-[10px] mt-2">' +
+            escapeHtml(s.model ?? '-') + ' · ' + escapeHtml(s.prompt_version ?? '-') +
+            (s.regime_label ? ' · regime ' + escapeHtml(s.regime_label) : '') +
+            '</div>';
+          detailBlock = '<div class="signal-detail hidden pl-6 pb-2" style="background:#101010;border-left:2px solid #333">' +
+            parts.join('') + meta + '</div>';
+        }
+
+        return '<div class="signal-item border-b border-gray-800" data-expandable="' + (hasDetail ? '1' : '0') + '">' +
+          '<div class="signal-row py-1 flex items-center gap-2" style="' + rowCursor + '">' +
+            caret +
+            '<span class="text-gray-500 text-xs" style="min-width:52px">' + fmtAgo(ageSec) + '</span>' +
+            approvedPill +
+            '<span class="text-gray-500">' + escapeHtml(s.confidence ?? '-') + '</span>' +
+            '<span style="color:' + edgeColor + ';min-width:50px;text-align:right">' + edge + 'pp</span>' +
+            '<span class="text-gray-400" style="min-width:60px;text-align:right">$' + Number(s.market_price).toFixed(3) + '→' + Number(s.estimated_prob).toFixed(3) + '</span>' +
+            '<span class="text-gray-300" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(s.market_slug) + '</span>' +
+          '</div>' +
+          detailBlock +
           '</div>';
       }).join('');
       sigEl.innerHTML = rows;
+      // Wire expand/collapse
+      sigEl.querySelectorAll('.signal-item[data-expandable="1"] .signal-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const detail = row.parentElement.querySelector('.signal-detail');
+          const caret = row.querySelector('span');
+          if (!detail) return;
+          const isHidden = detail.classList.contains('hidden');
+          if (isHidden) {
+            detail.classList.remove('hidden');
+            if (caret) caret.textContent = '▾';
+          } else {
+            detail.classList.add('hidden');
+            if (caret) caret.textContent = '▸';
+          }
+        });
+      });
     }
   } catch (err) {
     console.error('loadPoly failed', err);

@@ -435,7 +435,8 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const rows = db.prepare(`SELECT
         id, created_at, market_slug, outcome_label, market_price,
         estimated_prob, edge_pct, confidence, approved, rejection_reasons,
-        prompt_version, model, provider, regime_label
+        prompt_version, model, provider, regime_label,
+        reasoning, contrarian
       FROM poly_signals ORDER BY id DESC LIMIT ?`).all(limit);
     return c.json({ signals: rows });
   });
