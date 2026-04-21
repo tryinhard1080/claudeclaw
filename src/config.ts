@@ -41,6 +41,7 @@ const envConfig = readEnvFile([
   'POLY_SCAN_DEBUG',
   'POLY_PRICE_HISTORY_HOURS',
   'POLY_SCAN_TOP_N',
+  'TELEGRAM_THREADING_ENABLED',
   'POLY_DIGEST_HOUR',
   'POLY_TIMEZONE',
   'POLY_CALIBRATION_HOUR',
@@ -243,6 +244,13 @@ export const POLY_PRICE_HISTORY_HOURS = num('POLY_PRICE_HISTORY_HOURS', 24);
 // LLM probability calls and poly_price_history writes. Must match
 // StrategyEngine.topN (defaulted from this).
 export const POLY_SCAN_TOP_N = num('POLY_SCAN_TOP_N', 20);
+// 2026-04-21: when enabled, the bot threads replies into Telegram "Topics in
+// Private Chats" by injecting message_thread_id + reply_parameters on every
+// outgoing send. Default DISABLED — the default was producing 30+ dead topic
+// threads in the operator's DM with @CCbot1080bot. Flip to '1' only if you
+// want the bot to stay inside whatever topic the user is currently viewing.
+export const TELEGRAM_THREADING_ENABLED =
+  (process.env.TELEGRAM_THREADING_ENABLED || envConfig.TELEGRAM_THREADING_ENABLED || '0') === '1';
 export const POLY_DIGEST_HOUR = num('POLY_DIGEST_HOUR', 6);
 export const POLY_TIMEZONE =
   process.env.POLY_TIMEZONE || envConfig.POLY_TIMEZONE || 'America/New_York';

@@ -21,6 +21,7 @@ import {
   STREAM_STRATEGY,
   PROJECT_ROOT,
   VOICE_ENABLED,
+  TELEGRAM_THREADING_ENABLED,
 } from './config.js';
 import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, saveTokenUsage } from './db.js';
 import { logger } from './logger.js';
@@ -713,66 +714,68 @@ export function createBot(): Bot {
 
   const bot = new Bot(token);
 
-  // --- Forum topic threading support ---
-  // When Telegram "Topics in Private Chats" is enabled, every reply without
-  // message_thread_id creates a new topic. We track the thread ID from
-  // incoming messages AND the message_id (so we can reply_to_message_id
-  // to keep the bot's response in the same topic as the user's message).
-  const chatThreadId = new Map<number, number>();
-  const chatReplyToMsg = new Map<number, number>();
+  // --- Forum topic threading support (gated) ---
+  // When enabled, the bot mirrors Telegram's "Topics in Private Chats": every
+  // outgoing send inherits message_thread_id + reply_parameters from the
+  // user's last message, so replies stay anchored in the topic the user is
+  // viewing.
+  //
+  // Disabled by default on 2026-04-21 — the injection combined with
+  // scheduled-task fires (which have no incoming-message context) caused
+  // dozens of stale topic threads to accumulate in the operator's DM with
+  // @CCbot1080bot. Every bot reply now lands in the main (General) chat.
+  //
+  // Flip TELEGRAM_THREADING_ENABLED=1 in .env to restore. Existing dead
+  // topics must be deleted client-side (Telegram doesn't expose a
+  // deleteForumTopic for private chats).
+  if (TELEGRAM_THREADING_ENABLED) {
+    const chatThreadId = new Map<number, number>();
+    const chatReplyToMsg = new Map<number, number>();
 
-  // Middleware: capture thread context from incoming messages
-  bot.use(async (ctx, next) => {
-    if (ctx.chat?.id && ctx.msg) {
-      // If the message has a thread ID, capture it (user sent from inside a topic)
-      if (ctx.msg.message_thread_id) {
-        chatThreadId.set(ctx.chat.id, ctx.msg.message_thread_id);
-      }
-      // Always track the message_id so we can reply_to it (keeps us in the same topic)
-      if (ctx.msg.message_id) {
-        chatReplyToMsg.set(ctx.chat.id, ctx.msg.message_id);
-      }
-    }
-    await next();
-  });
-
-  // API transformer: inject threading params into all outgoing send calls.
-  // Priority: message_thread_id if we have it, otherwise reply_to_message_id
-  // to anchor the response to the user's message (prevents new topic creation).
-  const THREAD_METHODS = new Set([
-    'sendMessage', 'sendPhoto', 'sendDocument', 'sendVoice', 'sendVideo',
-    'sendAudio', 'sendAnimation', 'sendSticker', 'sendVideoNote',
-    'sendMediaGroup', 'sendLocation', 'sendContact', 'sendPoll',
-    'copyMessage', 'forwardMessage',
-  ]);
-  bot.api.config.use((prev, method, payload, signal) => {
-    if (THREAD_METHODS.has(method) && payload && 'chat_id' in payload) {
-      const p = payload as Record<string, unknown>;
-      const chatId = typeof p['chat_id'] === 'number'
-        ? p['chat_id'] as number
-        : parseInt(String(p['chat_id']), 10);
-
-      // Inject message_thread_id if we have one and it's not already set
-      if (!p['message_thread_id']) {
-        const threadId = chatThreadId.get(chatId);
-        if (threadId) {
-          p['message_thread_id'] = threadId;
+    // Middleware: capture thread context from incoming messages
+    bot.use(async (ctx, next) => {
+      if (ctx.chat?.id && ctx.msg) {
+        if (ctx.msg.message_thread_id) {
+          chatThreadId.set(ctx.chat.id, ctx.msg.message_thread_id);
+        }
+        if (ctx.msg.message_id) {
+          chatReplyToMsg.set(ctx.chat.id, ctx.msg.message_id);
         }
       }
+      await next();
+    });
 
-      // Inject reply_to_message_id to anchor reply in the same topic.
-      // Only for sendMessage (multi-part replies shouldn't all quote the original).
-      if (method === 'sendMessage' && !p['reply_to_message_id'] && !p['reply_parameters']) {
-        const replyTo = chatReplyToMsg.get(chatId);
-        if (replyTo) {
-          p['reply_parameters'] = { message_id: replyTo, allow_sending_without_reply: true };
-          // Clear after first use so only the first message in a multi-part reply quotes
-          chatReplyToMsg.delete(chatId);
+    const THREAD_METHODS = new Set([
+      'sendMessage', 'sendPhoto', 'sendDocument', 'sendVoice', 'sendVideo',
+      'sendAudio', 'sendAnimation', 'sendSticker', 'sendVideoNote',
+      'sendMediaGroup', 'sendLocation', 'sendContact', 'sendPoll',
+      'copyMessage', 'forwardMessage',
+    ]);
+    bot.api.config.use((prev, method, payload, signal) => {
+      if (THREAD_METHODS.has(method) && payload && 'chat_id' in payload) {
+        const p = payload as Record<string, unknown>;
+        const chatId = typeof p['chat_id'] === 'number'
+          ? p['chat_id'] as number
+          : parseInt(String(p['chat_id']), 10);
+
+        if (!p['message_thread_id']) {
+          const threadId = chatThreadId.get(chatId);
+          if (threadId) {
+            p['message_thread_id'] = threadId;
+          }
+        }
+
+        if (method === 'sendMessage' && !p['reply_to_message_id'] && !p['reply_parameters']) {
+          const replyTo = chatReplyToMsg.get(chatId);
+          if (replyTo) {
+            p['reply_parameters'] = { message_id: replyTo, allow_sending_without_reply: true };
+            chatReplyToMsg.delete(chatId);
+          }
         }
       }
-    }
-    return prev(method, payload, signal);
-  });
+      return prev(method, payload, signal);
+    });
+  }
 
   // Reject group chats. ClaudeClaw only works in private (1-on-1) chats.
   // This prevents message leakage if the bot is added to a group.
