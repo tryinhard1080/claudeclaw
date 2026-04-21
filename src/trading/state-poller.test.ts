@@ -61,13 +61,35 @@ describe('StatePoller', () => {
     expect(events[0]?.breaker).toBe('max_loss');
   });
 
-  it('emits instance_error when state.json unreadable', async () => {
+  it('emits instance_error once when state.json unreadable (dedupes repeat polls)', async () => {
     const poller = new StatePoller(base, ['ghost'], 99999);
     const events: InstanceErrorEvent[] = [];
     poller.on('instance_error', (e: InstanceErrorEvent) => events.push(e));
     await (poller as any).pollAll();
+    await (poller as any).pollAll(); // second poll should NOT re-fire
+    await (poller as any).pollAll(); // third poll should NOT re-fire
     expect(events).toHaveLength(1);
     expect(events[0]?.instance).toBe('ghost');
+  });
+
+  it('re-arms instance_error alert after file becomes readable then unreadable again', async () => {
+    const poller = new StatePoller(base, ['spy'], 99999);
+    const events: InstanceErrorEvent[] = [];
+    poller.on('instance_error', (e: InstanceErrorEvent) => events.push(e));
+
+    // File missing → fires
+    await (poller as any).pollAll();
+    expect(events).toHaveLength(1);
+
+    // File appears → clears flag
+    await writeStateFile(base, 'spy', mkState());
+    await (poller as any).pollAll();
+    expect(events).toHaveLength(1); // no new alert
+
+    // File deleted → re-arms and fires again
+    await rm(path.join(base, 'instances', 'spy', 'data', 'state.json'));
+    await (poller as any).pollAll();
+    expect(events).toHaveLength(2);
   });
 
   it('emits instance_stale once when state.json mtime exceeds threshold', async () => {

@@ -39,6 +39,7 @@ export class StatePoller extends EventEmitter {
   private previousRegimes = new Map<string, string>();
   private previousBreakers = new Map<string, Set<string>>();
   private staleFlagged = new Set<string>();
+  private errorFlagged = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly stalenessMs: number;
   private readonly now: () => number;
@@ -124,9 +125,19 @@ export class StatePoller extends EventEmitter {
       this.previousBreakers.set(name, currentBreakers);
 
       this.states.set(name, state);
+
+      // Instance is healthy again: clear error flag (next down event will re-alert)
+      if (this.errorFlagged.has(name)) {
+        this.errorFlagged.delete(name);
+        logger.info({ instance: name }, 'Instance state file readable again');
+      }
     } catch {
-      const event: InstanceErrorEvent = { instance: name, error: 'Cannot read state.json' };
-      this.emit('instance_error', event);
+      // Only emit once per down period — flag is cleared when state becomes readable again
+      if (!this.errorFlagged.has(name)) {
+        const event: InstanceErrorEvent = { instance: name, error: 'Cannot read state.json' };
+        this.emit('instance_error', event);
+        this.errorFlagged.add(name);
+      }
     }
   }
 
