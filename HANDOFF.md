@@ -1,12 +1,83 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-20 — **⚠️ CLAUDECLAW STOPPED AGAIN — scanner hung silently after GLM migration.** Phase 0.5 code shipped but runtime is broken.
-- **Model**: Claude Opus 4.7 (1M context) — planning/review on Max OAuth.
-- **Branch**: `main` — all Phase 0.5 commits pushed up to `2d538fb`.
-- **Authoritative plan**: `C:/Users/Richard/.claude/plans/createa-plan-to-get-twinkling-dragon.md` — Phase 0.5 code complete; runtime verification failed, must diagnose before re-restart.
+- **Date**: 2026-04-20 — **✅ SCANNER HANG RESOLVED. ClaudeClaw online + healthy on GLM 5.1.** The "scanner hang" was DB bloat masquerading as a deadlock. Peaceful-turtle plan landed in full.
+- **Model**: Claude Opus 4.7 (1M context).
+- **Branch**: `fix/scanner-hang-db-rescue` — 7 commits ahead of `main`. Awaiting operator `git push` + merge. All tests green (562/562).
+- **Authoritative plans**: `C:/Users/Richard/.claude/plans/i-d-like-to-create-peaceful-turtle.md` (this session) + `createa-plan-to-get-twinkling-dragon.md` (parent, Phase 0.5).
 
-## 🐛 2026-04-20 — Scanner hang bug (BLOCKS next session)
+## ✅ 2026-04-20 — Scanner hang resolved + DB rescue complete
+
+### Root cause (corrects the 2026-04-20 07:16 diagnosis)
+
+All four previously-suspected causes (pino flush / OpenAI SDK load / 4 overdue crons / MEMORY_ENABLED) were **falsified** by `POLY_SCAN_DEBUG=1` instrumentation (commit `39fc2b4`). The real cause chain:
+
+1. `poly_price_history` had no index on `captured_at`. `pruneOldPrices` did O(n) full-table scan on ~43M rows.
+2. `capturePrices` wrote ~100k rows per 5-min tick (50k markets × ~2 outcomes) when only ~40 were needed (topN=20 strategy candidates × 2 outcomes).
+3. Three separate `db.transaction()` calls per scan — checkpointer couldn't keep up; WAL grew to 5.5 GB.
+4. 9.3 GB DB + 5.5 GB WAL → each scan's DB-write block genuinely took multiple minutes. Scanner's `if (this.scanning) return;` silently dropped every 5-min tick that fired before the prior scan completed.
+
+**Observable:** zero `poly_scan_runs` rows, zero CPU (Windows native I/O wait doesn't count as CPU%), zero logs (pino was working — there was just nothing to log between `post-fetch` and `post-db`). Looked like a deadlock, was actually extreme slowness.
+
+### Verification evidence (first post-rescue scan)
+
+```
+pre-fetch        → post-fetch       = 28.6s (Gamma API)
+post-fetch       → post-db          = 860ms  (scanWrite's single tx: 50519 upserts + 40 price rows + indexed prune on 294k rows)
+post-db          → post-emit scan_complete → finally  = instant
+poly_scan_runs row: duration=29507ms markets=50519 status=ok
+```
+
+Compare to pre-fix `poly_scan_runs` history (2548 min ago): `270-304 seconds` per scan. **~10x speedup** on total scan, **~500x speedup** on DB-write block alone.
+
+### What shipped (7 commits on fix/scanner-hang-db-rescue)
+
+1. `39fc2b4 chore(scanner)`: POLY_SCAN_DEBUG instrumentation + 3 diagnostic scripts (check-scheduler-state, probe-fetch-standalone, check-db-bloat).
+2. `9c42a13 fix(poly)`: scanner DB bloat fix — narrowed capturePrices via extracted `selectPriceCaptureCandidates`, atomic `scanWrite` tx, `POLY_PRICE_HISTORY_HOURS=24`, v1.10.0 `captured_at` index, WAL pragma tuning in `db.ts`.
+3. `e84b4e2 feat(scheduler)`: task-kind dispatch v1.11.0. `runShellTask` (3 crons migrated off Claude CLI) + `runClaudeAgentTask` with auth preflight (adversarial-review only).
+4. `5b31233 feat(poly)`: `src/poly/heartbeat.ts` — scan staleness + WAL/DB size watchdog + `scan_slow` event.
+5. `19c34ca chore(db)`: dropped zombie tables `wa_messages`, `wa_outbox`, `wa_message_map`, `slack_messages` (v1.12.0).
+6. `863bb44 chore(db)`: `scripts/audit-schema.ts` for pre/post-migrate verification.
+7. _(this commit — HANDOFF + memory update + MISSION sign-off)_
+
+### DB rescue summary
+
+- Backup: `C:/claudeclaw-store/backup-2026-04-20/` with sha256 recorded. 8.67 GB main file preserved.
+- Live DB pre-scan: 9.31 GB main + 5.54 GB WAL.
+- After `wal_checkpoint(TRUNCATE)` + `VACUUM`: 8.67 GB → 7.97 GB.
+- After `scripts/prune-price-history-swap.ts` (CREATE+INSERT+DROP+RENAME instead of row-by-row DELETE): **7.97 GB → 138 MB** in 30 seconds. 294,456 rows kept (last 24h window).
+- Post-restart: scanner writes ~40 new rows per tick; heartbeat active; WAL stays under 10 MB steady state.
+
+### Operational state (end of session)
+
+- claudeclaw pm2 id 12 **ONLINE**, PID 54760, uptime clean. First scan at 23:04:48 UTC (2026-04-20 18:04 CDT).
+- `.applied.json`: `v1.12.0`. All three new migrations (v1.10.0, v1.11.0, v1.12.0) applied.
+- Cron state: news-sync paused; research-ingest + resolution-fetch = `kind=shell`; adversarial-review = `kind=claude-agent` with auth preflight (will skip gracefully while no auth configured).
+- `POLY_SCAN_DEBUG=0` flipped after verification. Keep the env key in place as a diagnostic knob.
+- regime-trader remains offline weekends (normal). Next Mon 09:30 ET auto-start.
+
+### Operator TODOs
+
+1. **Push `fix/scanner-hang-db-rescue` to origin and merge to `main`**. Tier 3 push; 7 commits with research notes. Suggested flow: `git push -u origin fix/scanner-hang-db-rescue`, then PR, then squash or fast-forward merge.
+2. **Monitor 24h**. Heartbeat alerts should stay quiet. If `🚨 Heartbeat` or `⚠️ WAL` or `⚠️ DB file` arrives, investigate.
+3. **30-day no-intervention gate restarts now.** `MISSION.md` gate box 1 clock reset to today — the previous 2026-04-20 07:16 restart was aborted before producing signals.
+
+### Known deferred (carry forward)
+
+- `news-sync` paused. Revive via direct `PPLX_API_KEY` + new `scripts/news-sync.ts`; then `UPDATE scheduled_tasks SET kind='shell', script_path='scripts/news-sync.ts', status='active' WHERE id='3d623e0e'`.
+- `adversarial-review` fires Sun 18:00 ET. Without `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`, `runClaudeAgentTask` writes a "skipped — no auth" Telegram and stays out of the way.
+- `consolidations` / `hive_mind` / `inter_agent_tasks` / `mission_tasks` zombie cleanup deferred to PA-strip phase 4c (needs dashboard refactor first; Explore agent 2026-04-20 confirmed dashboard still reads these).
+
+### Gotchas learned this session
+
+- `readEnvFile` does NOT load .env into `process.env` (security-conscious: keeps secrets out of child processes). New env-driven consts must be added to its whitelist AND exported from `config.ts`, not read with bare `process.env.*`.
+- When deleting > 50% of a large SQLite table, use the CREATE+INSERT+DROP+RENAME swap pattern. Row-by-row DELETE is ~60-90x slower because of B-tree page updates.
+- On Windows, `pm2 stop` SIGKILL-ing a bot holding a write transaction leaves the WAL in a "needs recovery" state. The next open can spin for many minutes playing back the journal. Safe fallback: force-kill lingering node PIDs (check `powershell Get-Process node`), `rm .db-wal .db-shm`, then reopen — SQLite reads the main DB file as committed state.
+- `POLY_SCAN_DEBUG=1` is a permanent diagnostic knob now. Zero cost at 0. Flip to 1 on the next silent failure for one-restart bisection.
+
+---
+
+## 🐛 2026-04-20 — Scanner hang bug (archived, RESOLVED above)
 
 **Symptom**: claudeclaw starts cleanly, logs "Polymarket module initialized (Phase C: scanner + strategy + pnl tracker)", then goes idle. Over 83 minutes of uptime on pid 64276: **zero new `poly_scan_runs` rows, zero new `poly_signals` rows**. CPU 0%. No error in logs. Scanner's `setInterval` never produces a completion event.
 

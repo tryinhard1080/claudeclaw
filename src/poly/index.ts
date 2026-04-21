@@ -25,6 +25,7 @@ import {
   composeRegimeSnapshot, fetchRegimeInputs, latestRegimeSnapshot,
   persistRegimeSnapshot, shouldRunRegimeSnapshot, defaultHttpJson,
 } from './regime.js';
+import { startScanHeartbeat } from './heartbeat.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -111,6 +112,15 @@ export function initPoly(opts: {
       ON poly_scan_runs(started_at DESC);
   `);
 
+  // v1.10.0 — defensive index on poly_price_history.captured_at. Without
+  // it, pruneOldPrices does a full table scan on ~43M rows and the WAL
+  // outruns the auto-checkpoint. See migrations/v1.10.0/ and
+  // docs/research/sprint-scanner-bloat-fix.md.
+  opts.db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_poly_price_history_captured
+      ON poly_price_history(captured_at);
+  `);
+
   // Sprint 3: regime snapshots table. Defensive create so an upgraded
   // install without `npm run migrate` doesn't crash every 5 minutes.
   opts.db.exec(`
@@ -128,6 +138,18 @@ export function initPoly(opts: {
 
   const scanner = new MarketScanner(opts.db, POLY_SCAN_INTERVAL_MIN * 60_000);
 
+  // 2026-04-20 Part D: slow-scan event → Telegram. Scanner emits when a
+  // scan exceeds slowThresholdMs (default 120s, half the 5-min interval).
+  // Pairs with the heartbeat watchdog below — this catches a scan that
+  // completes-but-slowly; the heartbeat catches a scan that doesn't
+  // complete at all.
+  scanner.on('scan_slow', ({ durationMs, marketCount }: { durationMs: number; marketCount: number }) => {
+    const sec = Math.round(durationMs / 1000);
+    opts.sender(`⚠️ Slow scan: ${sec}s for ${marketCount} markets (threshold 120s).`).catch(err =>
+      logger.warn({ err: String(err) }, 'scan_slow alert send failed'),
+    );
+  });
+
   // Phase C: strategy engine + P&L tracker + alerts. Engine subscribes to
   // scanner `scan_complete` in its constructor, so it must be built BEFORE
   // scanner.start() to avoid missing the first tick.
@@ -136,6 +158,15 @@ export function initPoly(opts: {
   registerPolyAlerts({ strategyEngine, pnlTracker, sender: opts.sender });
   pnlTracker.start();
   scanner.start();
+
+  // 2026-04-20 Part D: scan heartbeat. Samples poly_scan_runs every
+  // minute and alerts (throttled 15m) if:
+  //   - no successful scan in > 2x the scan interval (default 10 min)
+  //   - claudeclaw.db-wal > 100 MB (checkpointer falling behind)
+  //   - claudeclaw.db > 500 MB (unpruned growth)
+  // Grace period of 5 min after start prevents cold-boot alerts.
+  const stopHeartbeat = startScanHeartbeat(opts.db, opts.sender);
+
   registerPolyCommands(opts.bot, opts.db);
 
   // Digest tick — every 5 minutes, fires at most once per target-tz day.
@@ -239,6 +270,7 @@ export function initPoly(opts: {
       scanner.stop();
       pnlTracker.stop();
       clearInterval(digestTimer);
+      stopHeartbeat();
     },
   };
 }

@@ -258,6 +258,19 @@ export function initDatabase(): void {
 
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  // 2026-04-20 DB bloat fix: the pre-incident WAL grew to 5.5 GB because
+  // SQLite's default wal_autocheckpoint (1000 pages = ~4 MB) was outrun by
+  // the scanner's 100k-row-per-tick writes. Four tunings below restore
+  // healthy steady state.
+  // - wal_autocheckpoint=2000: ~8 MB between automatic checkpoints.
+  // - synchronous=NORMAL: safe under WAL per SQLite docs; 2-3x faster writes
+  //   vs FULL. Paper-trading tolerates the torn-write risk.
+  // - cache_size=-20000: 20 MB page cache (negative = KB).
+  // - mmap_size=256 MB: mmap window for large reads (e.g., drift dashboards).
+  db.pragma('wal_autocheckpoint = 2000');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('cache_size = -20000');
+  db.pragma('mmap_size = 268435456');
   createSchema(db);
   runMigrations(db);
 
@@ -326,6 +339,13 @@ function runMigrations(database: Database.Database): void {
   }
   if (!taskColNames.includes('routine_type')) {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN routine_type TEXT`);
+  }
+  // v1.11.0 — kind + script_path for scheduler dispatch.
+  if (!taskColNames.includes('kind')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'claude-agent'`);
+  }
+  if (!taskColNames.includes('script_path')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN script_path TEXT`);
   }
 
   // ── Memory V2 migration ──────────────────────────────────────────────
@@ -884,6 +904,8 @@ export function searchConsolidations(chatId: string, query: string, limit = 3): 
 
 // ── Scheduled Tasks ──────────────────────────────────────────────────
 
+export type ScheduledTaskKind = 'claude-agent' | 'shell';
+
 export interface ScheduledTask {
   id: string;
   prompt: string;
@@ -896,6 +918,10 @@ export interface ScheduledTask {
   agent_id: string;
   started_at: number | null;
   last_status: 'success' | 'failed' | 'timeout' | null;
+  /** v1.11.0 — 'claude-agent' spawns Claude CLI via runAgent; 'shell' spawns `npx tsx script_path`. */
+  kind: ScheduledTaskKind;
+  /** v1.11.0 — relative script path for kind='shell' tasks (e.g. 'scripts/fetch-resolutions.ts'). */
+  script_path: string | null;
 }
 
 export function createScheduledTask(

@@ -1,8 +1,10 @@
 import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
+import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { AGENT_ID, ALLOWED_CHAT_ID } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, PROJECT_ROOT } from './config.js';
 import {
   getDueTasks,
   getNextDueTimeMs,
@@ -14,13 +16,88 @@ import {
   claimNextMissionTask,
   completeMissionTask,
   resetStuckMissionTasks,
+  type ScheduledTask,
 } from './db.js';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { messageQueue } from './message-queue.js';
 import { runAgent } from './agent.js';
 import { formatForTelegram, splitMessage } from './bot.js';
 import { getRoutine, isSystemRoutine } from './routines.js';
 import { emitChatEvent } from './state.js';
+
+/**
+ * Shape the scheduler expects back from every task-runner strategy.
+ * Mirrors AgentResult so the surrounding result-handling code is unchanged.
+ */
+export interface TaskRunResult {
+  text: string | null;
+  aborted?: boolean;
+}
+
+/**
+ * kind='shell' — spawn `npx tsx <script_path>` and return its stdout.
+ * Timeout is enforced by the caller's AbortController on top of the
+ * scheduler's TASK_TIMEOUT_MS. Captures stdout + stderr; success requires
+ * exit 0. No Claude CLI involvement.
+ */
+export function runShellTask(task: ScheduledTask, abortController: AbortController): Promise<TaskRunResult> {
+  if (!task.script_path) {
+    return Promise.resolve({ text: `shell task ${task.id} has null script_path`, aborted: false });
+  }
+  // script_path can include args (e.g. "scripts/foo.ts --all-tiers").
+  const [scriptRel, ...args] = task.script_path.split(/\s+/);
+  const absScript = path.join(PROJECT_ROOT, scriptRel!);
+  return new Promise(resolve => {
+    const child = spawn('npx', ['tsx', absScript, ...args], {
+      cwd: PROJECT_ROOT,
+      env: { ...process.env },
+      shell: process.platform === 'win32',
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', d => { stdout += String(d); });
+    child.stderr.on('data', d => { stderr += String(d); });
+    const onAbort = (): void => { child.kill('SIGTERM'); };
+    abortController.signal.addEventListener('abort', onAbort);
+    child.on('close', (code) => {
+      abortController.signal.removeEventListener('abort', onAbort);
+      if (abortController.signal.aborted) {
+        resolve({ text: null, aborted: true });
+        return;
+      }
+      const combined = stdout + (stderr ? `\n---stderr---\n${stderr}` : '');
+      const text = code === 0
+        ? combined.trim() || `${scriptRel} completed (exit 0, no output)`
+        : `${scriptRel} exit ${code}\n${combined}`;
+      resolve({ text: text.slice(0, 3500), aborted: false });
+    });
+  });
+}
+
+/**
+ * kind='claude-agent' — existing runAgent path. Preflights auth: if no
+ * CLAUDE_CODE_OAUTH_TOKEN and no ANTHROPIC_API_KEY, skip with a warning
+ * rather than spawning a subprocess that will hang indefinitely on
+ * stdin auth prompts.
+ */
+export async function runClaudeAgentTask(task: ScheduledTask, abortController: AbortController): Promise<TaskRunResult> {
+  const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  if (!secrets.CLAUDE_CODE_OAUTH_TOKEN && !secrets.ANTHROPIC_API_KEY) {
+    logger.warn({ taskId: task.id }, 'claude-agent task skipped — no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY');
+    return {
+      text: `Skipped: no Claude auth available (CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY both empty). Configure one in .env and restart.`,
+      aborted: false,
+    };
+  }
+  let taskPrompt = task.prompt;
+  if (isSystemRoutine(task.id)) {
+    const routine = getRoutine(task.id);
+    if (routine) taskPrompt = routine.buildPrompt();
+  }
+  const result = await runAgent(taskPrompt, undefined, () => {}, undefined, undefined, abortController);
+  return { text: result.text, aborted: result.aborted };
+}
 
 type Sender = (text: string) => Promise<void>;
 
@@ -107,18 +184,18 @@ async function runDueTasks(): Promise<void> {
       const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
 
       try {
-        // For system routines, rebuild the prompt dynamically so it gets
-        // fresh profile data instead of stale content from seed time.
-        let taskPrompt = task.prompt;
-        if (isSystemRoutine(task.id)) {
-          const routine = getRoutine(task.id);
-          if (routine) taskPrompt = routine.buildPrompt();
-        }
+        // v1.11.0 dispatch on kind. Default 'claude-agent' preserves
+        // pre-2026-04-20 behavior for unmigrated tasks.
+        const kind = task.kind ?? 'claude-agent';
+        const promptPreview = (task.kind === 'shell' && task.script_path
+          ? `[shell] ${task.script_path}`
+          : task.prompt
+        ).slice(0, 80);
+        await sender(`Scheduled task running: "${promptPreview}${promptPreview.length >= 80 ? '...' : ''}"`);
 
-        await sender(`Scheduled task running: "${taskPrompt.slice(0, 80)}${taskPrompt.length > 80 ? '...' : ''}"`);
-
-        // Run as a fresh agent call (no session — scheduled tasks are autonomous)
-        const result = await runAgent(taskPrompt, undefined, () => {}, undefined, undefined, abortController);
+        const result: TaskRunResult = kind === 'shell'
+          ? await runShellTask(task, abortController)
+          : await runClaudeAgentTask(task, abortController);
         clearTimeout(timeout);
 
         if (result.aborted) {

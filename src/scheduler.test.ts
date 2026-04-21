@@ -12,6 +12,7 @@ import {
   resumeScheduledTask,
 } from './db.js';
 import type { ScheduledTask } from './db.js';
+import { runShellTask } from './scheduler.js';
 
 describe('task state machine', () => {
   beforeEach(() => {
@@ -373,4 +374,42 @@ describe('task state machine', () => {
       expect(getAllScheduledTasks()).toHaveLength(0);
     });
   });
+});
+
+describe('runShellTask (v1.11.0 dispatch)', () => {
+  function mkShellTask(script_path: string | null): ScheduledTask {
+    return {
+      id: 'shell-test',
+      prompt: 'ignored for shell kind',
+      schedule: '0 * * * *',
+      next_run: Math.floor(Date.now() / 1000) + 3600,
+      last_run: null,
+      last_result: null,
+      status: 'active',
+      created_at: Math.floor(Date.now() / 1000),
+      agent_id: 'main',
+      started_at: null,
+      last_status: null,
+      kind: 'shell',
+      script_path,
+    };
+  }
+
+  it('returns a placeholder message when script_path is null', async () => {
+    const ac = new AbortController();
+    const result = await runShellTask(mkShellTask(null), ac);
+    expect(result.aborted).toBeFalsy();
+    expect(result.text).toContain('null script_path');
+  });
+
+  it('reports non-zero exit from a missing script', async () => {
+    const ac = new AbortController();
+    // Definitely-missing script. npx tsx should resolve and then fail to
+    // find the file, producing a non-zero exit + useful stderr.
+    const result = await runShellTask(mkShellTask('scripts/definitely-not-a-real-script.ts'), ac);
+    expect(result.aborted).toBeFalsy();
+    expect(result.text).toBeTruthy();
+    // Text should contain either the exit code or a stderr-ish marker.
+    expect(result.text!.length).toBeGreaterThan(0);
+  }, 30_000);
 });

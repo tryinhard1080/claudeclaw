@@ -38,6 +38,9 @@ const envConfig = readEnvFile([
   'POLY_KELLY_FRACTION',
   'POLY_MODEL',
   'POLY_SCAN_INTERVAL_MIN',
+  'POLY_SCAN_DEBUG',
+  'POLY_PRICE_HISTORY_HOURS',
+  'POLY_SCAN_TOP_N',
   'POLY_DIGEST_HOUR',
   'POLY_TIMEZONE',
   'POLY_CALIBRATION_HOUR',
@@ -227,6 +230,19 @@ export const POLY_KELLY_FRACTION = num('POLY_KELLY_FRACTION', 0.25);
 export const POLY_MODEL =
   process.env.POLY_MODEL || envConfig.POLY_MODEL || 'claude-opus-4-6';
 export const POLY_SCAN_INTERVAL_MIN = num('POLY_SCAN_INTERVAL_MIN', 15);
+// 2026-04-20 scanner-hang diagnostic: when '1', MarketScanner writes [SCAN ...]
+// markers directly to stdout to bisect where runOnce() is stalling.
+export const POLY_SCAN_DEBUG =
+  (process.env.POLY_SCAN_DEBUG || envConfig.POLY_SCAN_DEBUG || '0') === '1';
+// 2026-04-20 DB-bloat fix: how long to keep poly_price_history rows. Writes
+// are narrowed to topN candidates only (see selectPriceCaptureCandidates in
+// strategy-engine.ts), so 24h of history = ~11.5k rows. /prices Telegram
+// command uses this window.
+export const POLY_PRICE_HISTORY_HOURS = num('POLY_PRICE_HISTORY_HOURS', 24);
+// Maximum number of candidate markets to evaluate per scan. Gates both the
+// LLM probability calls and poly_price_history writes. Must match
+// StrategyEngine.topN (defaulted from this).
+export const POLY_SCAN_TOP_N = num('POLY_SCAN_TOP_N', 20);
 export const POLY_DIGEST_HOUR = num('POLY_DIGEST_HOUR', 6);
 export const POLY_TIMEZONE =
   process.env.POLY_TIMEZONE || envConfig.POLY_TIMEZONE || 'America/New_York';

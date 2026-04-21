@@ -85,6 +85,43 @@ export interface ConfidenceMultipliers {
  * the Sprint 2.5 contradiction path (it forces confidence='low' as the
  * risk-reduction signal; higher-than-1 multipliers undo that).
  */
+/**
+ * Pure candidate selector — shared between StrategyEngine and
+ * MarketScanner.capturePrices so the scanner doesn't write price history
+ * for 50k markets we'll never evaluate. Same filter + sort + slice as
+ * StrategyEngine used internally before the 2026-04-20 DB bloat fix.
+ *
+ * See docs/research/sprint-scanner-bloat-fix.md for the 2500x write
+ * reduction this enables (100k rows/tick → 40 rows/tick).
+ */
+export interface SelectCandidatesOpts {
+  nowSec: number;
+  minVolumeUsd: number;
+  minTtrHours: number;
+  minYesPrice: number;
+  maxYesPrice: number;
+  topN: number;
+}
+
+export function selectPriceCaptureCandidates(
+  markets: Market[],
+  opts: SelectCandidatesOpts,
+): Market[] {
+  const minEnd = opts.nowSec + opts.minTtrHours * 3600;
+  return markets
+    .filter(m => {
+      if (m.closed) return false;
+      if (m.volume24h < opts.minVolumeUsd) return false;
+      if (m.endDate < minEnd) return false;
+      const yes = m.outcomes.find(o => o.label.toLowerCase() === 'yes');
+      if (!yes) return false;
+      if (yes.price < opts.minYesPrice || yes.price > opts.maxYesPrice) return false;
+      return true;
+    })
+    .sort((a, b) => b.volume24h - a.volume24h)
+    .slice(0, opts.topN);
+}
+
 export function confidenceMultiplier(
   confidence: 'low' | 'medium' | 'high',
   mults: ConfidenceMultipliers,
@@ -248,24 +285,14 @@ export class StrategyEngine extends EventEmitter {
   }
 
   private selectCandidates(markets: Market[]): Market[] {
-    const nowSec = Math.floor(this.now() / 1000);
-    const minEnd = nowSec + this.minTtrHours * 3600;
-    // Sprint 5.5: band filter on YES price. Excludes long-shot tails
-    // (<minYesPrice) and near-certainties (>maxYesPrice) where the LLM
-    // has no meaningful edge over the market. Markets without a YES
-    // outcome are skipped — matches processMarket's existing behavior.
-    return markets
-      .filter(m => {
-        if (m.closed) return false;
-        if (m.volume24h < this.minVolumeUsd) return false;
-        if (m.endDate < minEnd) return false;
-        const yes = m.outcomes.find(o => o.label.toLowerCase() === 'yes');
-        if (!yes) return false;
-        if (yes.price < this.minYesPrice || yes.price > this.maxYesPrice) return false;
-        return true;
-      })
-      .sort((a, b) => b.volume24h - a.volume24h)
-      .slice(0, this.topN);
+    return selectPriceCaptureCandidates(markets, {
+      nowSec: Math.floor(this.now() / 1000),
+      minVolumeUsd: this.minVolumeUsd,
+      minTtrHours: this.minTtrHours,
+      minYesPrice: this.minYesPrice,
+      maxYesPrice: this.maxYesPrice,
+      topN: this.topN,
+    });
   }
 
   private async processMarket(market: Market): Promise<void> {
