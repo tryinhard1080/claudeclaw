@@ -58,9 +58,17 @@ Compare to pre-fix `poly_scan_runs` history (2548 min ago): `270-304 seconds` pe
 
 ### Operator TODOs
 
-1. **Push `fix/scanner-hang-db-rescue` to origin and merge to `main`**. Tier 3 push; 7 commits with research notes. Suggested flow: `git push -u origin fix/scanner-hang-db-rescue`, then PR, then squash or fast-forward merge.
+1. ~~**Push `fix/scanner-hang-db-rescue` to origin and merge to `main`**~~ → **DONE 2026-04-21**. Merge commit `762b219` + MISSION sign-off `67e9262` on origin/main.
 2. **Monitor 24h**. Heartbeat alerts should stay quiet. If `🚨 Heartbeat` or `⚠️ WAL` or `⚠️ DB file` arrives, investigate.
-3. **30-day no-intervention gate restarts now.** `MISSION.md` gate box 1 clock reset to today — the previous 2026-04-20 07:16 restart was aborted before producing signals.
+3. ~~**30-day no-intervention gate restarts now.**~~ → **Clock started 2026-04-21 at merge `762b219`. Target completion: 2026-05-21.**
+
+### Session-wrap state (2026-04-21)
+
+- claudeclaw pm2 id 12 **ONLINE**, PID 34584. `POLY_SCAN_DEBUG=0` steady-state.
+- **6 consecutive post-merge scans** logged in `poly_scan_runs`, all 28.2–29.8s. No cadence gaps.
+- **GLM pipeline producing signals again**: latest `poly_signals.id=3707` with `provider='glm', model='glm-4.6'`. Pre-halt frozen at id=2564 — the ~1100-signal gap is the 48h halt + 24h recovery window.
+- DB 147 MB, WAL 72 MB (healthy churn from strategy engine's eval writes + signal inserts).
+- 30-day clock: day 0 of 30. Next resolution-fetch cron Sun 2026-04-26 07:00 ET (kind=shell, deterministic — no Claude CLI risk).
 
 ### Known deferred (carry forward)
 
