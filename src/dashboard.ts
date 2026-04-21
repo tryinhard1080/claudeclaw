@@ -42,6 +42,7 @@ import {
   getAuditLog,
   getAuditLogCount,
   getRecentBlockedActions,
+  getDb,
 } from './db.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { getSecurityStatus } from './security.js';
@@ -373,6 +374,110 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const costTimeline = getDashboardCostTimeline(chatId, 30);
     const recentUsage = getDashboardRecentTokenUsage(chatId, 20);
     return c.json({ stats, costTimeline, recentUsage });
+  });
+
+  // ── Polymarket trading endpoints (2026-04-21) ───────────────────────
+  // Wire trading state into the dashboard. All readonly queries against
+  // the same DB the scanner + strategy engine write to. No mutations.
+
+  app.get('/api/poly/overview', (c) => {
+    const db = getDb();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const startOfDay = nowSec - (nowSec % 86400);
+
+    const sig = db.prepare(`SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN approved=1 THEN 1 ELSE 0 END) AS approved,
+      SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS today,
+      SUM(CASE WHEN approved=1 AND created_at >= ? THEN 1 ELSE 0 END) AS approvedToday
+      FROM poly_signals`).get(startOfDay, startOfDay) as Record<string, number | null>;
+
+    const trades = db.prepare(`SELECT status, COUNT(*) AS n FROM poly_paper_trades GROUP BY status`).all() as Array<{ status: string; n: number }>;
+    const tradesByStatus: Record<string, number> = {};
+    for (const t of trades) tradesByStatus[t.status] = t.n;
+
+    const resolutions = db.prepare(`SELECT COUNT(*) AS n FROM poly_resolutions`).get() as { n: number };
+
+    const lastScan = db.prepare(`SELECT started_at, duration_ms, market_count, status FROM poly_scan_runs ORDER BY id DESC LIMIT 1`).get() as { started_at: number; duration_ms: number | null; market_count: number | null; status: string } | undefined;
+
+    const realized = db.prepare(`SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM poly_paper_trades WHERE status IN ('won','lost','exited')`).get() as { total: number };
+
+    const openExposure = db.prepare(`SELECT COALESCE(SUM(size_usd), 0) AS total FROM poly_paper_trades WHERE status='open'`).get() as { total: number };
+
+    let dbSizeBytes = 0, walSizeBytes = 0;
+    try { dbSizeBytes = fs.statSync(path.join(STORE_DIR, 'claudeclaw.db')).size; } catch { /* ignore */ }
+    try { walSizeBytes = fs.statSync(path.join(STORE_DIR, 'claudeclaw.db-wal')).size; } catch { /* ignore */ }
+
+    return c.json({
+      signals: {
+        total: sig.total ?? 0,
+        approved: sig.approved ?? 0,
+        today: sig.today ?? 0,
+        approvedToday: sig.approvedToday ?? 0,
+      },
+      trades: tradesByStatus,
+      resolutions: resolutions.n,
+      lastScan: lastScan
+        ? { ...lastScan, ageSec: nowSec - lastScan.started_at }
+        : null,
+      realizedPnlUsd: realized.total,
+      openExposureUsd: openExposure.total,
+      dbSizeBytes,
+      walSizeBytes,
+    });
+  });
+
+  app.get('/api/poly/signals/recent', (c) => {
+    const db = getDb();
+    const limit = Math.min(parseInt(c.req.query('limit') || '25', 10) || 25, 200);
+    const rows = db.prepare(`SELECT
+        id, created_at, market_slug, outcome_label, market_price,
+        estimated_prob, edge_pct, confidence, approved, rejection_reasons,
+        prompt_version, model, provider, regime_label
+      FROM poly_signals ORDER BY id DESC LIMIT ?`).all(limit);
+    return c.json({ signals: rows });
+  });
+
+  app.get('/api/poly/trades', (c) => {
+    const db = getDb();
+    const status = c.req.query('status') || 'all';
+    const limit = Math.min(parseInt(c.req.query('limit') || '50', 10) || 50, 500);
+    let rows;
+    if (status === 'all') {
+      rows = db.prepare(`SELECT * FROM poly_paper_trades ORDER BY id DESC LIMIT ?`).all(limit);
+    } else {
+      rows = db.prepare(`SELECT * FROM poly_paper_trades WHERE status = ? ORDER BY id DESC LIMIT ?`).all(status, limit);
+    }
+    return c.json({ trades: rows });
+  });
+
+  app.get('/api/poly/scans/recent', (c) => {
+    const db = getDb();
+    const limit = Math.min(parseInt(c.req.query('limit') || '50', 10) || 50, 500);
+    const rows = db.prepare(`SELECT started_at, duration_ms, market_count, status, error
+      FROM poly_scan_runs ORDER BY id DESC LIMIT ?`).all(limit);
+    return c.json({ scans: rows });
+  });
+
+  app.get('/api/poly/regime', (c) => {
+    const db = getDb();
+    const latest = db.prepare(`SELECT created_at, vix, btc_dominance, yield_10y, regime_label
+      FROM poly_regime_snapshots ORDER BY id DESC LIMIT 1`).get();
+    return c.json({ latest });
+  });
+
+  app.get('/api/poly/pnl', (c) => {
+    const db = getDb();
+    const realized = db.prepare(`SELECT
+        DATE(created_at, 'unixepoch') AS day,
+        COALESCE(SUM(realized_pnl), 0) AS pnl,
+        COUNT(*) AS n
+      FROM poly_paper_trades
+      WHERE status IN ('won','lost','exited')
+      GROUP BY day ORDER BY day ASC LIMIT 60`).all();
+    const open = db.prepare(`SELECT id, created_at, market_slug, outcome_label, size_usd, entry_price, shares
+      FROM poly_paper_trades WHERE status='open' ORDER BY id DESC`).all();
+    return c.json({ realizedDaily: realized, open });
   });
 
   // Bot info (name, PID, chatId) — reads dynamically from state

@@ -190,6 +190,39 @@ export function getDashboardHtml(token: string, chatId: string): string {
   </div>
 </div>
 
+<!-- Polymarket (trading) -->
+<div id="poly-section" class="mb-5">
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Polymarket (paper trading)</h2>
+    <span id="poly-last-scan" class="text-xs text-gray-500">-</span>
+  </div>
+  <div class="card">
+    <div class="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-3">
+      <div><div class="stat-val" id="poly-signals-today">-</div><div class="stat-label">Signals today</div></div>
+      <div><div class="stat-val" id="poly-approved-today">-</div><div class="stat-label">Approved today</div></div>
+      <div><div class="stat-val" id="poly-open">-</div><div class="stat-label">Open trades</div></div>
+      <div><div class="stat-val" id="poly-exposure">-</div><div class="stat-label">Open exposure</div></div>
+      <div><div class="stat-val" id="poly-realized">-</div><div class="stat-label">Realized P&amp;L</div></div>
+      <div><div class="stat-val" id="poly-resolutions">-</div><div class="stat-label">Resolutions</div></div>
+    </div>
+    <div class="flex items-center gap-4 text-xs text-gray-500 border-t border-gray-800 pt-2">
+      <span>DB <span id="poly-dbsize">-</span></span>
+      <span>WAL <span id="poly-walsize">-</span></span>
+      <span id="poly-regime">regime: -</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Open positions</h3>
+    <div id="poly-positions" class="text-sm"><div class="text-gray-500 text-xs">Loading...</div></div>
+  </div>
+
+  <div class="card">
+    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Recent signals (last 15)</h3>
+    <div id="poly-signals" class="text-xs" style="max-height:320px;overflow-y:auto"><div class="text-gray-500">Loading...</div></div>
+  </div>
+</div>
+
 <!-- Agent Status Cards -->
 <div id="agents-section" class="mb-5" style="display:none">
   <div class="flex items-center justify-between mb-2">
@@ -1883,13 +1916,138 @@ function closeTaskHistory() {
 // Poll mission tasks more frequently (every 15s) for responsiveness
 setInterval(loadMissionControl, 15000);
 
+// ── Polymarket trading panel (2026-04-21) ─────────────────────────────
+function fmtUsd(n) {
+  if (n === null || n === undefined) return '-';
+  const v = Number(n);
+  if (!isFinite(v)) return '-';
+  const sign = v < 0 ? '-' : '';
+  const abs = Math.abs(v);
+  if (abs >= 1000) return sign + '$' + abs.toFixed(0);
+  return sign + '$' + abs.toFixed(2);
+}
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+function fmtAgo(sec) {
+  if (!sec && sec !== 0) return '-';
+  if (sec < 60) return sec + 's ago';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+  return Math.floor(sec / 86400) + 'd ago';
+}
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+async function loadPoly() {
+  try {
+    const [overview, trades, signals, regime] = await Promise.all([
+      fetch('/api/poly/overview?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+      fetch('/api/poly/trades?status=open&limit=20&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+      fetch('/api/poly/signals/recent?limit=15&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+      fetch('/api/poly/regime?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+    ]);
+
+    // Overview pills
+    document.getElementById('poly-signals-today').textContent = overview.signals.today ?? 0;
+    document.getElementById('poly-approved-today').textContent = overview.signals.approvedToday ?? 0;
+    document.getElementById('poly-open').textContent = overview.trades.open ?? 0;
+    document.getElementById('poly-exposure').textContent = fmtUsd(overview.openExposureUsd);
+    const realized = overview.realizedPnlUsd;
+    const relEl = document.getElementById('poly-realized');
+    relEl.textContent = fmtUsd(realized);
+    relEl.style.color = realized > 0 ? '#6ee7b7' : (realized < 0 ? '#f87171' : '#fff');
+    document.getElementById('poly-resolutions').textContent = overview.resolutions ?? 0;
+    document.getElementById('poly-dbsize').textContent = fmtBytes(overview.dbSizeBytes);
+    document.getElementById('poly-walsize').textContent = fmtBytes(overview.walSizeBytes);
+
+    if (overview.lastScan) {
+      const s = overview.lastScan;
+      const durSec = s.duration_ms ? (s.duration_ms / 1000).toFixed(1) : '-';
+      document.getElementById('poly-last-scan').textContent =
+        'last scan ' + fmtAgo(s.ageSec) + ' · ' + (s.market_count ?? '-') + ' markets · ' + durSec + 's · ' + s.status;
+    } else {
+      document.getElementById('poly-last-scan').textContent = 'no scans yet';
+    }
+
+    if (regime.latest) {
+      const r = regime.latest;
+      document.getElementById('poly-regime').textContent =
+        'regime: ' + r.regime_label + ' (VIX ' + (r.vix?.toFixed(1) ?? '-') +
+        ' / BTC ' + (r.btc_dominance?.toFixed(1) ?? '-') + '%' +
+        ' / 10y ' + (r.yield_10y?.toFixed(2) ?? '-') + ')';
+    }
+
+    // Open positions table
+    const posEl = document.getElementById('poly-positions');
+    if (!trades.trades || trades.trades.length === 0) {
+      posEl.innerHTML = '<div class="text-gray-500 text-xs">No open positions</div>';
+    } else {
+      const rows = trades.trades.map(t => {
+        const ageSec = Math.floor(Date.now() / 1000) - t.created_at;
+        return '<tr class="border-b border-gray-800">' +
+          '<td class="py-1 pr-3 text-gray-200" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(t.market_slug) + '</td>' +
+          '<td class="py-1 pr-3 text-gray-400">' + escapeHtml(t.outcome_label) + '</td>' +
+          '<td class="py-1 pr-3 text-right text-gray-300">$' + Number(t.entry_price).toFixed(3) + '</td>' +
+          '<td class="py-1 pr-3 text-right text-gray-300">' + fmtUsd(t.size_usd) + '</td>' +
+          '<td class="py-1 pr-3 text-right text-gray-300">' + Number(t.shares).toFixed(0) + '</td>' +
+          '<td class="py-1 text-right text-gray-500 text-xs">' + fmtAgo(ageSec) + '</td>' +
+          '</tr>';
+      }).join('');
+      posEl.innerHTML =
+        '<table class="w-full text-xs"><thead><tr class="text-gray-500 uppercase tracking-wider">' +
+        '<th class="py-1 pr-3 text-left font-medium">Market</th>' +
+        '<th class="py-1 pr-3 text-left font-medium">Side</th>' +
+        '<th class="py-1 pr-3 text-right font-medium">Entry</th>' +
+        '<th class="py-1 pr-3 text-right font-medium">Size</th>' +
+        '<th class="py-1 pr-3 text-right font-medium">Shares</th>' +
+        '<th class="py-1 text-right font-medium">Age</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    // Recent signals
+    const sigEl = document.getElementById('poly-signals');
+    if (!signals.signals || signals.signals.length === 0) {
+      sigEl.innerHTML = '<div class="text-gray-500">No signals yet</div>';
+    } else {
+      const rows = signals.signals.map(s => {
+        const approvedPill = s.approved
+          ? '<span class="pill pill-active">APPROVED</span>'
+          : '<span class="pill" style="background:#2a2a2a;color:#888">rejected</span>';
+        const edge = Number(s.edge_pct).toFixed(1);
+        const edgeColor = Number(s.edge_pct) >= 5 ? '#6ee7b7' : '#f87171';
+        const ageSec = Math.floor(Date.now() / 1000) - s.created_at;
+        return '<div class="border-b border-gray-800 py-1 flex items-center gap-2">' +
+          '<span class="text-gray-500 text-xs" style="min-width:52px">' + fmtAgo(ageSec) + '</span>' +
+          approvedPill +
+          '<span class="text-gray-500">' + escapeHtml(s.confidence ?? '-') + '</span>' +
+          '<span style="color:' + edgeColor + ';min-width:50px;text-align:right">' + edge + 'pp</span>' +
+          '<span class="text-gray-400" style="min-width:60px;text-align:right">$' + Number(s.market_price).toFixed(3) + '→' + Number(s.estimated_prob).toFixed(3) + '</span>' +
+          '<span class="text-gray-300" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(s.market_slug) + '</span>' +
+          '</div>';
+      }).join('');
+      sigEl.innerHTML = rows;
+    }
+  } catch (err) {
+    console.error('loadPoly failed', err);
+  }
+}
+
 async function refreshAll() {
   const btn = document.getElementById('refresh-btn').querySelector('svg');
   btn.classList.add('refresh-spin');
-  await Promise.all([loadInfo(), loadTasks(), loadMemories(), loadHealth(), loadTokens(), loadAgents(), loadHiveMind(), loadSummary(), loadMissionControl()]);
+  await Promise.all([loadInfo(), loadTasks(), loadMemories(), loadHealth(), loadTokens(), loadAgents(), loadHiveMind(), loadSummary(), loadMissionControl(), loadPoly()]);
   btn.classList.remove('refresh-spin');
   document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 }
+
+// Trading data refreshes independently every 30s for responsiveness
+setInterval(loadPoly, 30000);
 
 // Live countdown tickers
 setInterval(() => {
