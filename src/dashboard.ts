@@ -63,6 +63,7 @@ import { getDashboardHtml } from './dashboard-html.js';
 import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
 import { buildPositionsLivePayload } from './poly/positions-view.js';
+import { buildPnlBars, type DailyPnlPoint } from './dashboard-charts.js';
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -484,6 +485,21 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   app.get('/api/poly/positions/live', (c) => {
     const db = getDb();
     return c.json(buildPositionsLivePayload(db));
+  });
+
+  app.get('/api/poly/pnl/chart', (c) => {
+    const db = getDb();
+    const width = Math.min(Math.max(parseInt(c.req.query('width') || '360', 10) || 360, 100), 1200);
+    const height = Math.min(Math.max(parseInt(c.req.query('height') || '72', 10) || 72, 40), 400);
+    const rows = db.prepare(`SELECT
+        DATE(created_at, 'unixepoch') AS day,
+        COALESCE(SUM(realized_pnl), 0) AS pnl,
+        COUNT(*) AS n
+      FROM poly_paper_trades
+      WHERE status IN ('won','lost','exited')
+      GROUP BY day ORDER BY day ASC LIMIT 60`).all() as DailyPnlPoint[];
+    const chart = buildPnlBars(rows, { width, height });
+    return c.json({ width, height, ...chart });
   });
 
   // Bot info (name, PID, chatId) — reads dynamically from state

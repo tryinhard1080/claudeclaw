@@ -221,6 +221,15 @@ export function getDashboardHtml(token: string, chatId: string): string {
   </div>
 
   <div class="card">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Realized P&amp;L (daily)</h3>
+      <span id="poly-pnl-cum" class="text-xs text-gray-500">-</span>
+    </div>
+    <svg id="poly-pnl-chart" width="100%" height="72" viewBox="0 0 360 72" preserveAspectRatio="none" style="display:block"></svg>
+    <div id="poly-pnl-empty" class="text-xs text-gray-500 mt-1" style="display:none">No resolutions yet. First batch expected Sun 2026-04-26.</div>
+  </div>
+
+  <div class="card">
     <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Recent signals (last 15)</h3>
     <div id="poly-signals" class="text-xs" style="max-height:320px;overflow-y:auto"><div class="text-gray-500">Loading...</div></div>
   </div>
@@ -1949,11 +1958,12 @@ function escapeHtml(s) {
 }
 async function loadPoly() {
   try {
-    const [overview, live, signals, regime] = await Promise.all([
+    const [overview, live, signals, regime, pnlChart] = await Promise.all([
       fetch('/api/poly/overview?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/positions/live?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/signals/recent?limit=15&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/regime?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+      fetch('/api/poly/pnl/chart?width=360&height=72&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
     ]);
 
     // Overview pills
@@ -2044,6 +2054,38 @@ async function loadPoly() {
         '<th class="py-1 pr-3 text-right font-medium">Shares</th>' +
         '<th class="py-1 text-right font-medium">Age</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    // Realized P&L sparkline
+    const chartEl = document.getElementById('poly-pnl-chart');
+    const emptyEl = document.getElementById('poly-pnl-empty');
+    const cumEl = document.getElementById('poly-pnl-cum');
+    if (chartEl && pnlChart) {
+      const bars = pnlChart.bars || [];
+      const zeroY = pnlChart.zeroY ?? 36;
+      const chartWidth = pnlChart.width ?? 360;
+      if (bars.length === 0) {
+        chartEl.innerHTML =
+          '<line x1="0" y1="' + zeroY + '" x2="' + chartWidth + '" y2="' + zeroY +
+          '" stroke="#333" stroke-width="1" stroke-dasharray="2,3" />';
+        if (emptyEl) emptyEl.style.display = '';
+      } else {
+        if (emptyEl) emptyEl.style.display = 'none';
+        const rects = bars.map(b =>
+          '<rect x="' + b.x + '" y="' + b.y + '" width="' + b.width +
+          '" height="' + b.height + '" fill="' + b.color + '"><title>' +
+          escapeHtml(b.label) + '</title></rect>'
+        ).join('');
+        const axis = '<line x1="0" y1="' + zeroY + '" x2="' + chartWidth + '" y2="' + zeroY +
+          '" stroke="#333" stroke-width="1" />';
+        chartEl.innerHTML = axis + rects;
+      }
+      if (cumEl) {
+        const cum = Number(pnlChart.cumTotal || 0);
+        const color = cum > 0 ? '#6ee7b7' : (cum < 0 ? '#f87171' : '#9ca3af');
+        cumEl.innerHTML = '<span style="color:' + color + ';font-weight:600">cum ' + fmtUsd(cum) + '</span>' +
+          ' <span class="text-gray-600">·</span> <span class="text-gray-500">' + bars.length + ' days</span>';
+      }
     }
 
     // Recent signals
