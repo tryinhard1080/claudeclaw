@@ -1,10 +1,56 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-20 — **✅ SCANNER HANG RESOLVED. ClaudeClaw online + healthy on GLM 5.1.** The "scanner hang" was DB bloat masquerading as a deadlock. Peaceful-turtle plan landed in full.
+- **Date**: 2026-04-21 — **✅ Sprints 12-15 shipped: dashboard expansion (unrealized P&L, realized P&L sparkline, signal reasoning expand, calibration + drift cards).** Operator-directed, scoped to the existing :3141 dashboard. Bot ONLINE PID 62052, restart count 12 (5 deploy-restarts this session).
 - **Model**: Claude Opus 4.7 (1M context).
-- **Branch**: `fix/scanner-hang-db-rescue` — 7 commits ahead of `main`. Awaiting operator `git push` + merge. All tests green (562/562).
-- **Authoritative plans**: `C:/Users/Richard/.claude/plans/i-d-like-to-create-peaceful-turtle.md` (this session) + `createa-plan-to-get-twinkling-dragon.md` (parent, Phase 0.5).
+- **Branch**: `main`. 4 commits past `762b219` (gate-clock start): `828bb02` `443cf2d` `45ef67d` `19d0de1`. All tests green (586/586, +24 new).
+- **Open question for operator**: do these 5 deploy-restarts reset the 30-day no-intervention gate clock? Strict reading = day 0 again. Permissive reading = clock still ticking from `762b219`. Defer all further sprint work until answered.
+
+## ✅ 2026-04-21 — Dashboard sprints 12-15
+
+### Operator request
+Prior session had wired the Polymarket trading panels (commit `32a8e38`) but explicitly enumerated 4 missing pieces. Operator said "Fix all of these."
+
+### Build discipline (per CLAUDE.md)
+Each sprint went through: existing-code audit → `docs/research/sprint-N-topic.md` verdict → TDD RED → TDD GREEN → typecheck → full suite → live curl → commit. Pre-commit research-note hook fired on Sprint 12 (touched `src/poly/`); skipped on 13-15 (touched only `src/dashboard*`).
+
+### What shipped
+
+| # | Commit | Verdict | Surface |
+|---|---|---|---|
+| 12 | `828bb02` | complement | `GET /api/poly/positions/live` joins `poly_paper_trades` (status='open') with `poly_positions` for current_price + unrealized_pnl + unrealized_pct + last_tick_at. Dashboard table gains Mark + Unrealized columns + aggregate header. |
+| 13 | `443cf2d` | complement | `GET /api/poly/pnl/chart?width&height` precomputes SVG bar primitives via `buildPnlBars` pure helper. Dashboard renders sparkline + cumulative pill + 2026-04-26 placeholder for empty state. |
+| 14 | `45ef67d` | complement | `GET /api/poly/signals/recent` SELECT extended with `reasoning, contrarian` (already in `poly_signals` since v1.2.0). Click-to-expand UI panel. |
+| 15 | `19d0de1` | complement | `GET /api/poly/calibration` (latestSnapshot + nResolvedAllTime) + `GET /api/poly/drift?windowHours=24` (latency + marketCount + rejection mix). Two-column card row in dashboard. |
+
+### Live numbers at session end (PID 62052)
+- **Book**: -$100.27 unrealized (-21.3%) on $471.50 exposure across 10 open positions.
+- **Worst position**: `us-x-iran-diplomatic-meeting-by-april-22-2026` -80% (entry $0.70 → mark $0.14). Settles 2026-04-22, first real test of resolution → realized-P&L flow.
+- **Drift**: p50=29.3s p95=31.4s p99=33.1s, 272 scans/24h, 0 errors, rejection mix 57.7% position_limits / 42.3% signal_quality.
+- **Calibration**: empty (0 resolved all-time). First batch arrives Sun 2026-04-26 07:00 ET via resolution-fetch cron (`kind=shell`).
+
+### Files added/touched
+New: `src/poly/positions-view.ts(+test)`, `src/dashboard-charts.ts(+test)`, `docs/research/sprint-12-unrealized-pnl.md`.
+Modified: `src/dashboard.ts` (4 routes), `src/dashboard-html.ts` (HTML + loadPoly client logic).
+
+### Tests
+562 → 586 (+24 new). Typecheck clean each commit. Live verification per sprint via curl against running bot.
+
+### Build discipline retro
+- Sprint 12 followed full discipline including research doc — that's the one that fires the pre-commit hook. Verdict was COMPLEMENT (PnlTracker already computed unrealized; we just exposed it). Naive spec ("re-fetch CLOB per dashboard load") would have raced the tick and inflated rate-limit usage.
+- Sprints 13-15 did the audit but skipped the research-note doc since they didn't touch `src/poly/`. Decision documented in commit messages.
+- 30-min tripwire honored — total elapsed per sprint was 25-50 min including audit, TDD, verify, commit.
+
+### Operator TODOs
+1. **Decide on the gate clock**: did this session's 5 deploy-restarts reset it, or does it keep ticking from `762b219`? Update MISSION sign-off log accordingly.
+2. **Watch the Iran position resolution 2026-04-22**: first real test of the resolution → realized-P&L pipeline. Should appear in the sparkline once the resolution-fetch cron runs.
+3. **Watch Sun 2026-04-26 07:00 ET resolution-fetch cron**: first batch of resolved trades. Calibration card should populate (Brier, log-loss, win rate).
+4. **Decide on Sprint 8/9/2.5 flag-enable** (Tier 3): exits, exposure-aware sizing, reflection. All shipped flag-gated OFF. Defer until calibration data exists.
+
+### Known deferred (carry forward)
+- All items from prior 2026-04-20 handoff still apply: news-sync paused, adversarial-review fires Sun 18:00 ET (will skip without auth), zombie-tables PA-strip phase 4c.
+
+## ✅ 2026-04-20 — Scanner hang resolved + DB rescue complete
 
 ## ✅ 2026-04-20 — Scanner hang resolved + DB rescue complete
 
