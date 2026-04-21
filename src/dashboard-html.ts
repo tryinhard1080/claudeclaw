@@ -213,7 +213,10 @@ export function getDashboardHtml(token: string, chatId: string): string {
   </div>
 
   <div class="card">
-    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Open positions</h3>
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Open positions</h3>
+      <span id="poly-unrealized-agg" class="text-xs text-gray-500">-</span>
+    </div>
     <div id="poly-positions" class="text-sm"><div class="text-gray-500 text-xs">Loading...</div></div>
   </div>
 
@@ -1946,9 +1949,9 @@ function escapeHtml(s) {
 }
 async function loadPoly() {
   try {
-    const [overview, trades, signals, regime] = await Promise.all([
+    const [overview, live, signals, regime] = await Promise.all([
       fetch('/api/poly/overview?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
-      fetch('/api/poly/trades?status=open&limit=20&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+      fetch('/api/poly/positions/live?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/signals/recent?limit=15&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
       fetch('/api/poly/regime?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
     ]);
@@ -1983,19 +1986,50 @@ async function loadPoly() {
         ' / 10y ' + (r.yield_10y?.toFixed(2) ?? '-') + ')';
     }
 
-    // Open positions table
+    // Open positions table (with unrealized P&L)
     const posEl = document.getElementById('poly-positions');
-    if (!trades.trades || trades.trades.length === 0) {
+    const aggEl = document.getElementById('poly-unrealized-agg');
+    const positions = (live && live.positions) || [];
+    const agg = (live && live.aggregate) || { total_unrealized_pnl: 0, total_unrealized_pct_of_exposure: null, last_tick_at: null };
+
+    if (aggEl) {
+      const uPnl = Number(agg.total_unrealized_pnl || 0);
+      const uPct = agg.total_unrealized_pct_of_exposure;
+      const tickAgeStr = agg.last_tick_at
+        ? 'tick ' + fmtAgo(Math.floor(Date.now() / 1000) - agg.last_tick_at)
+        : 'no tick yet';
+      const pctStr = (uPct === null || uPct === undefined) ? '-' : (uPct >= 0 ? '+' : '') + (uPct * 100).toFixed(1) + '%';
+      const pnlColor = uPnl > 0 ? '#6ee7b7' : (uPnl < 0 ? '#f87171' : '#9ca3af');
+      aggEl.innerHTML =
+        '<span style="color:' + pnlColor + ';font-weight:600">unrealized ' + fmtUsd(uPnl) + ' (' + pctStr + ')</span>' +
+        ' <span class="text-gray-600">·</span> ' +
+        '<span class="text-gray-500">' + tickAgeStr + '</span>';
+    }
+
+    if (positions.length === 0) {
       posEl.innerHTML = '<div class="text-gray-500 text-xs">No open positions</div>';
     } else {
-      const rows = trades.trades.map(t => {
-        const ageSec = Math.floor(Date.now() / 1000) - t.created_at;
+      const rows = positions.map(p => {
+        const mark = (p.current_price === null || p.current_price === undefined)
+          ? '<span class="text-gray-600">—</span>'
+          : '$' + Number(p.current_price).toFixed(3);
+        let uCell = '<span class="text-gray-600">—</span>';
+        if (p.unrealized_pnl !== null && p.unrealized_pnl !== undefined) {
+          const u = Number(p.unrealized_pnl);
+          const pct = p.unrealized_pct;
+          const color = u > 0 ? '#6ee7b7' : (u < 0 ? '#f87171' : '#9ca3af');
+          const pctStr = (pct === null || pct === undefined) ? '' : ' (' + (pct >= 0 ? '+' : '') + (pct * 100).toFixed(1) + '%)';
+          uCell = '<span style="color:' + color + '">' + fmtUsd(u) + pctStr + '</span>';
+        }
+        const ageSec = Math.floor(Date.now() / 1000) - p.created_at;
         return '<tr class="border-b border-gray-800">' +
-          '<td class="py-1 pr-3 text-gray-200" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(t.market_slug) + '</td>' +
-          '<td class="py-1 pr-3 text-gray-400">' + escapeHtml(t.outcome_label) + '</td>' +
-          '<td class="py-1 pr-3 text-right text-gray-300">$' + Number(t.entry_price).toFixed(3) + '</td>' +
-          '<td class="py-1 pr-3 text-right text-gray-300">' + fmtUsd(t.size_usd) + '</td>' +
-          '<td class="py-1 pr-3 text-right text-gray-300">' + Number(t.shares).toFixed(0) + '</td>' +
+          '<td class="py-1 pr-3 text-gray-200" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(p.market_slug) + '</td>' +
+          '<td class="py-1 pr-3 text-gray-400">' + escapeHtml(p.outcome_label) + '</td>' +
+          '<td class="py-1 pr-3 text-right text-gray-300">$' + Number(p.entry_price).toFixed(3) + '</td>' +
+          '<td class="py-1 pr-3 text-right text-gray-300">' + mark + '</td>' +
+          '<td class="py-1 pr-3 text-right text-gray-300">' + fmtUsd(p.size_usd) + '</td>' +
+          '<td class="py-1 pr-3 text-right">' + uCell + '</td>' +
+          '<td class="py-1 pr-3 text-right text-gray-300">' + Number(p.shares).toFixed(0) + '</td>' +
           '<td class="py-1 text-right text-gray-500 text-xs">' + fmtAgo(ageSec) + '</td>' +
           '</tr>';
       }).join('');
@@ -2004,7 +2038,9 @@ async function loadPoly() {
         '<th class="py-1 pr-3 text-left font-medium">Market</th>' +
         '<th class="py-1 pr-3 text-left font-medium">Side</th>' +
         '<th class="py-1 pr-3 text-right font-medium">Entry</th>' +
+        '<th class="py-1 pr-3 text-right font-medium">Mark</th>' +
         '<th class="py-1 pr-3 text-right font-medium">Size</th>' +
+        '<th class="py-1 pr-3 text-right font-medium">Unrealized</th>' +
         '<th class="py-1 pr-3 text-right font-medium">Shares</th>' +
         '<th class="py-1 text-right font-medium">Age</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';

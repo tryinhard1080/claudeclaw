@@ -62,6 +62,7 @@ import { processMessageFromDashboard } from './bot.js';
 import { getDashboardHtml } from './dashboard-html.js';
 import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
+import { buildPositionsLivePayload } from './poly/positions-view.js';
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -478,6 +479,11 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const open = db.prepare(`SELECT id, created_at, market_slug, outcome_label, size_usd, entry_price, shares
       FROM poly_paper_trades WHERE status='open' ORDER BY id DESC`).all();
     return c.json({ realizedDaily: realized, open });
+  });
+
+  app.get('/api/poly/positions/live', (c) => {
+    const db = getDb();
+    return c.json(buildPositionsLivePayload(db));
   });
 
   // Bot info (name, PID, chatId) — reads dynamically from state
