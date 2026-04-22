@@ -1,11 +1,60 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-22
+- **Date**: 2026-04-22 (evening)
 - **Model**: Claude Sonnet 4.6
-- **Branch**: `main`. Commits this session: space-agent pm2 ecosystem + HANDOFF update.
-- **Tests**: 646/646.
-- **Focus**: Space Agent pm2 persistence + trading dashboard widget upgrade + Chrome CDP setup.
+- **Branch**: `main`. Commits this session: operator runbook execution + gate closures.
+- **Tests**: 647/647.
+- **Focus**: Operator runbook (plan cheerful-rossum), gate boxes 5/6 closed, P1 security fixes.
+
+## ✅ 2026-04-22 — Operator Runbook + Gate Closures
+
+### What Changed
+
+- **`.env`** — `EMERGENCY_KILL_PHRASE` + `PPLX_API_KEY` added by operator. Both confirmed loaded on startup (`Security: emergency kill phrase configured` log line).
+- **`migrations/v1.13.0`** — already applied (confirmed by `npm run migrate` → "No pending migrations (current: v1.13.0)").
+- **`scripts/activate-news-sync.ts`** — ran; news-sync cron `3d623e0e` set to `kind=shell, status=active`.
+- **`scripts/activate-db-backup.ts`** — bug fixed (missing `next_run` in INSERT → NOT NULL constraint); re-ran successfully; `db-backup-nightly` task registered, first fire next 4am UTC.
+- **Drill C10** — halt+resume drill: PASSED. Signed in MISSION.md.
+- **Drill C11** — DB-restore drill: PASSED. sha256 verified, scratch restore confirmed. Signed in MISSION.md.
+- **`src/poly/telegram-commands.ts`** — P1 fix: auth guard added to `/poly` command handler (ALLOWED_CHAT_ID check). Any Telegram user could previously halt/resume the engine.
+- **`src/poly/telegram-commands.ts renderPnl`** — P1 fix: unrealized P&L sum now joins against `poly_paper_trades WHERE status='open'` to exclude stale position rows.
+- **`docs/codex-review/sprints-12-19-2026-04-22.md`** — Sprint 12-19 review logged; gate box 5 closed.
+
+### Gate Status (end of session)
+
+| Box | Status |
+|-----|--------|
+| 1. 30-day no-intervention | Day 1/30 — clock running, target 2026-05-21 |
+| 2. ≥50 resolved trades | 0/50, waits for market activity |
+| 3. regime-trader Sharpe | Pending fetch-window fix (different repo) |
+| 4. Drawdown ≤ halt threshold | **Green** |
+| 5. No P0/P1 codex findings | **CLOSED** (2 P1s fixed + tested, commit `d186090`) |
+| 6. Kill-switch procedure tested | **CLOSED** (C10 + C11 drilled, signed in MISSION.md) |
+| 7. Operator written sign-off | **PENDING** — A1/A2/A3 PROPOSED in MISSION.md, operator to ack |
+
+### Current State (end of session)
+
+- claudeclaw: **ONLINE** pm2 id 8, PID 69672. New dist with P1 fixes live.
+- Tests: 647/647 (was 646, +1 new test for stale-position P&L query).
+- DB backup: `backup-2026-04-22` created (153.7 MB, sha256 recorded).
+- news-sync: cron active; **PPLX key has quota exhausted** — needs a valid key before first cron fire.
+- db-backup: cron active; next fire ~4am UTC.
+- Space Agent: pm2 id 10, still online.
+
+### Next Steps
+
+1. **Operator: A1/A2/A3 acks in MISSION.md** — strike "PROPOSED" from the three Phase A decisions. Gate box 7 closes when done.
+2. **PPLX key replacement** — the `pplx-` key in `.env` returned 401 quota-exceeded on smoke test. Get a fresh key from perplexity.ai/account/api/keys, update `.env`, and restart with `pm2 restart claudeclaw --update-env`.
+3. **Iran position resolution** — `us-x-iran-diplomatic-meeting-by-april-22-2026` expires today. Watch for PnlTracker to write `status='lost'` + first sparkline bar. Resolution-fetch cron fires Sun 2026-04-26 07:00 ET.
+4. **Sun 2026-04-26** — first calibration batch. Calibration card should populate. Re-evaluate flag-enables (Sprint 8/9/2.5) once data exists.
+5. **Gate box 7** — after A1-A3 acks: 5/7 boxes closed. Remaining: box 1 (time) + box 2 (market activity) + box 3 (regime-trader Sharpe).
+
+### Gotchas (new this session)
+
+- **`pm2 restart` does NOT reload `.env`** — always use `pm2 restart claudeclaw --update-env` when env vars have changed.
+- **Zombie process on EADDRINUSE** — when pm2 restart fails with EADDRINUSE on port 3141, find the zombie with `netstat -ano | grep :3141` and kill it with `powershell Stop-Process -Id <PID> -Force` before retrying.
+- **`activate-db-backup.ts` needed `next_run` fix** — was missing the NOT NULL column in INSERT candidates (now fixed in `scripts/activate-db-backup.ts`).
 
 ## ✅ 2026-04-22 — Widget upgrade + Chrome CDP
 
