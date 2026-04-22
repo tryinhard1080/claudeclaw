@@ -57,6 +57,9 @@ const envConfig = readEnvFile([
   'GLM_API_KEY',
   'GLM_BASE_URL',
   'GLM_MODEL',
+  'PPLX_API_KEY',
+  'PPLX_BASE_URL',
+  'PPLX_NEWS_MODEL',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -320,4 +323,14 @@ export const GLM_BASE_URL =
   process.env.GLM_BASE_URL || envConfig.GLM_BASE_URL || 'https://api.z.ai/api/paas/v4';
 export const GLM_MODEL =
   process.env.GLM_MODEL || envConfig.GLM_MODEL || 'glm-5.1';
+
+// Perplexity REST API (Sprint 18 / plan B7). Empty string → news-sync
+// script exits early with a clear error. Sonar ('sonar') is the free
+// tier; matches the original kind=claude-agent prompt's intent='quick'.
+export const PPLX_API_KEY =
+  process.env.PPLX_API_KEY || envConfig.PPLX_API_KEY || '';
+export const PPLX_BASE_URL =
+  process.env.PPLX_BASE_URL || envConfig.PPLX_BASE_URL || 'https://api.perplexity.ai';
+export const PPLX_NEWS_MODEL =
+  process.env.PPLX_NEWS_MODEL || envConfig.PPLX_NEWS_MODEL || 'sonar';
 
