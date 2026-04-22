@@ -17,7 +17,7 @@ import {
   type CriticJudgment,
 } from './strategies/ai-probability-reflect.js';
 import {
-  runAllGates, defaultGateConfig, positionKey,
+  runAllGates, defaultGateConfig, positionKey, maybeAutoHaltOnDrawdown,
   type GateConfig, type PortfolioSnapshot, type OrderbookSnapshot, type GateRejection,
 } from './risk-gates.js';
 import { execute, type SignalWithId } from './paper-broker.js';
@@ -270,6 +270,19 @@ export class StrategyEngine extends EventEmitter {
     if (this.running) return;
     if (this.isHalted()) {
       logger.info('strategy engine: halt flag set, skipping cycle');
+      return;
+    }
+    // Sprint 17: edge-triggered auto-halt on drawdown. Read the live snapshot
+    // once per tick (the per-candidate snapshots inside the loop reflect
+    // post-trade state and would race with this check). If transition fires,
+    // log + skip the rest of this tick — next tick reads the flag in isHalted().
+    const tickSnap = this.buildPortfolioSnapshot();
+    const halt = maybeAutoHaltOnDrawdown(this.db, tickSnap, this.gateConfig);
+    if (halt.wrote) {
+      logger.warn(
+        { totalDrawdownPct: tickSnap.totalDrawdownPct, haltDdPct: this.gateConfig.haltDdPct, prior: halt.prior },
+        'strategy engine: auto-halt engaged on drawdown — poly.halt set to "1"',
+      );
       return;
     }
     this.running = true;

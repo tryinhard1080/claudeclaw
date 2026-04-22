@@ -1,3 +1,4 @@
+import type Database from 'better-sqlite3';
 import type { Signal, Market } from './types.js';
 import {
   POLY_MAX_OPEN_POSITIONS,
@@ -116,6 +117,48 @@ export function gate2PortfolioHealth(
     return { passed: false, reason: `free_capital ${portfolio.freeCapital} < size ${sizeUsd}` };
   }
   return { passed: true };
+}
+
+const HALT_KEY = 'poly.halt';
+
+export interface AutoHaltResult {
+  /** True only when this call wrote a new value (transition). False on no-op. */
+  wrote: boolean;
+  /** Value of poly.halt in poly_kv before this call ('0' | '1' | null when row absent). */
+  prior: '0' | '1' | null;
+  /** Effective halt state after this call ('0' or '1'). */
+  current: '0' | '1';
+}
+
+/**
+ * Edge-triggered auto-halt: when totalDrawdownPct >= haltDdPct AND poly.halt is
+ * not already '1', set poly.halt='1' and report the transition. Does NOT
+ * auto-clear when DD recovers (operator explicitly resumes via /poly resume).
+ *
+ * Lives next to gate2PortfolioHealth for discoverability — gate2 stays pure
+ * (rejects the signal at the threshold); this side-effecting helper writes
+ * the flag so future ticks short-circuit cleanly via StrategyEngine.isHalted.
+ *
+ * Idempotent: safe to call every tick. Only the transition tick writes.
+ */
+export function maybeAutoHaltOnDrawdown(
+  db: Database.Database,
+  portfolio: PortfolioSnapshot,
+  config: GateConfig = defaultGateConfig(),
+): AutoHaltResult {
+  const row = db.prepare(`SELECT value FROM poly_kv WHERE key=?`).get(HALT_KEY) as
+    | { value: string } | undefined;
+  const prior: '0' | '1' | null = row?.value === '1' ? '1' : row?.value === '0' ? '0' : null;
+  const overThreshold = portfolio.totalDrawdownPct >= config.haltDdPct;
+
+  if (overThreshold && prior !== '1') {
+    db.prepare(
+      `INSERT INTO poly_kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+    ).run(HALT_KEY, '1');
+    return { wrote: true, prior, current: '1' };
+  }
+
+  return { wrote: false, prior, current: prior === '1' ? '1' : '0' };
 }
 
 /** Gate 3: Signal quality (edge, time-to-resolution, orderbook sanity). */

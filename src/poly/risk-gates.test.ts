@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
 import {
   gate1PositionLimits,
   gate2PortfolioHealth,
@@ -6,6 +7,7 @@ import {
   runAllGates,
   defaultGateConfig,
   positionKey,
+  maybeAutoHaltOnDrawdown,
   type PortfolioSnapshot,
   type OrderbookSnapshot,
   type GateConfig,
@@ -227,5 +229,106 @@ describe('defaultGateConfig', () => {
     const c = defaultGateConfig();
     expect(c.maxOpenPositions).toBeGreaterThan(0);
     expect(c.maxDeployedPct).toBeGreaterThan(0);
+  });
+});
+
+function freshKvDb(): Database.Database {
+  const db = new Database(':memory:');
+  db.exec(`CREATE TABLE poly_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+  return db;
+}
+
+function readHaltValue(db: Database.Database): string | null {
+  const row = db.prepare(`SELECT value FROM poly_kv WHERE key='poly.halt'`).get() as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+describe('maybeAutoHaltOnDrawdown', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = freshKvDb(); });
+
+  it('writes "1" and reports transition when DD >= threshold and no prior row', () => {
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.25 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(result).toEqual({ wrote: true, prior: null, current: '1' });
+    expect(readHaltValue(db)).toBe('1');
+  });
+
+  it('writes "1" and reports transition from prior "0"', () => {
+    db.prepare(`INSERT INTO poly_kv(key,value) VALUES('poly.halt','0')`).run();
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.25 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(result).toEqual({ wrote: true, prior: '0', current: '1' });
+    expect(readHaltValue(db)).toBe('1');
+  });
+
+  it('does NOT re-write when already halted (idempotent)', () => {
+    db.prepare(`INSERT INTO poly_kv(key,value) VALUES('poly.halt','1')`).run();
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.25 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(result).toEqual({ wrote: false, prior: '1', current: '1' });
+    expect(readHaltValue(db)).toBe('1');
+  });
+
+  it('writes nothing and seeds nothing when DD < threshold and no prior row', () => {
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.05 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(result).toEqual({ wrote: false, prior: null, current: '0' });
+    expect(readHaltValue(db)).toBeNull(); // does NOT seed a defensive '0' row
+  });
+
+  it('does NOT auto-clear when DD recovers below threshold but operator had halted', () => {
+    db.prepare(`INSERT INTO poly_kv(key,value) VALUES('poly.halt','1')`).run();
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.05 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(result).toEqual({ wrote: false, prior: '1', current: '1' });
+    expect(readHaltValue(db)).toBe('1');
+  });
+
+  it('writes nothing when DD < threshold and prior is "0"', () => {
+    db.prepare(`INSERT INTO poly_kv(key,value) VALUES('poly.halt','0')`).run();
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.05 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(result).toEqual({ wrote: false, prior: '0', current: '0' });
+    expect(readHaltValue(db)).toBe('0');
+  });
+
+  it('boundary: writes when DD exactly equals threshold (>=)', () => {
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.2 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(result.wrote).toBe(true);
+    expect(readHaltValue(db)).toBe('1');
+  });
+
+  it('boundary: does NOT write when DD is just below threshold', () => {
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.1999 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(result.wrote).toBe(false);
+    expect(readHaltValue(db)).toBeNull();
+  });
+
+  it('uses defaultGateConfig when no config passed', () => {
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.25 });
+    const result = maybeAutoHaltOnDrawdown(db, portfolio);
+    expect(result.wrote).toBe(true);
+  });
+
+  it('two back-to-back calls at same DD only writes once (transition gate)', () => {
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.25 });
+    const r1 = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    const r2 = maybeAutoHaltOnDrawdown(db, portfolio, baseConfig());
+    expect(r1.wrote).toBe(true);
+    expect(r2.wrote).toBe(false);
+    expect(r2.prior).toBe('1');
+  });
+});
+
+describe('gate2PortfolioHealth — regression after Sprint 17', () => {
+  it('still rejects on DD >= halt (defense in depth, even though auto-halt also writes flag)', () => {
+    const portfolio = mkPortfolio({ totalDrawdownPct: 0.25 });
+    const result = gate2PortfolioHealth(portfolio, 10, baseConfig());
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain('total_drawdown_pct');
+    expect(result.reason).toContain('halt');
   });
 });
