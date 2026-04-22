@@ -15,13 +15,16 @@
 - **`CCBot1080/space-agent/`** — New sibling directory. Space Agent v0.62+ cloned from `https://github.com/agent0ai/space-agent`, npm installed, running on port 3000 (`SINGLE_USER_APP=true`). Start command: `cd CCBot1080/space-agent && SINGLE_USER_APP=true PORT=3000 node space serve`.
 - **`CCBot1080/space-agent/app/L2/user/conf/onscreen-agent.yaml`** — Pre-configured with GLM-5.1 via Z.ai endpoint (`https://api.z.ai/api/coding/paas/v4/chat/completions`). API key stored there (gitignored, L2/ excluded).
 - **`claudeclaw/.env`** — Added `SPACE_GLM_API_KEY` + `SPACE_GLM_MODEL=glm-5.1` entries for documentation.
+- **`space-agent/app/L2/user/spaces/claudeclaw/widgets/trading-dashboard.yaml`** — Widget bug fixed: compound `parent.querySelector("#tdash #id")` selector was returning null; replaced with `parent.querySelector("#id")`. Added `set()` null-guard helper, `?status=open` trades filter, `isConnected` early-exit, and `MutationObserver` interval cleanup. See `docs/lessons.md` for full writeup.
+- **`docs/lessons.md`** — Created. First entry: Space Agent widget null-selector bug + fix pattern.
 
 ### Current State
 
 - Space Agent: **RUNNING** on `http://localhost:3000` (single-user, no login). GLM-5.1 configured and responding.
 - ClaudeClaw: **ONLINE** pm2 id 8, CORS updated, dashboard at `http://localhost:3141`.
 - API bridge: **VERIFIED** — `GET /api/poly/overview?token=<DASHBOARD_TOKEN>` from `localhost:3000` returns live data (10 open positions, $474 open exposure).
-- Phase 4 (first trading widget): **NOT STARTED** — ready for next session.
+- Trading dashboard widget: **FIXED** — null-selector bug resolved, showing live positions. Refresh `localhost:3000` to confirm.
+- Next: add Space Agent to pm2 for reboot persistence.
 
 ### Next Steps
 
