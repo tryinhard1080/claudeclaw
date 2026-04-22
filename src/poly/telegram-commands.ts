@@ -10,10 +10,11 @@ import { latestRegimeSnapshot } from './regime.js';
 import { latestItems as latestResearchItems } from './research-ingest.js';
 import { composeDriftReport, formatDriftReport } from './drift.js';
 import { compareStrategiesOnResolutions } from './strategy-compare.js';
-import { POLY_PAPER_CAPITAL, POLY_REFLECTION_ENABLED } from '../config.js';
+import { POLY_PAPER_CAPITAL, POLY_REFLECTION_ENABLED, ALLOWED_CHAT_ID } from '../config.js';
 
 export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): void {
   bot.command('poly', async (ctx) => {
+    if (!ALLOWED_CHAT_ID || ctx.chat?.id.toString() !== ALLOWED_CHAT_ID) return;
     const text = ctx.message?.text ?? '';
     // Strip `/poly` with an optional `@BotName` suffix — Telegram appends
     // the mention in group chats (e.g. `/poly@CCbot1080bot markets`).
@@ -288,7 +289,10 @@ export function renderPnl(db: Database.Database): string {
   `).all() as Array<{ status: string; n: number; total: number }>;
 
   const unrealizedRow = db.prepare(`
-    SELECT COALESCE(SUM(unrealized_pnl), 0) AS total FROM poly_positions
+    SELECT COALESCE(SUM(p.unrealized_pnl), 0) AS total
+      FROM poly_positions p
+      INNER JOIN poly_paper_trades t ON t.id = p.paper_trade_id
+     WHERE t.status = 'open'
   `).get() as { total: number };
 
   const openRow = db.prepare(

@@ -164,6 +164,19 @@ describe('renderPnl', () => {
     expect(txt).toContain('Deployed: $65');
     expect(txt).toContain('Unrealized: +$5.00');
   });
+
+  it('excludes stale poly_positions rows for closed trades from unrealized total', () => {
+    // open trade contributes $10 unrealized
+    insertOpenTrade(db, 1, { slug: 'open-mkt', shares: 100, size: 40, entry: 0.4, unrealized: 10 });
+    // closed (won) trade — orphan poly_positions row simulates crash mid-resolution
+    insertResolved(db, { slug: 'closed-mkt', status: 'won', realized: 20 });
+    const closedId = (db.prepare(`SELECT id FROM poly_paper_trades WHERE market_slug='closed-mkt'`).get() as { id: number }).id;
+    db.prepare(`INSERT INTO poly_positions (paper_trade_id, market_slug, current_price, unrealized_pnl, updated_at) VALUES (?, 'closed-mkt', 1.0, 50, ?)`)
+      .run(closedId, now);
+    const txt = renderPnl(db);
+    // only the open trade's $10 should appear, not the stale $50
+    expect(txt).toContain('Unrealized: +$10.00');
+  });
 });
 
 describe('renderCalibration', () => {
