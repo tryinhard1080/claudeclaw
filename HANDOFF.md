@@ -3,9 +3,34 @@
 ## Last Session
 - **Date**: 2026-04-22
 - **Model**: Claude Sonnet 4.6
-- **Branch**: `main`. Commits: CORS multi-origin fix + space-agent pm2 ecosystem config.
+- **Branch**: `main`. Commits this session: space-agent pm2 ecosystem + HANDOFF update.
 - **Tests**: 646/646.
-- **Focus**: Space Agent pm2 persistence.
+- **Focus**: Space Agent pm2 persistence + trading dashboard widget upgrade + Chrome CDP setup.
+
+## ✅ 2026-04-22 — Widget upgrade + Chrome CDP
+
+### What Changed
+
+- **`space-agent/app/L2/user/spaces/claudeclaw/widgets/trading-dashboard.yaml`** (gitignored) — Positions table switched from `/api/poly/trades` → `/api/poly/positions/live`. New columns: `Current Price`, `Unrealized P&L`, `%`. Overview gained aggregate `Unrealized P&L` card. Verified live via CDP: all 10 positions render with green/red coloring.
+- **Chrome CDP wired** — `chrome-cdp` skill connected to Chrome on port 9222. `cdp.mjs` daemon live against tab `BE2979E0` (Space Agent). Can now `click`, `type`, `eval`, `snap`, `shot` in Space Agent without user interaction. Re-attach command: `node "C:/Users/Richard/.claude/skills/chrome-cdp/scripts/cdp.mjs" list > /tmp/cdp_out.txt 2>&1` (use file redirect — direct stdout doesn't flush in git bash).
+
+### Current State (end of session)
+
+- Space Agent: **ONLINE** pm2 id 10, `localhost:3000`, no login. Trading Dashboard widget live with unrealized P&L. CDP daemon active on tab `BE2979E0`.
+- ClaudeClaw: **ONLINE** pm2 id 8 (PID 58676), ~30s scans healthy. v1.13.0 migration pending (needs PPLX_API_KEY).
+- Live book: 10 open positions, -$110 unrealized. Biggest loser: Iran diplomatic meeting -99.8% (expires today, resolution should flow tonight).
+
+### Next Steps
+
+1. **Operator runbook** — STILL PENDING. 10 minutes. Steps 1-9 from 2026-04-21 handoff (PPLX_API_KEY + EMERGENCY_KILL_PHRASE → pm2 restart → activate crons → drills C10/C11 → MISSION sign-off).
+2. **Codex review** — Sprints 12-19 need a review pass before gate box 5 clears.
+3. **Watch tonight** — Iran position resolution should hit PnlTracker, appear in sparkline as first realized P&L bar.
+
+### Gotchas
+
+- **CDP `list` command** — always use `> /tmp/cdp_out.txt 2>&1` file redirect; direct stdout silently drops in git bash due to RTK lean-ctx prefix flushing.
+- **CDP "Allow debugging?" loops** — each failed daemon start triggers a new prompt. Once daemon is live (first successful `shot`/`snap`), prompts stop for 20 min.
+- **Widget YAML is gitignored** (`app/L2/` excluded). Widget changes are disk-only; back up manually if needed.
 
 ## ✅ 2026-04-22 — Space Agent Install + ClaudeClaw API Bridge
 
