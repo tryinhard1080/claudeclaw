@@ -3,9 +3,9 @@
 ## Last Session
 - **Date**: 2026-04-22
 - **Model**: Claude Sonnet 4.6
-- **Branch**: `main`. One new commit: CORS multi-origin fix in `src/dashboard.ts`.
-- **Tests**: 646/646 (no new tests this session — CORS change is trivial, covered by build passing).
-- **Focus**: Space Agent installation + ClaudeClaw API bridge setup.
+- **Branch**: `main`. Commits: CORS multi-origin fix + space-agent pm2 ecosystem config.
+- **Tests**: 646/646.
+- **Focus**: Space Agent pm2 persistence.
 
 ## ✅ 2026-04-22 — Space Agent Install + ClaudeClaw API Bridge
 
@@ -18,19 +18,23 @@
 - **`space-agent/app/L2/user/spaces/claudeclaw/widgets/trading-dashboard.yaml`** — Widget bug fixed: compound `parent.querySelector("#tdash #id")` selector was returning null; replaced with `parent.querySelector("#id")`. Added `set()` null-guard helper, `?status=open` trades filter, `isConnected` early-exit, and `MutationObserver` interval cleanup. See `docs/lessons.md` for full writeup.
 - **`docs/lessons.md`** — Created. First entry: Space Agent widget null-selector bug + fix pattern.
 
+## ✅ 2026-04-22 — Space Agent pm2 persistence
+
+### What Changed
+
+- **`CCBot1080/space-agent/ecosystem.config.cjs`** — Created. Registers space-agent under pm2 with `SINGLE_USER_APP=true`, `PORT=3000`, `cwd` set to the space-agent directory. Logs go to `space-agent/logs/`.
+- **pm2 save** — dump updated. space-agent (pm2 id 10) now survives reboots.
+
 ### Current State
 
-- Space Agent: **RUNNING** on `http://localhost:3000` (single-user, no login). GLM-5.1 configured and responding.
-- ClaudeClaw: **ONLINE** pm2 id 8, CORS updated, dashboard at `http://localhost:3141`.
-- API bridge: **VERIFIED** — `GET /api/poly/overview?token=<DASHBOARD_TOKEN>` from `localhost:3000` returns live data (10 open positions, $474 open exposure).
-- Trading dashboard widget: **FIXED** — null-selector bug resolved, showing live positions. Refresh `localhost:3000` to confirm.
-- Next: add Space Agent to pm2 for reboot persistence.
+- Space Agent: **ONLINE** pm2 id 10 (PID 58980), `http://localhost:3000` returns 200, no login redirect. SINGLE_USER_APP=true confirmed via `pm2 env 10`. Reboot-persistent.
+- ClaudeClaw: **ONLINE** pm2 id 8 (PID 58676), scanning every ~30s. Pending migration warning: v1.13.0 (news-sync) — requires PPLX_API_KEY in .env before running.
+- API bridge: live (CORS allows localhost:3000).
 
 ### Next Steps
 
-1. **Phase 4** — In Space Agent at `localhost:3000`, paste the widget prompt (see below) to build the live trading dashboard widget.
-2. **Space Agent persistence** — Add Space Agent to pm2 ecosystem so it survives reboots.
-3. **Operator runbook items** (from 2026-04-21, still pending if not done): EMERGENCY_KILL_PHRASE + PPLX_API_KEY .env edits, activator scripts, drills C10/C11.
+1. **Operator runbook** (from 2026-04-21, STILL PENDING) — do steps 1-9 in the runbook below. Estimated time: 10 minutes. Blocks migration v1.13.0 and drills C10/C11.
+2. **Phase 4 widget** — once runbook is done, open `http://localhost:3000` in browser and paste the prompt below into Space Agent chat to build the live trading dashboard widget.
 
 ### Phase 4 Widget Prompt (paste into Space Agent chat)
 
@@ -46,7 +50,7 @@ Use dark background, green for positive P&L, red for negative. Auto-refresh with
 
 ### Gotchas
 
-- **Space Agent is NOT in pm2** — runs in background shell only. Reboot = dead. Add to pm2 next session before relying on it.
+- **To re-start space-agent after a reboot**: pm2 will auto-start it. Manual: `pm2 start "C:\Users\Richard\OneDrive - Greystar\Documents\Code Projects\CCBot1080\space-agent\ecosystem.config.cjs"`
 - **GLM-5.1 is a reasoning model** — at 120k max_tokens it works fine for Space Agent widget generation. It burned all tokens in ClaudeClaw because ClaudeClaw used max_tokens=400.
 - **Space Agent LLM config** — stored in `app/L2/user/conf/onscreen-agent.yaml` (gitignored). API key is plain text there (not encrypted, since encryption is done browser-side via userCrypto). Fine for local-only use.
 - **DASHBOARD_TOKEN** — required for all `/api/*` calls. Pass as `?token=` query param or `Authorization: Bearer` header. Value in `.env`.
