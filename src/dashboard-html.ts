@@ -205,10 +205,12 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <div><div class="stat-val" id="poly-realized">-</div><div class="stat-label">Realized P&amp;L</div></div>
       <div><div class="stat-val" id="poly-resolutions">-</div><div class="stat-label">Resolutions</div></div>
     </div>
-    <div class="flex items-center gap-4 text-xs text-gray-500 border-t border-gray-800 pt-2">
+    <div class="flex items-center gap-4 text-xs text-gray-500 border-t border-gray-800 pt-2 flex-wrap">
       <span>DB <span id="poly-dbsize">-</span></span>
       <span>WAL <span id="poly-walsize">-</span></span>
       <span id="poly-regime">regime: -</span>
+      <span id="poly-backup-age">backup: -</span>
+      <span id="poly-news-age">news: -</span>
     </div>
   </div>
 
@@ -2014,6 +2016,21 @@ async function loadPoly() {
         ' / BTC ' + (r.btc_dominance?.toFixed(1) ?? '-') + '%' +
         ' / 10y ' + (r.yield_10y?.toFixed(2) ?? '-') + ')';
     }
+
+    // Heartbeat ages with stale-warn coloring
+    const ageEl = (id, label, ageSec, warnSec) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (ageSec === null || ageSec === undefined) {
+        el.textContent = label + ': never';
+        el.style.color = '#6b7280';
+        return;
+      }
+      el.textContent = label + ': ' + fmtAgo(ageSec);
+      el.style.color = ageSec > warnSec ? '#f87171' : '#9ca3af';
+    };
+    ageEl('poly-backup-age', 'backup', overview.backupAgeSec, 36 * 3600);   // warn > 36h
+    ageEl('poly-news-age', 'news', overview.newsSyncAgeSec, 4 * 3600);      // warn > 4h (cron is 2h)
 
     // Open positions table (with unrealized P&L)
     const posEl = document.getElementById('poly-positions');

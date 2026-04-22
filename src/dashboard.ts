@@ -412,6 +412,18 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     try { dbSizeBytes = fs.statSync(path.join(STORE_DIR, 'claudeclaw.db')).size; } catch { /* ignore */ }
     try { walSizeBytes = fs.statSync(path.join(STORE_DIR, 'claudeclaw.db-wal')).size; } catch { /* ignore */ }
 
+    // Sprint D12: surface heartbeats so dashboard can age-warn on stale crons.
+    const kvRead = (key: string): number | null => {
+      try {
+        const r = db.prepare(`SELECT value FROM poly_kv WHERE key=?`).get(key) as { value: string } | undefined;
+        if (!r) return null;
+        const n = Number(r.value);
+        return Number.isFinite(n) ? n : null;
+      } catch { return null; }
+    };
+    const backupLastSuccessAt = kvRead('backup.last_success_at');
+    const newsSyncLastSuccessAt = kvRead('news_sync.last_success_at');
+
     return c.json({
       signals: {
         total: sig.total ?? 0,
@@ -428,6 +440,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       openExposureUsd: openExposure.total,
       dbSizeBytes,
       walSizeBytes,
+      backupLastSuccessAt,
+      backupAgeSec: backupLastSuccessAt ? nowSec - backupLastSuccessAt : null,
+      newsSyncLastSuccessAt,
+      newsSyncAgeSec: newsSyncLastSuccessAt ? nowSec - newsSyncLastSuccessAt : null,
     });
   });
 
