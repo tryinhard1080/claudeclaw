@@ -1,10 +1,99 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-21 — **✅ Sprints 12-15 shipped: dashboard expansion (unrealized P&L, realized P&L sparkline, signal reasoning expand, calibration + drift cards).** Operator-directed, scoped to the existing :3141 dashboard. Bot ONLINE PID 62052, restart count 12 (5 deploy-restarts this session).
+- **Date**: 2026-04-21 (extended) — **✅ Plan cheerful-rossum executed end-to-end. Sprints 12-19 + drill scripts + MISSION Phase A entries shipped. Bot ONLINE PID 62052, restart count 12 — no further restarts in plan execution.**
 - **Model**: Claude Opus 4.7 (1M context).
-- **Branch**: `main`. 4 commits past `762b219` (gate-clock start): `828bb02` `443cf2d` `45ef67d` `19d0de1`. All tests green (586/586, +24 new).
-- **Open question for operator**: do these 5 deploy-restarts reset the 30-day no-intervention gate clock? Strict reading = day 0 again. Permissive reading = clock still ticking from `762b219`. Defer all further sprint work until answered.
+- **Branch**: `main`. 7 new commits past `762b219`: `828bb02` `443cf2d` `45ef67d` `19d0de1` `0e22a6b` `665a0f5` + B7+B8+B9 + D12 + drill scripts + MISSION update.
+- **Tests**: 646/646 (+60 new across the session).
+- **Operator next steps**: see "Plan cheerful-rossum operator runbook" below — three .env edits + one pm2 restart + three short script invocations + two drills, then 30-day observation.
+
+## ✅ 2026-04-21 — Plan cheerful-rossum (gate-box-6 closure)
+
+### Summary
+
+This extended session executed the plan written earlier in the same session (`C:\Users\Richard\.claude\plans\use-enhanced-prompt-skill-cheerful-rossum.md`). All 14 items addressed. Items 4 (EMERGENCY_KILL_PHRASE) and 7 (PPLX_API_KEY) are .env edits the operator must do. Everything else is committed and ready.
+
+### Commits in execution order
+
+| # | Item | Commit | Notes |
+|---|---|---|---|
+| 1 | B5 /poly halt + /poly resume | `0e22a6b` | Sprint 16. Mirrors /trade halt. 8 new tests. |
+| 2 | B6 auto-halt on drawdown | `665a0f5` | Sprint 17. Edge-triggered, idempotent, no auto-clear on recovery. 11 new tests. |
+| 3 | B7+B8+B9 news-sync revival | (next) | Sprint 18. v1.13.0 migration adds news_items table. Direct Perplexity REST. 22 new tests. Operator-run activator script. |
+| 4 | D12 db-backup + dashboard | (next) | Sprint 19. SQLite Online Backup API. Rotation 7d + 4w + 3m. Dashboard footer ages. 19 new tests. Operator-run activator script. |
+| 5 | C10 + C11 drill scripts | (next) | scripts/drill-halt-resume.ts + scripts/drill-db-restore.ts. Non-destructive. Operator runs and pastes sign-off. |
+| 6 | A1-A3 PROPOSED entries | (next) | MISSION.md sign-off log gets PROPOSED entries; operator strikes "PROPOSED" to ack. |
+
+### Build discipline retro
+
+- Every sprint touching src/poly/ shipped with its own `docs/research/sprint-N-topic.md` (B5 → sprint-16, B6 → sprint-17). Pre-commit research-note hook fired and passed each time.
+- Two falsifications caught during execution that prevented bad commits: (a) plan's "auto-halt should mutate gate2 directly" → kept gate2 pure, added separate `maybeAutoHaltOnDrawdown` helper. (b) news-sync conflicted with documented-as-redundant decision in `migrate-cron-kinds.ts:5` — operator overrode ("fix it all"); proceeded with news_items as a distinct table from research_items.
+- TDD on every code item: failing test → RED → impl → GREEN. 60 new tests across the session, zero regressions.
+- Restart count locked at 12 throughout — all session commits were doc + code, no pm2 restart needed because Phase B restart is bundled with operator's .env edits.
+
+### Plan cheerful-rossum operator runbook
+
+Items 4 + 7 = .env edits. Items A1-A3 = strike "PROPOSED" in MISSION.md. Then the activation + drill sequence:
+
+```bash
+# 1. Operator: pick a non-obvious passphrase, append to .env
+echo 'EMERGENCY_KILL_PHRASE=<your-phrase-here>' >> .env
+
+# 2. Operator: obtain Perplexity API key (https://perplexity.ai/account/api/keys), append
+echo 'PPLX_API_KEY=pplx-<your-key>' >> .env
+
+# 3. Single restart — picks up both .env values + runs v1.13.0 migration
+pm2 restart claudeclaw
+# (verify: pm2 list shows restart count 12 → 13, online; pm2 logs claudeclaw --lines 30 shows the migration)
+
+# 4. Activate news-sync + db-backup crons
+npx tsx scripts/activate-news-sync.ts
+npx tsx scripts/activate-db-backup.ts
+
+# 5. Smoke test news-sync immediately (don't wait 2h for cron)
+npx tsx scripts/news-sync.ts
+# (expect: "[news-sync] ok (inserted) ...")
+
+# 6. Smoke test db-backup immediately (don't wait until 4am)
+npx tsx scripts/db-backup.ts
+# (expect: "[db-backup] ok /c/claudeclaw-store/backup-YYYY-MM-DD/ ...")
+
+# 7. Drill C10 (non-destructive halt+resume drill)
+npx tsx scripts/drill-halt-resume.ts
+# (expect: "=== DRILL OK ===" + sign-off block; paste the block under MISSION sign-off log)
+
+# 8. Drill C11 (DB-restore drill against /tmp scratch)
+npx tsx scripts/drill-db-restore.ts
+# (expect: "=== DRILL OK ===" + sign-off block; paste the block under MISSION sign-off log)
+
+# 9. (OPTIONAL) The "dangerous" §3a drill: actually exits the bot via EMERGENCY_KILL_PHRASE.
+#    Schedule for a known-quiet time. Pre-stage `pm2 stop claudeclaw` in a second terminal.
+#    From Telegram: send the phrase. Within 10s: hit Enter on the second terminal.
+#    Then: pm2 start claudeclaw. This restart counts against the gate clock as drill cost.
+```
+
+After step 8, gate-box-6 is fully closed (procedure documented + drilled). Steps 1-8 require zero human watch time — < 10 minutes total.
+
+### What to watch for next
+
+- **Wed 2026-04-22**: Iran position resolution (`us-x-iran-diplomatic-meeting-by-april-22-2026`, -80% unrealized at session end). PnlTracker should write status='lost', realized_pnl negative, delete the poly_positions row. Dashboard sparkline should show first bar.
+- **Sun 2026-04-26 07:00 ET**: First resolution-fetch cron. Calibration card should populate (Brier / log-loss / winrate / n).
+- **Daily after Phase B restart**: backup at `/c/claudeclaw-store/backup-YYYY-MM-DD/` should appear ~4am UTC. Dashboard footer "backup: <age>" stays under 36h.
+- **Every 2h after Phase B restart**: news-sync row in news_items. Dashboard footer "news: <age>" stays under 4h.
+
+### Real-money-gate progress (post plan cheerful-rossum)
+
+| Box | Status |
+|---|---|
+| 1. 30+ days no manual intervention | day 1 of 30 (PROPOSED permissive reading) |
+| 2. ≥50 resolved Polymarket trades, positive P&L | 0/50 (waits for resolutions) |
+| 3. regime-trader positive Sharpe over 60+ days | regime-trader pending fetch-window fix (different repo) |
+| 4. Drawdown never exceeded POLY_HALT_DD_PCT | green; auto-halt machinery now writes the flag on transition (Sprint 17) |
+| 5. No P0/P1 codex-review findings outstanding | pending codex review of Sprint 12-19 |
+| 6. Documented kill-switch + roll-back procedure tested | runbook documented + drill scripts ready; live drill is the operator's step 7-9 above |
+| 7. Operator written sign-off | A1-A3 PROPOSED in MISSION; operator acks |
+
+5/7 boxes have clear paths to closure within the 30-day window. Boxes 2 and 3 require time + market activity, not more code.
 
 ## ✅ 2026-04-21 — Dashboard sprints 12-15
 
