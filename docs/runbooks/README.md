@@ -4,7 +4,7 @@ Operational runbooks for ClaudeClaw — each document describes a specific drill
 
 ## Current runbooks
 
-_(None yet — first runbook will be `kill-switch-drill.md` scheduled for Fri 2026-04-24 per MISSION.md gate box 6.)_
+- [`kill-switch-drill.md`](kill-switch-drill.md) — Halt trading and roll back code or data. Maps to MISSION gate box 6. **Discovered 2026-04-21 during drafting**: `EMERGENCY_KILL_PHRASE` is unset in `.env`, so the fastest halt path (§3a) is currently inactive. Operator action required before next drill.
 
 ## How to add a runbook
 
