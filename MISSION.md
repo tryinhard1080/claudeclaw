@@ -51,6 +51,16 @@ Anything less is a draft.
 - _2026-04-13_ — Pivot to trading-only identity (this MISSION + SOUL + HEARTBEAT) — "make this a first class trading bot, single focus".
 - _2026-04-20_ — Authorized restart on GLM 5.1 subscription after $150 Anthropic API spend incident. Keys retained (private repo, acceptable). Stage 3 eval showed GLM more calibrated than pre-halt Claude (which was hallucinating 2025 data). 30-day gate-box-1 clock starts now. — "A" (restart now option selected in Phase 0.5 Stage 4 decision). **INVALIDATED SAME DAY** — that restart went silent 83 min in with zero signals; peaceful-turtle plan (below) replaced it.
 - _2026-04-21_ — Peaceful-turtle recovery merged to main (`762b219`). DB rescued (9.31 GB → 140 MB), scanner narrowed 2500x per-tick writes, scheduler exorcised from mandatory Claude CLI, heartbeat watchdog installed, zombie tables dropped, migration tracker reconciled. Post-rescue scans verified: 30s total / 860ms DB-write / 5-min cadence. 562/562 tests pass. **30-day gate-box-1 clock restarts today. Target: 2026-05-21.** — "Do it. Push and merge to main and start our 30 days." (Richard, authorized in chat).
+- 2026-04-22T22:31:04.459Z — Plan cheerful-rossum C10 kill-switch halt+resume drill: PASSED.
+  - pre/post open positions: 10 → 10
+  - halt flag set then cleared via DB UPSERT (mirrors /poly halt + /poly resume Telegram path).
+  - bot remained ONLINE throughout (non-destructive drill); no pm2 restart cost.
+  - Sprint 16 /poly halt + /poly resume verified working.
+- 2026-04-22T22:31:13.341Z — Plan cheerful-rossum C11 DB-restore drill: PASSED.
+  - source: backup-2026-04-22
+  - sha256 verified against recorded hash; copy to /tmp scratch verified hash-equal.
+  - restored DB readable; ≥ 5 key tables present with positive row counts.
+  - live /c/claudeclaw-store/ untouched; bot remained ONLINE throughout.
 
 ### Phase A decisions for plan cheerful-rossum (PROPOSED — operator to confirm or override)
 

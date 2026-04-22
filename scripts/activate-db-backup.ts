@@ -48,6 +48,12 @@ function main(): void {
     const colNames = new Set(cols.map((c) => c.name));
     const nowSec = Math.floor(Date.now() / 1000);
 
+    // Compute next 4am UTC in epoch seconds
+    const d = new Date();
+    d.setUTCHours(4, 0, 0, 0);
+    if (d.getTime() / 1000 <= nowSec) d.setUTCDate(d.getUTCDate() + 1);
+    const nextRunSec = Math.floor(d.getTime() / 1000);
+
     // Build INSERT dynamically against actual columns
     const candidates: Record<string, unknown> = {
       id: TASK_ID,
@@ -56,6 +62,7 @@ function main(): void {
       schedule: SCHEDULE,
       status: 'active',
       created_at: nowSec,
+      next_run: nextRunSec,
       agent_id: 'main',
       prompt: '', // legacy column expected by some readers
     };
