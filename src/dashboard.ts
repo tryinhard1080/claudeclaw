@@ -109,8 +109,14 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   // Security headers + CORS (restrict to same-origin; override DASHBOARD_CORS_ORIGIN in .env for tunnel)
   app.use('*', async (c, next) => {
-    const allowedOrigin = process.env.DASHBOARD_CORS_ORIGIN || 'http://localhost:' + DASHBOARD_PORT;
-    c.header('Access-Control-Allow-Origin', allowedOrigin);
+    const allowedOrigins = [
+      process.env.DASHBOARD_CORS_ORIGIN || 'http://localhost:' + DASHBOARD_PORT,
+      'http://localhost:3000', // Space Agent
+    ];
+    const requestOrigin = c.req.header('Origin') ?? '';
+    const originToSet = allowedOrigins.includes(requestOrigin) ? requestOrigin : allowedOrigins[0];
+    c.header('Access-Control-Allow-Origin', originToSet);
+    c.header('Vary', 'Origin');
     c.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, PATCH, OPTIONS');
     c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     c.header('X-Content-Type-Options', 'nosniff');

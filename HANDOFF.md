@@ -1,11 +1,55 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-21 (extended) — **✅ Plan cheerful-rossum executed end-to-end. Sprints 12-19 + drill scripts + MISSION Phase A entries shipped. Bot ONLINE PID 62052, restart count 12 — no further restarts in plan execution.**
-- **Model**: Claude Opus 4.7 (1M context).
-- **Branch**: `main`. 7 new commits past `762b219`: `828bb02` `443cf2d` `45ef67d` `19d0de1` `0e22a6b` `665a0f5` + B7+B8+B9 + D12 + drill scripts + MISSION update.
-- **Tests**: 646/646 (+60 new across the session).
-- **Operator next steps**: see "Plan cheerful-rossum operator runbook" below — three .env edits + one pm2 restart + three short script invocations + two drills, then 30-day observation.
+- **Date**: 2026-04-22
+- **Model**: Claude Sonnet 4.6
+- **Branch**: `main`. One new commit: CORS multi-origin fix in `src/dashboard.ts`.
+- **Tests**: 646/646 (no new tests this session — CORS change is trivial, covered by build passing).
+- **Focus**: Space Agent installation + ClaudeClaw API bridge setup.
+
+## ✅ 2026-04-22 — Space Agent Install + ClaudeClaw API Bridge
+
+### What Changed
+
+- **`src/dashboard.ts`** — CORS middleware updated to allow `http://localhost:3000` (Space Agent) alongside the existing `DASHBOARD_CORS_ORIGIN`. Correct multi-origin pattern: echoes back matching request origin + `Vary: Origin`. Verified with curl.
+- **`CCBot1080/space-agent/`** — New sibling directory. Space Agent v0.62+ cloned from `https://github.com/agent0ai/space-agent`, npm installed, running on port 3000 (`SINGLE_USER_APP=true`). Start command: `cd CCBot1080/space-agent && SINGLE_USER_APP=true PORT=3000 node space serve`.
+- **`CCBot1080/space-agent/app/L2/user/conf/onscreen-agent.yaml`** — Pre-configured with GLM-5.1 via Z.ai endpoint (`https://api.z.ai/api/coding/paas/v4/chat/completions`). API key stored there (gitignored, L2/ excluded).
+- **`claudeclaw/.env`** — Added `SPACE_GLM_API_KEY` + `SPACE_GLM_MODEL=glm-5.1` entries for documentation.
+
+### Current State
+
+- Space Agent: **RUNNING** on `http://localhost:3000` (single-user, no login). GLM-5.1 configured and responding.
+- ClaudeClaw: **ONLINE** pm2 id 8, CORS updated, dashboard at `http://localhost:3141`.
+- API bridge: **VERIFIED** — `GET /api/poly/overview?token=<DASHBOARD_TOKEN>` from `localhost:3000` returns live data (10 open positions, $474 open exposure).
+- Phase 4 (first trading widget): **NOT STARTED** — ready for next session.
+
+### Next Steps
+
+1. **Phase 4** — In Space Agent at `localhost:3000`, paste the widget prompt (see below) to build the live trading dashboard widget.
+2. **Space Agent persistence** — Add Space Agent to pm2 ecosystem so it survives reboots.
+3. **Operator runbook items** (from 2026-04-21, still pending if not done): EMERGENCY_KILL_PHRASE + PPLX_API_KEY .env edits, activator scripts, drills C10/C11.
+
+### Phase 4 Widget Prompt (paste into Space Agent chat)
+
+```
+Create a new space called "ClaudeClaw" and build a live trading dashboard widget with two sections:
+
+1. Overview — fetch http://localhost:3141/api/poly/overview?token=00c075c099fc96664e477078e274a04052b52eda6a67f0d8 every 30 seconds and display: open trades, open exposure (USD), realized P&L, signals today, last scan age, and DB size.
+
+2. Open Positions — fetch http://localhost:3141/api/poly/trades?token=00c075c099fc96664e477078e274a04052b52eda6a67f0d8 every 30 seconds and show a table of open positions with market title, stake, current price, unrealized P&L, and take-profit / stop-loss levels.
+
+Use dark background, green for positive P&L, red for negative. Auto-refresh without reloading the page.
+```
+
+### Gotchas
+
+- **Space Agent is NOT in pm2** — runs in background shell only. Reboot = dead. Add to pm2 next session before relying on it.
+- **GLM-5.1 is a reasoning model** — at 120k max_tokens it works fine for Space Agent widget generation. It burned all tokens in ClaudeClaw because ClaudeClaw used max_tokens=400.
+- **Space Agent LLM config** — stored in `app/L2/user/conf/onscreen-agent.yaml` (gitignored). API key is plain text there (not encrypted, since encryption is done browser-side via userCrypto). Fine for local-only use.
+- **DASHBOARD_TOKEN** — required for all `/api/*` calls. Pass as `?token=` query param or `Authorization: Bearer` header. Value in `.env`.
+- **Space Agent does not support Claude OAuth** — it's API-key + OpenAI-compat endpoint only. To use Claude, get an OpenRouter key and set endpoint to `https://openrouter.ai/api/v1/chat/completions` with model `anthropic/claude-sonnet-4-6`.
+
+## Previous Session (2026-04-21 — Plan cheerful-rossum)
 
 ## ✅ 2026-04-21 — Plan cheerful-rossum (gate-box-6 closure)
 
