@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { renderSignals, renderPositions, renderPnl, renderCalibration } from './telegram-commands.js';
+import { renderSignals, renderPositions, renderPnl, renderCalibration, setHalt, clearHalt } from './telegram-commands.js';
 
 function bootDb(): Database.Database {
   const db = new Database(':memory:');
@@ -199,5 +199,77 @@ describe('renderCalibration', () => {
     expect(txt).toContain('50-60%');
     expect(txt).toContain('80-90%');
     expect(txt).not.toContain('0-10%');
+  });
+});
+
+function freshHaltDb(): Database.Database {
+  const db = new Database(':memory:');
+  db.exec(`CREATE TABLE poly_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+  return db;
+}
+
+function readHaltValue(db: Database.Database): string | null {
+  const row = db.prepare(`SELECT value FROM poly_kv WHERE key='poly.halt'`).get() as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+describe('setHalt', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = freshHaltDb(); });
+
+  it('writes poly.halt=1 to poly_kv from a fresh state', () => {
+    const reply = setHalt(db);
+    expect(readHaltValue(db)).toBe('1');
+    expect(reply).toMatch(/halt/i);
+    expect(reply).toMatch(/set|engaged|YES/i);
+    expect(reply).toMatch(/next.*tick/i);
+  });
+
+  it('is idempotent — second call does not throw and value stays "1"', () => {
+    setHalt(db);
+    expect(() => setHalt(db)).not.toThrow();
+    expect(readHaltValue(db)).toBe('1');
+  });
+
+  it('overrides a prior value of "0"', () => {
+    db.prepare(`INSERT INTO poly_kv(key,value) VALUES('poly.halt','0')`).run();
+    setHalt(db);
+    expect(readHaltValue(db)).toBe('1');
+  });
+
+  it('reply text mentions that open positions are NOT closed', () => {
+    const reply = setHalt(db);
+    expect(reply.toLowerCase()).toMatch(/open positions.*remain|positions.*open|not.*close/i);
+  });
+});
+
+describe('clearHalt', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = freshHaltDb(); });
+
+  it('writes poly.halt=0 from halted state', () => {
+    setHalt(db);
+    const reply = clearHalt(db);
+    expect(readHaltValue(db)).toBe('0');
+    expect(reply).toMatch(/resume|cleared|no/i);
+  });
+
+  it('is idempotent — second call does not throw and value stays "0"', () => {
+    setHalt(db);
+    clearHalt(db);
+    expect(() => clearHalt(db)).not.toThrow();
+    expect(readHaltValue(db)).toBe('0');
+  });
+
+  it('clears from no-row state by inserting "0"', () => {
+    expect(readHaltValue(db)).toBeNull();
+    clearHalt(db);
+    expect(readHaltValue(db)).toBe('0');
+  });
+
+  it('reply text mentions next-tick resume semantics', () => {
+    setHalt(db);
+    const reply = clearHalt(db);
+    expect(reply).toMatch(/next.*tick|resume.*evaluat/i);
   });
 });

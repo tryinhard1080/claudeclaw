@@ -48,6 +48,10 @@ export function registerPolyCommands(bot: Bot<Context>, db: Database.Database): 
           return void await ctx.reply(truncateForTelegram(renderDrift(db)).text);
         case 'reflect':
           return void await ctx.reply(truncateForTelegram(renderReflect(db)).text);
+        case 'halt':
+          return void await ctx.reply(setHalt(db));
+        case 'resume':
+          return void await ctx.reply(clearHalt(db));
         default:
           return void await ctx.reply(HELP);
       }
@@ -73,7 +77,9 @@ const HELP =
 /poly regime — latest macro regime snapshot (VIX / BTC dom / 10y yield)
 /poly research — last 10 ingested research items
 /poly drift — 24h scan latency, market count trend, rejection mix
-/poly reflect — Sprint 2.5 reflection pass: v3 vs v3-reflect Brier on resolved markets`;
+/poly reflect — Sprint 2.5 reflection pass: v3 vs v3-reflect Brier on resolved markets
+/poly halt — set poly.halt flag (engine short-circuits on next tick; open positions remain)
+/poly resume — clear poly.halt flag (engine resumes evaluation on next tick)`;
 
 function renderMarkets(db: Database.Database): string {
   const rows = db.prepare(
@@ -438,5 +444,31 @@ export function renderReflect(db: Database.Database): string {
     '',
     'Largest shifts (recent):',
     ...top,
+  ].join('\n');
+}
+
+const HALT_KEY = 'poly.halt';
+
+function writeHaltFlag(db: Database.Database, value: '0' | '1'): void {
+  db.prepare(
+    `INSERT INTO poly_kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+  ).run(HALT_KEY, value);
+}
+
+export function setHalt(db: Database.Database): string {
+  writeHaltFlag(db, '1');
+  return [
+    'Halt SET (poly.halt=1).',
+    'Strategy engine will short-circuit on the next tick (within ~5 min). No new signals or trades.',
+    'Open positions remain open and PnlTracker keeps marking them.',
+    'Use /poly resume to clear, /poly status to check.',
+  ].join('\n');
+}
+
+export function clearHalt(db: Database.Database): string {
+  writeHaltFlag(db, '0');
+  return [
+    'Halt cleared (poly.halt=0).',
+    'Strategy engine will resume evaluation on the next tick (within ~5 min).',
   ].join('\n');
 }
