@@ -1,47 +1,46 @@
 {
   "task": "ClaudeClaw trading agent — advance real-money gate from 0/7 to 7/7 boxes closed.",
-  "current_state": "ClaudeClaw pm2 id 8 online, scanning every ~30s (PID 58676). Space Agent pm2 id 10, localhost:3000, no login required. Trading Dashboard widget live with live positions (unrealized P&L, current price). Chrome CDP daemon active on tab BE2979E0. 10 open paper positions, ~-$110 unrealized. v1.13.0 migration pending (news-sync, needs PPLX_API_KEY). Gate: 2/7 boxes clearly closed, 3 more have clear paths within 30-day window.",
+  "current_state": "ClaudeClaw pm2 id 8 online. Gates 5+6 CLOSED. Gate 7 pending operator A1/A2/A3 acks in MISSION.md. PPLX key quota exhausted — needs replacement before news-sync cron fires. db-backup cron active (next fire ~4am UTC). 647/647 tests. .claude/settings.json created with pm2 list + pm2 logs allow entries.",
   "constraints": [
     "Tier 3 actions require explicit operator approval: changing POLY_MAX_TRADE_USD, lifting halt switch, deploying to risk-gates.ts or paper-broker.ts, enabling real-money mode.",
     "No new strategy/asset class until existing two have 30-day track record.",
     "Every sprint touching src/poly/ or src/trading/ requires a docs/research/sprint-N-topic.md before commit (pre-commit hook enforces).",
     "30-min speed tripwire: sprint under 30 min end-to-end signals skipped steps.",
-    "TRUST.md bright lines are absolute: no harm, no data leakage, no undisclosed real-money."
+    "TRUST.md bright lines are absolute: no harm, no data leakage, no undisclosed real-money.",
+    "pm2 restart must use --update-env when .env has changed — plain restart silently ignores new keys."
   ],
   "discovered_issues": [
-    "v1.13.0 migration (news-sync news_items table) pending — blocked on operator adding PPLX_API_KEY to .env and restarting claudeclaw.",
-    "Iran diplomatic meeting position (trade_id 20) at -99.8% expires 2026-04-22 — resolution flow not yet verified end-to-end.",
-    "Sprints 12-19 have no codex review pass — gate box 5 cannot close until done.",
-    "Chrome CDP 'Allow debugging?' fires once per new daemon start — use file redirect (> /tmp/out.txt 2>&1) for all cdp.mjs calls in git bash.",
-    "Restart count on claudeclaw pm2 shows 1853 (cumulative from prior sessions) — not a fresh crash loop, bot is healthy."
+    "PPLX key returned 401 quota-exceeded on 2026-04-22 news-sync smoke test — replace at perplexity.ai/account/api/keys, update .env, restart with --update-env.",
+    "Gate 7 (operator written sign-off) pending: operator must strike PROPOSED from A1/A2/A3 entries in MISSION.md sign-off log.",
+    "Iran diplomatic meeting position expired 2026-04-22 — confirm resolution-fetch cron wrote status=lost on 2026-04-26 07:00 ET run.",
+    "30-day no-intervention gate clock started 2026-04-21 — target 2026-05-21. Any manual pm2 restart counts against it."
   ],
   "decisions_made": [
     {
+      "decision": "Auth guard added to bot.command('poly') handler via ALLOWED_CHAT_ID check",
+      "rationale": "Grammy command handlers run independently of middleware — any Telegram user could halt/resume the engine without the guard. P1 security fix, commit d186090."
+    },
+    {
+      "decision": "renderPnl unrealized sum uses INNER JOIN against open trades",
+      "rationale": "Stale poly_positions rows from crashed/resolved trades inflated the unrealized total. Consistent with strategy-engine.ts query. P1 fix, commit d186090."
+    },
+    {
+      "decision": ".claude/settings.json allowlist uses Bash(pm2 list) and Bash(pm2 logs *) only",
+      "rationale": "These were the only two non-auto-allowed read-only commands with >=3 uses in the last 50 sessions. All other common commands (ls, grep, git, ps) are already auto-allowed by Claude Code."
+    },
+    {
       "decision": "Space Agent ecosystem config uses hardcoded Windows cwd path",
       "rationale": "pm2 resolves script paths relative to invocation dir, not ecosystem file; absolute path is the only reliable option on Windows."
-    },
-    {
-      "decision": "Trading dashboard switched to /api/poly/positions/live instead of /api/poly/trades",
-      "rationale": "positions/live joins with poly_positions table to include current_price, unrealized_pnl, unrealized_pct — the missing live fields. Trades endpoint has kelly_fraction/strategy but no live pricing."
-    },
-    {
-      "decision": "TP/SL columns omitted from widget",
-      "rationale": "POLY_EXIT_ENABLED=false; showing disabled thresholds adds noise without actionable signal."
-    },
-    {
-      "decision": "Widget YAML edited directly on disk rather than via Space Agent chat",
-      "rationale": "Faster and more precise than LLM-mediated generation for targeted code changes. Chat interface used for initial generation only."
     }
   ],
   "next_steps": [
-    "Operator: run 9-step runbook from 2026-04-21 HANDOFF (PPLX_API_KEY + EMERGENCY_KILL_PHRASE → pm2 restart → activate-news-sync.ts + activate-db-backup.ts → smoke tests → drill C10 + C11 → MISSION.md sign-off). ~10 min.",
-    "Watch Iran position resolution tonight — PnlTracker should write status=lost, dashboard sparkline shows first bar.",
-    "Run codex review on Sprints 12-19 (gate box 5) — files: src/poly/positions-view.ts, src/dashboard-charts.ts, src/dashboard.ts, src/poly/news-sync.ts, src/poly/backup.ts.",
-    "Watch Sun 2026-04-26 07:00 ET resolution-fetch cron — first calibration batch.",
-    "Decide flag-enable for Sprint 8 (exits), Sprint 9 (exposure-aware sizing), Sprint 2.5 (reflection) after calibration data exists."
+    "Operator: replace PPLX key in .env (perplexity.ai/account/api/keys), then run: pm2 restart claudeclaw --update-env",
+    "Operator: ack A1/A2/A3 in MISSION.md sign-off log (strike PROPOSED from three Phase A entries) — closes gate box 7.",
+    "2026-04-26 Sun 07:00 ET: resolution-fetch cron runs — first calibration batch. Iran position should show status=lost.",
+    "After calibration data exists: decide flag-enable for Sprint 8 (exits), Sprint 9 (exposure-aware sizing), Sprint 2.5 (reflection). All Tier 3."
   ],
   "do_not": [
-    "Do not run npm run migrate without operator first adding PPLX_API_KEY and EMERGENCY_KILL_PHRASE to .env.",
+    "Do not use plain pm2 restart when .env has changed — always use pm2 restart claudeclaw --update-env.",
     "Do not enable POLY_EXIT_ENABLED, POLY_REFLECTION_ENABLED, or POLY_EXPOSURE_AWARE_SIZING without calibration data (Tier 3).",
     "Do not add a third strategy or asset class until 30-day track record on existing two.",
     "Do not restore personal-assistant features stripped in 2026-04-13 pivot.",
@@ -49,7 +48,7 @@
     "Do not run cdp.mjs commands without file redirect (> /tmp/out.txt 2>&1) — direct stdout drops in git bash."
   ],
   "session_meta": {
-    "date": "2026-04-22",
+    "date": "2026-04-23",
     "model": "claude-sonnet-4-6",
     "branch": "main",
     "token_estimate": null

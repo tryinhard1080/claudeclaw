@@ -1,11 +1,22 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-22 (evening)
+- **Date**: 2026-04-23
 - **Model**: Claude Sonnet 4.6
-- **Branch**: `main`. Commits this session: operator runbook execution + gate closures.
-- **Tests**: 647/647.
-- **Focus**: Operator runbook (plan cheerful-rossum), gate boxes 5/6 closed, P1 security fixes.
+- **Branch**: `main`. Commits this session: permission allowlist only.
+- **Tests**: 647/647 (unchanged).
+- **Focus**: Completed `/fewer-permission-prompts` skill run from prior session — added `Bash(pm2 list)` + `Bash(pm2 logs *)` to `.claude/settings.json`.
+
+## ✅ 2026-04-23 — Permission allowlist + plan file committed
+
+### What Changed
+
+- **`.claude/settings.json`** — Created. Allows `Bash(pm2 list)` (22 prior uses) and `Bash(pm2 logs *)` (14 prior uses) without permission prompts. Scanned 50 most-recent JSONL transcripts to derive these.
+- **`docs/superpowers/plans/2026-04-22-outstanding-action-items.md`** — Plan file from prior session committed (was untracked).
+
+### Current State (end of session)
+
+Same as 2026-04-22 evening session. No bot changes. Gate status unchanged.
 
 ## ✅ 2026-04-22 — Operator Runbook + Gate Closures
 

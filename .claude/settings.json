@@ -1,0 +1,9 @@
+{
+  "$schema": "https://claude.ai/schema/settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(pm2 list)",
+      "Bash(pm2 logs *)"
+    ]
+  }
+}
