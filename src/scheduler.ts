@@ -49,10 +49,15 @@ export function runShellTask(task: ScheduledTask, abortController: AbortControll
   const [scriptRel, ...args] = task.script_path.split(/\s+/);
   const absScript = path.join(PROJECT_ROOT, scriptRel!);
   return new Promise(resolve => {
-    const child = spawn('npx', ['tsx', absScript, ...args], {
+    // Use npx.cmd on Windows to avoid shell=true path-splitting bugs.
+    // With shell:true, cmd.exe joins args into a single string without
+    // quoting, so spaces in PROJECT_ROOT (e.g. "OneDrive - Greystar") split
+    // the absScript path and tsx receives a truncated directory reference.
+    const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    const child = spawn(npxBin, ['tsx', absScript, ...args], {
       cwd: PROJECT_ROOT,
       env: { ...process.env },
-      shell: process.platform === 'win32',
+      shell: false,
     });
     let stdout = '';
     let stderr = '';
