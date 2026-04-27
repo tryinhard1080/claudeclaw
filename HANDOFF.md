@@ -1,11 +1,11 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-23
-- **Model**: Claude Sonnet 4.6
-- **Branch**: `main`. Commits this session: permission allowlist only.
-- **Tests**: 647/647 (unchanged).
-- **Focus**: Completed `/fewer-permission-prompts` skill run from prior session — added `Bash(pm2 list)` + `Bash(pm2 logs *)` to `.claude/settings.json`.
+- **Date**: 2026-04-26 → 2026-04-27 (cutover landed at 19:10:11 ET)
+- **Model**: Claude Opus 4.7 (1M context)
+- **Branch**: `main`. Commit this session: `42ef429` (cutover docs).
+- **Focus**: 8-phase OneDrive → `C:\Code\claudeclaw` cutover (plan `tell-me-the-current-playful-koala.md`). Phases 1–4 executed; Phase 5 smoke (Telegram round-trips) operator-driven; Phases 6–7 gated on schedule-cli task `0169ab93` (verification, fires 2026-04-27 19:07 ET) and `c2acdc12` (archival, fires 2026-04-27 19:47 ET).
+- **Tests**: not re-run this session (pure cutover, no source changes).
 
 ## ✅ 2026-04-26 — OneDrive → C:\Code\claudeclaw cutover
 
