@@ -61,6 +61,15 @@ Anything less is a draft.
   - sha256 verified against recorded hash; copy to /tmp scratch verified hash-equal.
   - restored DB readable; ≥ 5 key tables present with positive row counts.
   - live /c/claudeclaw-store/ untouched; bot remained ONLINE throughout.
+- 2026-04-26T19:10:11Z — OneDrive → C:\Code\claudeclaw cutover: COMPLETE.
+  - 70 commits synced (5e2ee0f → d906198, 132 files).
+  - pm2: claudeclaw (id 8, OneDrive cwd) → claudeclaw-main (id 10, C:\Code\claudeclaw cwd). PID 54484 → 8492.
+  - .env restored byte-identical (5,474 B, 8 mandatory keys); migrations/.applied.json synced (now v1.13.0 matching live DB schema).
+  - Halt round-trip: 0→1 pre, 0 post. Open positions unchanged (10 → 10).
+  - Boot logs clean. Dashboard :3141/health → 200. Telegram online. pm2 save persisted.
+  - 24h verification cron registered as schedule-cli task 0169ab93 (next fire 2026-04-27 19:07 local; self-deletes on green-light, Telegram-alerts on any failure).
+  - Plan file: C:\Users\Richard\.claude\plans\tell-me-the-current-playful-koala.md
+  - Phase 7 (OneDrive retirement) gated 24h for rollback window. Authorized in chat: "All 4" — Richard, 2026-04-26.
 
 ### Phase A decisions for plan cheerful-rossum (PROPOSED — operator to confirm or override)
 

@@ -7,6 +7,44 @@
 - **Tests**: 647/647 (unchanged).
 - **Focus**: Completed `/fewer-permission-prompts` skill run from prior session — added `Bash(pm2 list)` + `Bash(pm2 logs *)` to `.claude/settings.json`.
 
+## ✅ 2026-04-26 — OneDrive → C:\Code\claudeclaw cutover
+
+### What Changed
+
+- pm2 cwd repointed from `C:\Users\Richard\OneDrive...\CCBot1080\claudeclaw` to `C:\Code\claudeclaw`. Old `claudeclaw` (id 8, PID 54484, 33h uptime) stopped + deleted; new `claudeclaw-main` (id 10, PID 8492) launched from `ecosystem.config.cjs` with `script: dist/index.js`, `exec cwd: C:\Code\claudeclaw`.
+- Local tree fast-forwarded `5e2ee0f` → `d906198` (70 commits, 132 files, 10,287 insertions). `migrations/.applied.json` synced from OneDrive (was stale at v1.8.0 in this copy because `.gitignore`'d). DB schema independently verified at v1.13.0 via better-sqlite3 probe.
+- `.env` copied byte-identical from OneDrive (5,474 B, 8 mandatory keys present). Stale `.env` saved as `.env.stale-2026-04-26.bak`. Mangled 0-byte `claudeclaw-storeclaudeclaw.db` deleted.
+- Halt flag drilled 0→1 pre-cutover, 1→0 post-cutover via direct `poly_kv` UPSERT (same SQL path as `/poly halt`/`/poly resume` Telegram commands).
+- pm2 process renamed `claudeclaw` → `claudeclaw-main` (the codebase already references the new name in `ecosystem.config.cjs`; live pm2 was on the bare name from a pre-ecosystem manual start). Zero stale `claudeclaw` references remain in synced tree.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| pm2 status | online, 0 restarts, 0 unstable |
+| script path | `C:\Code\claudeclaw\dist\index.js` |
+| exec cwd | `C:\Code\claudeclaw` |
+| Open positions (pre / post) | 10 / 10 |
+| Boot logs | clean — no Zod, no migration retry, no fatal |
+| Dashboard `:3141/health` | HTTP 200 |
+| Telegram `@CCbot1080bot` | online, 3 skill commands registered |
+| `pm2 save` | persisted to `C:\Users\Richard\.pm2\dump.pm2` |
+
+### Plan file
+
+Full sequence + rollback path: `C:\Users\Richard\.claude\plans\tell-me-the-current-playful-koala.md`
+
+### Soak + retirement
+
+24h verification cron registered as bot scheduled task `0169ab93` (`schedule-cli` create, recurring `7 19 27 4 *`, next fire 2026-04-27 19:07 local). Self-deletes after a green-light pass, or alerts via Telegram on any failure with rollback procedure. Phase 7 — OneDrive retirement to `C:\_archive\2026-04-26\claudeclaw-onedrive\` — gated 24h post-cutover for rollback window.
+
+### Current State (end of session)
+
+- claudeclaw-main: ONLINE pm2 id 10, PID 8492, cwd `C:\Code\claudeclaw`, dist from `d906198`.
+- DB: `C:\claudeclaw-store\claudeclaw.db` 146.6 MB, 10 open positions, halt cleared.
+- Stash: `stash@{0}` "pre-cutover stale tree 2026-04-26" holds the pre-sync untrackeds (`.claude/scheduled_tasks.lock`, `tmp_alert.json`) — safe to drop after 24h soak.
+- `.env.stale-2026-04-26.bak` present in repo root (gitignored via `.env*` pattern). Holds the leaked Anthropic API key flagged in the plan as deferred — operator to handle separately.
+
 ## ✅ 2026-04-23 — Permission allowlist + plan file committed
 
 ### What Changed
