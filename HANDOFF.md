@@ -38,6 +38,10 @@ Full sequence + rollback path: `C:\Users\Richard\.claude\plans\tell-me-the-curre
 
 24h verification cron registered as bot scheduled task `0169ab93` (`schedule-cli` create, recurring `7 19 27 4 *`, next fire 2026-04-27 19:07 local). Self-deletes after a green-light pass, or alerts via Telegram on any failure with rollback procedure. Phase 7 — OneDrive retirement to `C:\_archive\2026-04-26\claudeclaw-onedrive\` — gated 24h post-cutover for rollback window.
 
+### Phase 7 completed 2026-04-29
+
+OneDrive copy archived to `C:\_archive\2026-04-26\claudeclaw-onedrive\` (410 MB, `mv` took 11.5s). OneDrive parent (`CCBot1080/`) now contains only `space-agent`. Pre-cutover `stash@{0}` dropped (`25e9f9bb`). Schedule-cli task `c2acdc12` deleted. Active crons reduced to the 5 production tasks (`db-backup-nightly`, `a6e080bd` resolution-fetch, `2c87cdca` adversarial-review, `3de52de7` research-ingest, `3d623e0e` news-sync). Bot online throughout, 0 unstable restarts, `exec cwd` unchanged at `C:\Code\claudeclaw`. Cutover plan complete end-to-end: phases 1 through 7 closed. Archive deletion target 2026-05-29 (30-day retention per plan).
+
 ### Current State (end of session)
 
 - claudeclaw-main: ONLINE pm2 id 10, PID 8492, cwd `C:\Code\claudeclaw`, dist from `d906198`.

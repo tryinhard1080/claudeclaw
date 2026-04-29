@@ -21,7 +21,7 @@ The plan is "working" if all four hold:
 | HEAD | `218621c` on `main`, in sync with `origin/main` |
 | DB | `C:\claudeclaw-store\claudeclaw.db`, schema v1.13.0, ~10 open positions, halt cleared |
 | Crons | 6 active: news-sync (3d623e0e), research-ingest (3de52de7), adversarial-review (2c87cdca), db-backup-nightly, resolution-fetch (a6e080bd), Phase-7 archival (c2acdc12) |
-| OneDrive cutover Phase 7 | Not yet completed; see Track B below |
+| OneDrive cutover Phase 7 | COMPLETED 2026-04-29 (archive at `C:\_archive\2026-04-26\claudeclaw-onedrive\`, 410 MB) |
 | Working-tree residues | `M .claude/settings.json` (harness $schema URL), `M src/poly/gamma-client.ts` (operator perf improvement, uncommitted), `?? .env.stale-2026-04-26.bak`, `?? docs/research/atlas-self-improving-trading-agents.md` |
 | Real-money gate | 4 of 7 boxes still open (1 at day 8/30, 2 awaiting market resolution, 7 awaiting operator A1/A2/A3 acks) |
 
@@ -103,13 +103,9 @@ Each row: ID, capability, blocker, target metric, effort, research-note status. 
 - **Research note**: extension of existing sprint-9 note; one-paragraph addendum sufficient.
 - **Tier**: 2 ship, 3 flag-flip (which is Sprint 9 flag-flip itself).
 
-### Sprint 26: Phase 7 OneDrive archival re-issue
-- **Capability**: re-execute the OneDrive cutover Phase 7 archival that `c2acdc12` was supposed to do but silently skipped. Move `C:\Users\Richard\OneDrive...\CCBot1080\claudeclaw\` to `C:\_archive\2026-04-26\claudeclaw-onedrive\`. Drop `stash@{0}`.
-- **Blocker**: depends on either Sprint 23 (Claude auth, so c2acdc12 can fire next year) or operator manual run. Recommend operator manual since waiting a year is silly.
-- **Target metric**: OneDrive parent dir does not contain `claudeclaw`; `_archive/2026-04-26/claudeclaw-onedrive/` exists; stash list is empty.
-- **Effort**: 5 minutes (verification re-run + 3-line move + stash drop + commit).
-- **Research note**: not needed (operational, not capability).
-- **Tier**: 2.
+### Sprint 26: Phase 7 OneDrive archival re-issue — SHIPPED 2026-04-29
+- **Status**: COMPLETED. Archive at `C:\_archive\2026-04-26\claudeclaw-onedrive\` (410 MB). `stash@{0}` dropped. `c2acdc12` cron deleted. Bot remained online with `exec cwd C:\Code\claudeclaw` throughout.
+- **Outcome**: OneDrive cutover plan `tell-me-the-current-playful-koala.md` complete end-to-end. Archive retention until 2026-05-29 per plan.
 
 ### Sprint 27: Resolution-fetch backfill audit
 - **Capability**: audit `poly_resolutions` for stuck or missing rows. Cross-check `poly_signals.slug` distinct count against `poly_resolutions` distinct count. Flag any markets that resolved on Polymarket but didn't make it into the cache.
@@ -180,8 +176,6 @@ Not capability work. These are corrections and cleanups that compound if neglect
 | PPLX key replacement | New key from `perplexity.ai/account/api/keys`, update `.env`, restart with `pm2 restart claudeclaw-main --update-env`. Unblocks Sprints 20 + 21 | 5 min ops | 2 |
 | gamma-client perf commit | An uncommitted `M` modification on `src/poly/gamma-client.ts` exists (parallel page fetch, `fetchActiveMarkets` 400-600s to ~35s). Operator authored. Decide: commit, hold, or revert | 5 min review | 2 |
 | atlas research note | `docs/research/atlas-self-improving-trading-agents.md` is untracked from an earlier session. Decide: commit, hold, or discard | 5 min review | 2 |
-| Stash drop | `stash@{0}: pre-cutover stale tree 2026-04-26`. Drop after Sprint 26 (Phase 7) succeeds | 30 sec | 2 |
-| Cron auto-cleanup | Delete `c2acdc12` from `scheduled_tasks` after Sprint 26 (or convert kind to shell so it can self-execute without auth) | 1 min | 2 |
 | Resolution-cache scheduling | Per HANDOFF "Consider scheduling weekly once closed-count > 20"; add a recurring `npx tsx scripts/fetch-resolutions.ts` cron | 5 min | 2 |
 | Settings.json $schema URL | Currently `M` from a harness auto-update. Decide: commit, leave, or revert | 30 sec | 2 |
 
@@ -199,7 +193,7 @@ For 2026-04-29 right now, applying the rule:
 
 - **Highest leverage chore**: PPLX key replacement (5 min, unblocks Sprints 20 and 21 simultaneously).
 - **Highest leverage sprint with all blockers resolved**: Sprint 22 (cron prompt audit, no blocker, prevents future drift like the Sprint 18 lost-consumer issue).
-- **Cleanest one-shot**: Sprint 26 (Phase 7 archival, 5 minutes, finishes the cutover and lets the rollback target be retired).
+- **Cleanest one-shot now that Sprint 26 has shipped**: Sprint 27 (resolution-fetch backfill audit) once closed-count > 20, or Sprint 22 (cron prompt audit) which has zero blocker.
 
 If the operator does the PPLX key in 5 minutes, Sprint 20 becomes the highest-impact sprint (first capability addition that turns collected news data into trading signal).
 
@@ -210,7 +204,7 @@ Numbered for easy reference; answer in chat or directly in `MISSION.md`.
 1. **A1, A2, A3 acks**: still PROPOSED in `MISSION.md` sign-off log. Required to close gate box 7.
 2. **PPLX key**: do you want to rotate now, or defer Sprints 20 and 21 until later?
 3. **CLAUDE_CODE_OAUTH_TOKEN**: do you want to add this to `.env` so `kind=claude-agent` crons can fire, or keep them in skip-mode (which is the safe default per A3 reasoning)?
-4. **Phase 7 OneDrive archival**: manual run now, or wait for Sprint 23 then 2027 cron fire? Recommend manual now.
+4. ~~Phase 7 OneDrive archival~~ — RESOLVED 2026-04-29 (manual run, see Sprint 26 status).
 5. **gamma-client.ts**: who authored the `fetchActiveMarkets` parallelization, and is it ready to commit? Or is it work-in-progress?
 6. **OPERATOR_EMAIL**: still missing. Required for Sprint Email-A.
 7. **POLY_RESEARCH_NOTEBOOK_ID**: NotebookLM trading notebook still not created. Required for Sprint 4.5 to do anything beyond local DB writes.

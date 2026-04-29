@@ -61,6 +61,14 @@ Anything less is a draft.
   - sha256 verified against recorded hash; copy to /tmp scratch verified hash-equal.
   - restored DB readable; ≥ 5 key tables present with positive row counts.
   - live /c/claudeclaw-store/ untouched; bot remained ONLINE throughout.
+- 2026-04-29 — Phase 7 OneDrive retirement: COMPLETE.
+  - Archive: C:\_archive\2026-04-26\claudeclaw-onedrive\ (410 MB).
+  - Source removed from OneDrive sync; parent CCBot1080\ now holds only space-agent.
+  - stash@{0} (25e9f9bb pre-cutover stale tree) dropped.
+  - schedule-cli task c2acdc12 deleted; active crons reduced to 5 production tasks.
+  - Bot online throughout (exec cwd C:\Code\claudeclaw, 0 unstable restarts).
+  - Cutover plan tell-me-the-current-playful-koala.md complete: phases 1 through 7 closed.
+  - Authorized in chat: "Yes execute now." — Richard, 2026-04-29.
 - 2026-04-26T19:10:11Z — OneDrive → C:\Code\claudeclaw cutover: COMPLETE.
   - 70 commits synced (5e2ee0f → d906198, 132 files).
   - pm2: claudeclaw (id 8, OneDrive cwd) → claudeclaw-main (id 10, C:\Code\claudeclaw cwd). PID 54484 → 8492.
