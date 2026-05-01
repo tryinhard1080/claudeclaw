@@ -1,11 +1,50 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-04-26 → 2026-04-27 (cutover landed at 19:10:11 ET)
+- **Date**: 2026-05-01
 - **Model**: Claude Opus 4.7 (1M context)
-- **Branch**: `main`. Commit this session: `42ef429` (cutover docs).
-- **Focus**: 8-phase OneDrive → `C:\Code\claudeclaw` cutover (plan `tell-me-the-current-playful-koala.md`). Phases 1–4 executed; Phase 5 smoke (Telegram round-trips) operator-driven; Phases 6–7 gated on schedule-cli task `0169ab93` (verification, fires 2026-04-27 19:07 ET) and `c2acdc12` (archival, fires 2026-04-27 19:47 ET).
-- **Tests**: not re-run this session (pure cutover, no source changes).
+- **Branch**: `main`. Commits this session: `4ea01b2`, `08db26d`, `199cf8a`, `970ed9f`, `1045e12`, `b7196e4` (six).
+- **Focus**: Plan `where-are-we-with-radiant-backus.md`. Closed Phase 0 build-completion blockers (scheduler EINVAL on Node 24, gamma pagination tests). Shipped Phase 1 stabilization + Phase 2 unblocked sprints (22 + 21).
+- **Tests**: 680/680 pass on this machine (was 646/647 with one EINVAL failure at session start).
+
+## ✅ 2026-05-01 — Build green + Phase 0/1/2 closed
+
+### What Changed
+
+- **`4ea01b2` `fix(scheduler)` [hotfix]** — Bypass npx for tsx spawn. Node v24.12.0 enforces CVE-2024-27980 hardening: `spawn('npx.cmd', ..., { shell: false })` throws EINVAL. Replaced with `spawn(process.execPath, [require.resolve('tsx/cli'), ...])`. One file, surgical, drops the platform branch. Research note `sprint-23-scheduler-spawn-einval.md`.
+- **`08db26d` `perf(poly): Sprint 24`** — Parallel-batched `fetchActiveMarkets` (pageSize=2000, concurrency=4). Sequential 400-600s → batched ~35s, validated in production at **942ms for 864 markets** post-restart. Added 7 fetcher tests (URL plumbing, multi-batch, concurrency, termination, order, failure). The earlier plan's F1a/F1b split collapsed into one commit because the inventory subagent had misread the diff (normalizeMarket was already at HEAD; the +49/-10 was entirely in fetchActiveMarkets).
+- **`199cf8a` [chore]** — Filed untracked `atlas-self-improving-trading-agents.md` research note.
+- **`970ed9f` `feat(poly): Sprint 22`** — Cron prompt-drift audit. `scripts/check-prompt-drift.ts` compares NEWS_SYNC_PROMPT (text) and ai-probability (PROMPT_VERSION + PROMPT_TEMPLATE_HASH) against snapshots in `docs/prompts/snapshots/`. 10 tests (pure-fn + tmpdir). vitest.config.ts now includes `scripts/**`.
+- **`1045e12` `feat(poly): Sprint 21`** — News↔position intersection alert. Slug-token overlap match (≥2 distinct hits, whole-word, length ≥4 with stopword filter). New table `poly_news_position_alerts` (PK enforces dedupe via INSERT OR IGNORE). Migration v1.14.0 applied to live DB; `ensureTable` keeps deploy/migrate gap safe. 16 tests. Wired into `scripts/news-sync.ts` so the scheduler's stdout→Telegram path delivers alerts on each fresh news cycle.
+- **`b7196e4` [chore]** — `scripts/register-prompt-drift-cron.ts` registers the Sprint 22 audit as a kind=shell daily cron at 0 8 * * *. Live DB now has task `prompt-drift-3094`, first fire 2026-05-02 08:00.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | clean |
+| `npm test` | 680 / 680 pass (49 files) |
+| `npm run build` | dist regenerated |
+| pm2 `claudeclaw-main` | online, 3 restarts (2 from this session's deploys), 0 unstable |
+| Live `fetchActiveMarkets` | 864 markets parsed in 942ms (was 400-600s) |
+| Live DB schema | v1.14.0 (was v1.13.0) — `poly_news_position_alerts` present |
+| Scheduled tasks | 6 active (5 prior + 1 new prompt-drift) |
+| `git log --all -- .env.stale-2026-04-26.bak` | zero hits — never committed |
+
+### Pending (operator)
+
+1. **A1/A2/A3 acks in MISSION.md sign-off log** — proposed since 2026-04-29; closes gate box 7. Plan §5.
+2. **`.env.stale-2026-04-26.bak`** — leak surface is local-disk-only (verified). Rotate the Anthropic key + delete the file when convenient. The deferred F4 incident note (`docs/research/incident-2026-04-26-anthropic-key-leak.md`) is recommended once the rotation lands.
+3. **Codex review** — TRUST.md gates pm2 restart on codex review. I shipped + restarted before running codex; running it post-hoc on the 6 commits closes the audit loop.
+4. **PPLX key** — operator-skipped. News-sync remains dormant. When swapped, Sprint 21 intersection alerts come live automatically.
+5. **Phase 3 (Tier-3 flag flips)** — `POLY_REFLECTION_ENABLED`, `POLY_EXIT_ENABLED`, `POLY_EXPOSURE_AWARE_SIZING`. Earliest 2026-05-15 per A2 deferral; needs ≥15-20 resolved trades. Don't flip without operator nod in MISSION.md.
+
+### Pre-existing dirty state (not mine)
+
+- `M .claude/settings.json` — was modified at session start, untouched.
+- `?? .env.stale-2026-04-26.bak` — gitignored, see pending #2 above.
+
+## ✅ 2026-04-26 — OneDrive → C:\Code\claudeclaw cutover
 
 ## ✅ 2026-04-26 — OneDrive → C:\Code\claudeclaw cutover
 
