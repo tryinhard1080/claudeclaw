@@ -1,8 +1,15 @@
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
+import { createRequire } from 'node:module';
 import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
+
+// Resolve tsx CLI once at module load. Spawning process.execPath + this module
+// path avoids npx and the .cmd/.bat shim entirely — required since Node 24
+// enforces CVE-2024-27980 hardening that throws EINVAL on
+// spawn('npx.cmd', ..., { shell: false }). See sprint-23 research note.
+const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
 
 import { AGENT_ID, ALLOWED_CHAT_ID, PROJECT_ROOT } from './config.js';
 import {
@@ -49,12 +56,11 @@ export function runShellTask(task: ScheduledTask, abortController: AbortControll
   const [scriptRel, ...args] = task.script_path.split(/\s+/);
   const absScript = path.join(PROJECT_ROOT, scriptRel!);
   return new Promise(resolve => {
-    // Use npx.cmd on Windows to avoid shell=true path-splitting bugs.
-    // With shell:true, cmd.exe joins args into a single string without
-    // quoting, so spaces in PROJECT_ROOT (e.g. "OneDrive - Greystar") split
-    // the absScript path and tsx receives a truncated directory reference.
-    const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-    const child = spawn(npxBin, ['tsx', absScript, ...args], {
+    // Spawn the current Node binary directly against the resolved tsx CLI
+    // module. Avoids both the cmd.exe path-splitting bug that shell:true
+    // causes when PROJECT_ROOT contains spaces, and the EINVAL throw Node 24
+    // raises on spawn(*.cmd, ..., { shell: false }) per CVE-2024-27980.
+    const child = spawn(process.execPath, [TSX_CLI, absScript, ...args], {
       cwd: PROJECT_ROOT,
       env: { ...process.env },
       shell: false,
