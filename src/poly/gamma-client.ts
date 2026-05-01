@@ -63,15 +63,55 @@ export function normalizeMarket(
   };
 }
 
-export async function fetchActiveMarkets(pageSize = 500): Promise<Market[]> {
+/**
+ * Fetch all active markets from Gamma API using parallel page requests.
+ *
+ * With ~48k markets the old 500-item sequential loop took 400-600s (97 pages
+ * × ~5s each). This version batches `concurrency` pages per round and uses
+ * a larger default page size, cutting that to ~7 rounds × ~5s ≈ 35s.
+ *
+ * Pages within a batch are fetched concurrently. The batch loop stops as soon
+ * as any page returns fewer items than the page size (end of results). Pages
+ * requested beyond the last real page come back empty and are discarded.
+ */
+export async function fetchActiveMarkets(pageSize = 2000, concurrency = 4): Promise<Market[]> {
+  const rawPages: unknown[][] = [];
+  let offset = 0;
+  let exhausted = false;
+
+  while (!exhausted) {
+    const offsets: number[] = [];
+    for (let i = 0; i < concurrency; i++) {
+      offsets.push(offset + i * pageSize);
+    }
+
+    const pages = await Promise.all(
+      offsets.map(o =>
+        getJson(`${BASE}/markets?active=true&closed=false&limit=${pageSize}&offset=${o}`),
+      ),
+    );
+
+    for (const page of pages) {
+      if (!Array.isArray(page) || page.length === 0) {
+        exhausted = true;
+        break;
+      }
+      rawPages.push(page);
+      if (page.length < pageSize) {
+        exhausted = true;
+        break;
+      }
+    }
+
+    offset += concurrency * pageSize;
+  }
+
   const out: Market[] = [];
   let skippedNoEndDate = 0;
   let skippedMalformed = 0;
-  let offset = 0;
-  while (true) {
-    const raw = await getJson(`${BASE}/markets?active=true&closed=false&limit=${pageSize}&offset=${offset}`);
-    if (!Array.isArray(raw) || raw.length === 0) break;
-    for (const r of raw) {
+
+  for (const page of rawPages) {
+    for (const r of page) {
       try {
         const m = normalizeMarket(r);
         if (m === null) skippedNoEndDate++;
@@ -83,16 +123,15 @@ export async function fetchActiveMarkets(pageSize = 500): Promise<Market[]> {
         logger.warn({ err: String(e) }, 'skipping malformed market');
       }
     }
-    if (raw.length < pageSize) break;
-    offset += pageSize;
-    await sleep(200);
   }
+
   if (skippedNoEndDate > 0 || skippedMalformed > 0) {
     logger.info(
       { parsed: out.length, skippedNoEndDate, skippedMalformed },
       'fetchActiveMarkets skip summary',
     );
   }
+
   return out;
 }
 
