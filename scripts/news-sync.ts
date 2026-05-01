@@ -21,6 +21,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { STORE_DIR, PPLX_API_KEY, PPLX_BASE_URL, PPLX_NEWS_MODEL } from '../src/config.js';
 import { runNewsSync } from '../src/poly/news-sync.js';
+import { runNewsIntersectionPass } from '../src/poly/news-intersection.js';
 
 async function main(): Promise<void> {
   const dbPath = path.join(STORE_DIR, 'claudeclaw.db');
@@ -49,6 +50,21 @@ async function main(): Promise<void> {
     const preview = i.summary.slice(0, 200).replace(/\n/g, ' / ');
     console.log(`[news-sync] ok (${tag}) id=${i.id} fetched_at=${i.fetched_at} model=${i.model ?? '-'}`);
     console.log(`[news-sync] preview: ${preview}${i.summary.length > 200 ? '…' : ''}`);
+
+    // Sprint 21: only run intersection pass on fresh inserts. Deduped writes
+    // by definition reflect content already evaluated on a prior cycle.
+    if (!i.deduped) {
+      const out: string[] = [];
+      const intersection = await runNewsIntersectionPass(
+        db,
+        async (msg) => { out.push(msg); },
+      );
+      if (intersection.matched > 0) {
+        console.log(`\n[news-sync] intersection: ${intersection.matched} matched, ${intersection.emitted} emitted, ${intersection.suppressed} suppressed (already alerted)`);
+        for (const msg of out) console.log(`\n${msg}`);
+      }
+    }
+
     process.exit(0);
   } finally {
     db.close();
