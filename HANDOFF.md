@@ -1,11 +1,12 @@
 # Handoff — ClaudeClaw
 
 ## Last Session
-- **Date**: 2026-05-01
+- **Date**: 2026-05-02 (continuation of 2026-05-01 session)
 - **Model**: Claude Opus 4.7 (1M context)
-- **Branch**: `main`. Commits this session: `4ea01b2`, `08db26d`, `199cf8a`, `970ed9f`, `1045e12`, `b7196e4`, `49f5c21`, `08c3c65` (eight).
-- **Focus**: Plan `where-are-we-with-radiant-backus.md`. Closed Phase 0 build-completion blockers (scheduler EINVAL on Node 24, gamma pagination tests). Shipped Phase 1 stabilization + Phase 2 unblocked sprints (22 + 21). Plus Sprint 26 — swapped news-sync from Perplexity REST to `pwm` CLI per operator direction ("MCP, not API").
-- **Tests**: 687/687 pass on this machine (was 646/647 with one EINVAL failure at session start).
+- **Branch**: `main`. Commits across both sessions: `4ea01b2`, `08db26d`, `199cf8a`, `970ed9f`, `1045e12`, `b7196e4`, `49f5c21`, `08c3c65`, `6944c18`, `02788d6`, `f0048db` (eleven).
+- **Focus 2026-05-01**: Plan `where-are-we-with-radiant-backus.md`. Closed Phase 0 build-completion blockers (scheduler EINVAL on Node 24, gamma pagination tests). Shipped Phase 1 stabilization + Phase 2 unblocked sprints (22 + 21). Sprint 26 swapped news-sync from Perplexity REST to `pwm` CLI per operator direction ("MCP, not API").
+- **Focus 2026-05-02**: Sprint 27 — sonar refusal detection. Closes the silent-failure surface where Sonar's "I don't have real-time feeds" responses would have landed in `news_items` as garbage rows.
+- **Tests**: 691/691 pass on this machine (was 687 end-of-session-1, 646/647 with one EINVAL failure at session start).
 
 ## ✅ 2026-05-01 — Build green + Phase 0/1/2 closed
 
@@ -18,13 +19,14 @@
 - **`1045e12` `feat(poly): Sprint 21`** — News↔position intersection alert. Slug-token overlap match (≥2 distinct hits, whole-word, length ≥4 with stopword filter). New table `poly_news_position_alerts` (PK enforces dedupe via INSERT OR IGNORE). Migration v1.14.0 applied to live DB; `ensureTable` keeps deploy/migrate gap safe. 16 tests. Wired into `scripts/news-sync.ts` so the scheduler's stdout→Telegram path delivers alerts on each fresh news cycle.
 - **`b7196e4` [chore]** — `scripts/register-prompt-drift-cron.ts` registers the Sprint 22 audit as a kind=shell daily cron at 0 8 * * *. Live DB now has task `prompt-drift-3094`, first fire 2026-05-02 08:00.
 - **`08c3c65` `refactor(poly): Sprint 26`** — News-sync now routes through `pwm ask --json --intent quick` (perplexity-web-mcp-cli) instead of Perplexity REST. PerplexityFetcher contract preserved (`makePwmCliFetcher(runner)` factory + injectable runner for tests). REST impl renamed to `restFetcher`, kept exported. JSON output shape verified by reading the pwm Python source. 7 new pwm-fetcher tests. To activate: `pwm login` (operator), set `PPLX_API_KEY=pwm` in .env, `pm2 restart`.
+- **`f0048db` `feat(poly): Sprint 27`** (2026-05-02) — Sonar refusal detection. New exported `isRefusalResponse(text)` matches 12 refusal phrases case-insensitively. `runNewsSync` calls it post-extract; on match returns `ok:false reason:"sonar-refusal: ..."` and skips both insert and heartbeat. `scripts/news-sync.ts` treats the reason as a clean exit-0 skip. Closes the silent-failure where Sonar refusals would have landed as garbage news_items rows and false-positive Sprint 21 intersection alerts. 4 new tests.
 
 ### Verification
 
 | Check | Result |
 |---|---|
 | `npm run typecheck` | clean |
-| `npm test` | 687 / 687 pass (49 files) |
+| `npm test` | 691 / 691 pass (49 files) |
 | `npm run build` | dist regenerated |
 | pm2 `claudeclaw-main` | online, 3 restarts (2 from this session's deploys), 0 unstable |
 | Live `fetchActiveMarkets` | 864 markets parsed in 942ms (was 400-600s) |
