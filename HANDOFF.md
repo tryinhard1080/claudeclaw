@@ -3,9 +3,9 @@
 ## Last Session
 - **Date**: 2026-05-01
 - **Model**: Claude Opus 4.7 (1M context)
-- **Branch**: `main`. Commits this session: `4ea01b2`, `08db26d`, `199cf8a`, `970ed9f`, `1045e12`, `b7196e4` (six).
-- **Focus**: Plan `where-are-we-with-radiant-backus.md`. Closed Phase 0 build-completion blockers (scheduler EINVAL on Node 24, gamma pagination tests). Shipped Phase 1 stabilization + Phase 2 unblocked sprints (22 + 21).
-- **Tests**: 680/680 pass on this machine (was 646/647 with one EINVAL failure at session start).
+- **Branch**: `main`. Commits this session: `4ea01b2`, `08db26d`, `199cf8a`, `970ed9f`, `1045e12`, `b7196e4`, `49f5c21`, `08c3c65` (eight).
+- **Focus**: Plan `where-are-we-with-radiant-backus.md`. Closed Phase 0 build-completion blockers (scheduler EINVAL on Node 24, gamma pagination tests). Shipped Phase 1 stabilization + Phase 2 unblocked sprints (22 + 21). Plus Sprint 26 — swapped news-sync from Perplexity REST to `pwm` CLI per operator direction ("MCP, not API").
+- **Tests**: 687/687 pass on this machine (was 646/647 with one EINVAL failure at session start).
 
 ## ✅ 2026-05-01 — Build green + Phase 0/1/2 closed
 
@@ -17,13 +17,14 @@
 - **`970ed9f` `feat(poly): Sprint 22`** — Cron prompt-drift audit. `scripts/check-prompt-drift.ts` compares NEWS_SYNC_PROMPT (text) and ai-probability (PROMPT_VERSION + PROMPT_TEMPLATE_HASH) against snapshots in `docs/prompts/snapshots/`. 10 tests (pure-fn + tmpdir). vitest.config.ts now includes `scripts/**`.
 - **`1045e12` `feat(poly): Sprint 21`** — News↔position intersection alert. Slug-token overlap match (≥2 distinct hits, whole-word, length ≥4 with stopword filter). New table `poly_news_position_alerts` (PK enforces dedupe via INSERT OR IGNORE). Migration v1.14.0 applied to live DB; `ensureTable` keeps deploy/migrate gap safe. 16 tests. Wired into `scripts/news-sync.ts` so the scheduler's stdout→Telegram path delivers alerts on each fresh news cycle.
 - **`b7196e4` [chore]** — `scripts/register-prompt-drift-cron.ts` registers the Sprint 22 audit as a kind=shell daily cron at 0 8 * * *. Live DB now has task `prompt-drift-3094`, first fire 2026-05-02 08:00.
+- **`08c3c65` `refactor(poly): Sprint 26`** — News-sync now routes through `pwm ask --json --intent quick` (perplexity-web-mcp-cli) instead of Perplexity REST. PerplexityFetcher contract preserved (`makePwmCliFetcher(runner)` factory + injectable runner for tests). REST impl renamed to `restFetcher`, kept exported. JSON output shape verified by reading the pwm Python source. 7 new pwm-fetcher tests. To activate: `pwm login` (operator), set `PPLX_API_KEY=pwm` in .env, `pm2 restart`.
 
 ### Verification
 
 | Check | Result |
 |---|---|
 | `npm run typecheck` | clean |
-| `npm test` | 680 / 680 pass (49 files) |
+| `npm test` | 687 / 687 pass (49 files) |
 | `npm run build` | dist regenerated |
 | pm2 `claudeclaw-main` | online, 3 restarts (2 from this session's deploys), 0 unstable |
 | Live `fetchActiveMarkets` | 864 markets parsed in 942ms (was 400-600s) |
@@ -36,7 +37,7 @@
 1. **A1/A2/A3 acks in MISSION.md sign-off log** — proposed since 2026-04-29; closes gate box 7. Plan §5.
 2. **`.env.stale-2026-04-26.bak`** — leak surface is local-disk-only (verified). Rotate the Anthropic key + delete the file when convenient. The deferred F4 incident note (`docs/research/incident-2026-04-26-anthropic-key-leak.md`) is recommended once the rotation lands.
 3. **Codex review** — TRUST.md gates pm2 restart on codex review. I shipped + restarted before running codex; running it post-hoc on the 6 commits closes the audit loop.
-4. **PPLX key** — operator-skipped. News-sync remains dormant. When swapped, Sprint 21 intersection alerts come live automatically.
+4. **`pwm login` + `PPLX_API_KEY=pwm` in .env** — replaces the prior PPLX_API_KEY-as-credential setup. After Sprint 26 the env var is just an on/off sentinel; real auth is `pwm login` (interactive OTP). When activated, both Sprint 18 news-sync AND Sprint 21 intersection alerts come live automatically. State right now: `pwm doctor` shows token expired, Pro Search 0 remaining (weekly reset pending).
 5. **Phase 3 (Tier-3 flag flips)** — `POLY_REFLECTION_ENABLED`, `POLY_EXIT_ENABLED`, `POLY_EXPOSURE_AWARE_SIZING`. Earliest 2026-05-15 per A2 deferral; needs ≥15-20 resolved trades. Don't flip without operator nod in MISSION.md.
 
 ### Pre-existing dirty state (not mine)
