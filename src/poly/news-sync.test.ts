@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   hashPrompt, extractSummary, insertNewsItem, writeHeartbeat, readHeartbeat,
-  runNewsSync, NEWS_SYNC_PROMPT,
-  type PerplexityResponse, type PerplexityFetcher,
+  runNewsSync, NEWS_SYNC_PROMPT, makePwmCliFetcher,
+  type PerplexityResponse, type PerplexityFetcher, type PwmRunner,
 } from './news-sync.js';
 
 function freshDb(): Database.Database {
@@ -201,5 +201,72 @@ describe('runNewsSync', () => {
     expect(count.c).toBe(1);
     // Heartbeat advances even on dedupe (so monitoring sees the cron fired).
     expect(readHeartbeat(db)).toBe(1_000_500);
+  });
+});
+
+describe('pwmCliFetcher (Sprint 26 — pwm CLI subprocess)', () => {
+  function fakeRunner(stdout: string, code = 0, stderr = ''): { runner: PwmRunner; calls: { args: string[]; env: NodeJS.ProcessEnv }[] } {
+    const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
+    const runner: PwmRunner = async (args, env) => {
+      calls.push({ args, env });
+      return { code, stdout, stderr };
+    };
+    return { runner, calls };
+  }
+
+  it('spawns pwm with the expected argv', async () => {
+    const { runner, calls } = fakeRunner(JSON.stringify({
+      answer: 'Headline A', citations: [], model: 'sonar', source: 'web',
+    }));
+    const fetcher = makePwmCliFetcher(runner);
+    await fetcher({ prompt: 'test prompt', apiKey: '', baseUrl: '', model: '' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args).toEqual(['ask', 'test prompt', '--json', '--intent', 'quick', '--source', 'web']);
+  });
+
+  it('sets PYTHONIOENCODING=utf-8 in env', async () => {
+    const { runner, calls } = fakeRunner(JSON.stringify({ answer: 'x', model: 'sonar' }));
+    const fetcher = makePwmCliFetcher(runner);
+    await fetcher({ prompt: 'p', apiKey: '', baseUrl: '', model: '' });
+    expect(calls[0]!.env.PYTHONIOENCODING).toBe('utf-8');
+  });
+
+  it('parses well-formed JSON into PerplexityResponse', async () => {
+    const { runner } = fakeRunner(JSON.stringify({
+      answer: '- bullet one\n- bullet two', citations: ['https://a'], model: 'sonar', source: 'web',
+    }));
+    const fetcher = makePwmCliFetcher(runner);
+    const resp = await fetcher({ prompt: 'p', apiKey: '', baseUrl: '', model: '' });
+    expect(resp.choices?.[0]?.message?.content).toBe('- bullet one\n- bullet two');
+    expect(resp.model).toBe('sonar');
+    expect(resp.citations).toEqual(['https://a']);
+  });
+
+  it('falls back to model="sonar" when JSON omits model', async () => {
+    const { runner } = fakeRunner(JSON.stringify({ answer: 'x' }));
+    const fetcher = makePwmCliFetcher(runner);
+    const resp = await fetcher({ prompt: 'p', apiKey: '', baseUrl: '', model: '' });
+    expect(resp.model).toBe('sonar');
+  });
+
+  it('rejects when pwm exits non-zero with stderr message', async () => {
+    const { runner } = fakeRunner('', 1, 'AuthenticationError: token expired');
+    const fetcher = makePwmCliFetcher(runner);
+    await expect(fetcher({ prompt: 'p', apiKey: '', baseUrl: '', model: '' }))
+      .rejects.toThrow(/pwm exit 1.*AuthenticationError/);
+  });
+
+  it('rejects when stdout is not valid JSON', async () => {
+    const { runner } = fakeRunner('not json{');
+    const fetcher = makePwmCliFetcher(runner);
+    await expect(fetcher({ prompt: 'p', apiKey: '', baseUrl: '', model: '' }))
+      .rejects.toThrow(/JSON parse failed/);
+  });
+
+  it('rejects when JSON is missing the answer field', async () => {
+    const { runner } = fakeRunner(JSON.stringify({ model: 'sonar', citations: [] }));
+    const fetcher = makePwmCliFetcher(runner);
+    await expect(fetcher({ prompt: 'p', apiKey: '', baseUrl: '', model: '' }))
+      .rejects.toThrow(/missing answer/);
   });
 });

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import crypto from 'crypto';
+import { spawn } from 'child_process';
 
 export interface PerplexityResponse {
   id?: string;
@@ -111,7 +112,11 @@ export interface PerplexityFetcher {
   (args: { prompt: string; apiKey: string; baseUrl: string; model: string }): Promise<PerplexityResponse>;
 }
 
-export const defaultPerplexityFetcher: PerplexityFetcher = async ({ prompt, apiKey, baseUrl, model }) => {
+/**
+ * Sprint 18 REST implementation. Kept exported for backward compatibility
+ * and tests that explicitly want the HTTP path; not the default any more.
+ */
+export const restFetcher: PerplexityFetcher = async ({ prompt, apiKey, baseUrl, model }) => {
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -131,6 +136,91 @@ export const defaultPerplexityFetcher: PerplexityFetcher = async ({ prompt, apiK
   return await res.json() as PerplexityResponse;
 };
 
+/**
+ * Spawn boundary for the pwm CLI. Exported so tests can override with a
+ * fake without monkeypatching child_process. In production this is the
+ * real `child_process.spawn` thinly wrapped to capture stdout/stderr/code.
+ */
+export type PwmRunner = (args: string[], env: NodeJS.ProcessEnv) => Promise<{
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}>;
+
+export const realPwmRunner: PwmRunner = (args, env) => new Promise((resolve, reject) => {
+  const bin = process.env.PWM_BIN ?? 'pwm';
+  const child = spawn(bin, args, { env, shell: false });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d) => { stdout += String(d); });
+  child.stderr.on('data', (d) => { stderr += String(d); });
+  child.on('error', (err) => reject(new Error(`pwm spawn failed: ${err.message}`)));
+  child.on('close', (code) => resolve({ code, stdout, stderr }));
+});
+
+interface PwmAskJsonOutput {
+  answer?: string;
+  citations?: string[];
+  model?: string;
+  source?: string;
+}
+
+/**
+ * Sprint 26 — replaces the REST path. Routes through the locally-installed
+ * `pwm` CLI (perplexity-web-mcp-cli). Auth is managed by `pwm login` on
+ * the host, NOT by PPLX_API_KEY in .env. The `apiKey` arg is preserved on
+ * the PerplexityFetcher contract for backward compatibility but is unused
+ * here; runNewsSync still gates the call on its truthiness as the on/off
+ * switch (set PPLX_API_KEY=pwm or any truthy value to enable).
+ */
+export function makePwmCliFetcher(runner: PwmRunner = realPwmRunner): PerplexityFetcher {
+  return async ({ prompt }) => {
+    const args = [
+      'ask', prompt,
+      '--json',
+      '--intent', 'quick',     // free Sonar tier; preserves Pro/Deep quotas
+      '--source', 'web',
+    ];
+    const env = { ...process.env, PYTHONIOENCODING: 'utf-8' };
+
+    const result = await runner(args, env);
+    if (result.code !== 0) {
+      const detail = result.stderr.trim() || result.stdout.trim();
+      throw new Error(`pwm exit ${result.code}: ${detail.slice(0, 300)}`);
+    }
+
+    let parsed: PwmAskJsonOutput;
+    try {
+      parsed = JSON.parse(result.stdout) as PwmAskJsonOutput;
+    } catch (err) {
+      throw new Error(
+        `pwm JSON parse failed: ${(err as Error).message}; stdout head: ${result.stdout.slice(0, 200)}`,
+      );
+    }
+
+    if (!parsed.answer || typeof parsed.answer !== 'string') {
+      throw new Error(`pwm response missing answer field: ${result.stdout.slice(0, 200)}`);
+    }
+
+    return {
+      model: parsed.model ?? 'sonar',
+      choices: [{
+        message: { role: 'assistant', content: parsed.answer },
+        finish_reason: 'stop',
+      }],
+      citations: parsed.citations,
+    };
+  };
+}
+
+export const pwmCliFetcher: PerplexityFetcher = makePwmCliFetcher();
+
+/**
+ * Default fetcher used when the caller does not inject one. Sprint 26:
+ * pwm CLI subprocess, replacing the Sprint 18 REST implementation.
+ */
+export const defaultPerplexityFetcher: PerplexityFetcher = pwmCliFetcher;
+
 export interface RunNewsSyncResult {
   ok: boolean;
   reason?: string;
@@ -139,8 +229,10 @@ export interface RunNewsSyncResult {
 
 /**
  * High-level orchestration. Skips cleanly (returns ok: false with reason)
- * when API key absent — caller maps that to exit code 0 (intentional skip,
- * not failure) so a missing key during operator setup doesn't spam alerts.
+ * when the apiKey/sentinel is absent — caller maps that to exit code 0
+ * (intentional skip, not failure). Sprint 26: the apiKey value is no
+ * longer an HTTP credential; it's the on/off switch for the pwm CLI path.
+ * Set PPLX_API_KEY=pwm (or any truthy placeholder) to enable.
  */
 export async function runNewsSync(
   db: Database.Database,
@@ -154,7 +246,7 @@ export async function runNewsSync(
   },
 ): Promise<RunNewsSyncResult> {
   if (!config.apiKey) {
-    return { ok: false, reason: 'PPLX_API_KEY not set — news-sync skipped' };
+    return { ok: false, reason: 'PPLX_API_KEY (pwm enable-flag) not set — news-sync skipped' };
   }
   const prompt = config.prompt ?? NEWS_SYNC_PROMPT;
   const fetcher = config.fetcher ?? defaultPerplexityFetcher;
