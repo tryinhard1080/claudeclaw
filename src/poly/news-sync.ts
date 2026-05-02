@@ -42,6 +42,32 @@ export function extractSummary(resp: PerplexityResponse): string {
 }
 
 /**
+ * Detects when the model returns a refusal instead of actual news.
+ * sonar on intent=quick sometimes refuses real-time queries rather than
+ * searching. We treat these as skippable (not errors) so we don't pollute
+ * the DB with garbage rows or fire false alarms.
+ */
+export function isRefusalResponse(text: string): boolean {
+  const lower = text.toLowerCase();
+  const patterns = [
+    "don't have real-time",
+    "do not have real-time",
+    "don't have access to real-time",
+    "no access to real-time",
+    "can't pull the last",
+    "cannot pull the last",
+    "can't provide real-time",
+    "cannot provide real-time",
+    "i don't have the ability to browse",
+    "i cannot browse",
+    "my training data",
+    "i'm unable to access current",
+    "unable to access real-time",
+  ];
+  return patterns.some((p) => lower.includes(p));
+}
+
+/**
  * Insert a news item, deduping against any row written within the last
  * DEDUPE_WINDOW_SEC seconds with the same prompt_hash AND identical summary.
  * Same prompt + same summary in a tight window means Perplexity returned
@@ -263,6 +289,10 @@ export async function runNewsSync(
     summary = extractSummary(raw);
   } catch (err) {
     return { ok: false, reason: `parse failed: ${String(err).slice(0, 200)}` };
+  }
+
+  if (isRefusalResponse(summary)) {
+    return { ok: false, reason: `sonar-refusal: model declined real-time search (not inserted)` };
   }
 
   const inserted = insertNewsItem(db, {

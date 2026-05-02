@@ -36,8 +36,8 @@ async function main(): Promise<void> {
     });
 
     if (!result.ok) {
-      const noKey = result.reason?.includes('PPLX_API_KEY');
-      if (noKey) {
+      const isSkip = result.reason?.includes('PPLX_API_KEY') || result.reason?.includes('sonar-refusal');
+      if (isSkip) {
         console.log(`[news-sync] skipped: ${result.reason}`);
         process.exit(0); // intentional skip — exit clean
       }

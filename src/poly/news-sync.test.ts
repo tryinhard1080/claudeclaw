@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
-  hashPrompt, extractSummary, insertNewsItem, writeHeartbeat, readHeartbeat,
+  hashPrompt, extractSummary, isRefusalResponse, insertNewsItem, writeHeartbeat, readHeartbeat,
   runNewsSync, NEWS_SYNC_PROMPT, makePwmCliFetcher,
   type PerplexityResponse, type PerplexityFetcher, type PwmRunner,
 } from './news-sync.js';
@@ -59,6 +59,24 @@ describe('extractSummary', () => {
   });
   it('throws on empty content', () => {
     expect(() => extractSummary(mockResponse('   '))).toThrow(/missing/);
+  });
+});
+
+describe('isRefusalResponse', () => {
+  it('detects sonar real-time refusals', () => {
+    expect(isRefusalResponse("I don't have real-time feeds in this moment")).toBe(true);
+    expect(isRefusalResponse("I don't have access to real-time data")).toBe(true);
+    expect(isRefusalResponse("I can't pull the last 2 hours of headlines directly")).toBe(true);
+    expect(isRefusalResponse("My training data only goes up to...")).toBe(true);
+    expect(isRefusalResponse("I cannot provide real-time market updates")).toBe(true);
+  });
+  it('does not flag real news summaries', () => {
+    expect(isRefusalResponse("• Fed holds rates steady; Powell signals patience")).toBe(false);
+    expect(isRefusalResponse("Trump tariff pause lifts S&P 500 futures 1.2%")).toBe(false);
+    expect(isRefusalResponse("No major market-moving news in the last 2 hours")).toBe(false);
+  });
+  it('is case-insensitive', () => {
+    expect(isRefusalResponse("I DON'T HAVE REAL-TIME FEEDS")).toBe(true);
   });
 });
 
@@ -172,6 +190,18 @@ describe('runNewsSync', () => {
     const r = await runNewsSync(db, { apiKey: 'k', baseUrl: 'http://x', model: 'sonar', fetcher });
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/parse failed/);
+    expect(readHeartbeat(db)).toBeNull();
+  });
+
+  it('skips insert when model returns a refusal — ok=false, no DB write, no heartbeat', async () => {
+    const refusal = "I don't have real-time feeds in this moment, so I can't pull the last 2 hours of headlines directly.";
+    const fetcher: PerplexityFetcher = async () => mockResponse(refusal);
+    const r = await runNewsSync(db, { apiKey: 'k', baseUrl: 'http://x', model: 'sonar', fetcher, nowSec: 2_000_000 });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/sonar-refusal/);
+    expect(r.inserted).toBeUndefined();
+    const count = db.prepare(`SELECT COUNT(*) AS c FROM news_items`).get() as { c: number };
+    expect(count.c).toBe(0);
     expect(readHeartbeat(db)).toBeNull();
   });
 
