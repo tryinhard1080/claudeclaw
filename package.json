@@ -17,6 +17,7 @@
     "status": "tsx scripts/status.ts",
     "trading:status": "tsx scripts/trading-readiness.ts",
     "trading:pm2:write": "tsx scripts/regime-trader-pm2.ts",
+    "poly:paper:status": "tsx scripts/poly-paper-readiness.ts",
     "agent:create": "bash scripts/agent-create.sh",
     "agent:start": "node dist/index.js --agent",
     "pm2:start": "pm2 start ecosystem.config.cjs",

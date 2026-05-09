@@ -37,7 +37,8 @@ async function main() {
       created_at INTEGER NOT NULL, market_slug TEXT NOT NULL, outcome_token_id TEXT NOT NULL,
       outcome_label TEXT NOT NULL, market_price REAL NOT NULL, estimated_prob REAL NOT NULL,
       edge_pct REAL NOT NULL, confidence TEXT NOT NULL, reasoning TEXT NOT NULL,
-      contrarian TEXT, approved INTEGER NOT NULL, rejection_reasons TEXT, paper_trade_id INTEGER);
+      contrarian TEXT, approved INTEGER NOT NULL, rejection_reasons TEXT, paper_trade_id INTEGER,
+      prompt_version TEXT, model TEXT, regime_label TEXT, provider TEXT);
     CREATE TABLE IF NOT EXISTS poly_paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT,
       created_at INTEGER NOT NULL, market_slug TEXT NOT NULL, outcome_token_id TEXT NOT NULL,
       outcome_label TEXT NOT NULL, side TEXT NOT NULL, entry_price REAL NOT NULL,
@@ -52,6 +53,18 @@ async function main() {
     CREATE TABLE IF NOT EXISTS poly_eval_cache (cache_key TEXT PRIMARY KEY, slug TEXT NOT NULL,
       outcome_token_id TEXT NOT NULL, created_at INTEGER NOT NULL, probability REAL NOT NULL,
       confidence TEXT NOT NULL, reasoning TEXT NOT NULL, contrarian TEXT);
+    CREATE TABLE IF NOT EXISTS poly_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS poly_scan_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, started_at INTEGER NOT NULL,
+      duration_ms INTEGER, market_count INTEGER, status TEXT NOT NULL, error TEXT);
+    CREATE TABLE IF NOT EXISTS poly_regime_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
+      vix REAL, btc_dominance REAL, yield_10y REAL, regime_label TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS poly_calibration_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
+      window_start INTEGER NOT NULL, window_end INTEGER NOT NULL, n_samples INTEGER NOT NULL,
+      brier_score REAL, log_loss REAL, win_rate REAL, curve_json TEXT NOT NULL,
+      by_regime_json TEXT);
   `);
   console.log('  ✓ schema applied');
 
@@ -62,6 +75,8 @@ async function main() {
   if (markets.length === 0) throw new Error('zero markets — Gamma API unreachable?');
   upsertMarkets(db, markets);
   capturePrices(db, markets);
+  db.prepare(`INSERT INTO poly_scan_runs (started_at, duration_ms, market_count, status) VALUES (?, ?, ?, ?)`)
+    .run(Math.floor(Date.now() / 1000), Date.now() - startedAt, markets.length, 'ok');
   const cached = (db.prepare(`SELECT COUNT(*) AS n FROM poly_markets WHERE closed=0`).get() as { n: number }).n;
   console.log(`  ✓ ${cached} markets upserted into poly_markets`);
 
