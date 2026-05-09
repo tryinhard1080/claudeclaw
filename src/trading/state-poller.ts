@@ -30,6 +30,18 @@ export interface InstanceStaleEvent {
   ageMs: number;
 }
 
+function parseNextOpenMs(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isClosedUntilNextOpen(state: InstanceState, nowMs: number): boolean {
+  if (state.market_open !== false) return false;
+  const nextOpenMs = parseNextOpenMs(state.next_open);
+  return nextOpenMs !== null && nowMs < nextOpenMs;
+}
+
 /**
  * Polls regime-trader instance state.json files and emits events
  * on regime changes, circuit breaker activations, and errors.
@@ -78,8 +90,13 @@ export class StatePoller extends EventEmitter {
     const stateFile = path.join(this.basePath, 'instances', name, 'data', 'state.json');
     try {
       const st = await stat(stateFile);
-      const ageMs = this.now() - st.mtimeMs;
-      if (ageMs > this.stalenessMs) {
+      const nowMs = this.now();
+      const ageMs = nowMs - st.mtimeMs;
+      const raw = await readFile(stateFile, 'utf8');
+      const state: InstanceState = JSON.parse(raw);
+      const intentionallyPaused = isClosedUntilNextOpen(state, nowMs);
+
+      if (!intentionallyPaused && ageMs > this.stalenessMs) {
         if (!this.staleFlagged.has(name)) {
           const event: InstanceStaleEvent = { instance: name, stateFileMtime: st.mtimeMs, ageMs };
           this.emit('instance_stale', event);
@@ -90,12 +107,10 @@ export class StatePoller extends EventEmitter {
         this.staleFlagged.delete(name);
         logger.info({ instance: name }, 'Instance state file is fresh again');
       }
-      const raw = await readFile(stateFile, 'utf8');
-      const state: InstanceState = JSON.parse(raw);
 
       // Detect regime change
       const prevRegime = this.previousRegimes.get(name);
-      if (prevRegime !== undefined && prevRegime !== state.regime.regime) {
+      if (state.regime && prevRegime !== undefined && prevRegime !== state.regime.regime) {
         const event: RegimeChangeEvent = {
           instance: name,
           from: prevRegime,
@@ -105,12 +120,14 @@ export class StatePoller extends EventEmitter {
         this.emit('regime_change', event);
         logger.info(event, 'Regime change detected');
       }
-      this.previousRegimes.set(name, state.regime.regime);
+      if (state.regime) {
+        this.previousRegimes.set(name, state.regime.regime);
+      }
 
       // Detect circuit breaker activations (only fire on NEW activations)
       const prevBreakers = this.previousBreakers.get(name) ?? new Set<string>();
       const currentBreakers = new Set<string>();
-      if (state.risk.circuit_breakers) {
+      if (state.risk?.circuit_breakers) {
         for (const [key, active] of Object.entries(state.risk.circuit_breakers)) {
           if (active) {
             currentBreakers.add(key);

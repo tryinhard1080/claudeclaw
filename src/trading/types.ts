@@ -56,14 +56,15 @@ export interface RecentSignal {
 export interface InstanceState {
   mode: 'paper' | 'live' | 'backtest';
   market_open: boolean;
+  next_open?: string;
   equity: number;
   cash: number;
-  buying_power: number;
-  regime: RegimeState;
-  risk: RiskState;
-  positions: PositionState[];
-  regime_infos: RegimeInfo[];
-  recent_signals: RecentSignal[];
+  buying_power?: number;
+  regime?: RegimeState;
+  risk?: RiskState;
+  positions?: PositionState[];
+  regime_infos?: RegimeInfo[];
+  recent_signals?: RecentSignal[];
 }
 
 export interface TradingAlert {
