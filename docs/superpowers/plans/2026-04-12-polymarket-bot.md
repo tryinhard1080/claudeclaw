@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-04-12-polymarket-bot-design.md` — read before starting any task. All code must match its contracts.
 
-**Full blueprint (reference only):** `docs/mega-prompt-polymarket-bot.md`
+**Archived blueprint (reference only):** `docs/archive/blueprints/mega-prompt-polymarket-bot.md`
 
 ---
 

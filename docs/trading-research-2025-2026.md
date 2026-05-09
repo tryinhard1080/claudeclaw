@@ -529,7 +529,7 @@ Several equity strategies above have prediction market analogues:
 
 ### Implementation Blueprint
 
-Full mega prompt with architecture, risk management, ClaudeClaw integration, and phased implementation: see `docs/mega-prompt-polymarket-bot.md`
+Archived mega prompt with architecture, risk management, ClaudeClaw integration, and phased implementation: see `docs/archive/blueprints/mega-prompt-polymarket-bot.md`
 
 ---
 

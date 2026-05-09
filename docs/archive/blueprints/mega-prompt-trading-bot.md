@@ -1,4 +1,8 @@
-# Mega Prompt: ClaudeClaw + Regime Trader Integration
+# Archived Blueprint: ClaudeClaw + Regime Trader Integration
+
+This is a historical blueprint, not the current operating source of truth.
+Use `MISSION.md`, `HEARTBEAT.md`, `docs/runbooks/`, and the current code for
+live work.
 
 > **Target**: Claude Code (autonomous agent mode)
 > **Framework**: ReAct + Stop Conditions

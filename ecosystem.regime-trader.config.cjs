@@ -1,10 +1,18 @@
-// pm2 ecosystem for the regime-trader Python sidecar.
+// Legacy compatibility manifest for the regime-trader Python sidecar.
+//
+// Prefer the durable generator:
+//   npm run trading:pm2:write
+//   pm2 start C:\Users\Richard\.claudeclaw\regime-trader.pm2.json
+//
+// Keep this file aligned with scripts/regime-trader-pm2-config.ts so an
+// accidental direct PM2 start cannot point at an obsolete project path.
+//
 // Designed to auto-start on weekday market open (09:30 ET) and let the
 // process exit naturally at close (regime-trader's main.py exits when
 // market is CLOSED). pm2 cron_restart re-launches it weekday 09:30 ET.
 //
 // Usage:
-//   pm2 start ecosystem.regime-trader.config.js
+//   pm2 start ecosystem.regime-trader.config.cjs
 //   pm2 save
 //
 // TZ for cron_restart is the system TZ. If the host is in ET, use
@@ -15,10 +23,10 @@ module.exports = {
   apps: [
     {
       name: 'regime-trader-spy-agg',
-      script: 'main.py',
+      script: 'C:/Code/regime-trader/main.py',
       args: '--paper --instance spy-aggressive',
-      interpreter: 'python',
-      cwd: 'C:/Projects/regime-trader',
+      interpreter: 'C:/Code/regime-trader/.venv/Scripts/python.exe',
+      cwd: 'C:/Code/regime-trader',
       autorestart: false,
       cron_restart: '30 9 * * 1-5',
       out_file: 'C:/Users/Richard/.pm2/logs/regime-trader-spy-agg-out.log',
@@ -26,10 +34,10 @@ module.exports = {
     },
     {
       name: 'regime-trader-spy-cons',
-      script: 'main.py',
+      script: 'C:/Code/regime-trader/main.py',
       args: '--paper --instance spy-conservative',
-      interpreter: 'python',
-      cwd: 'C:/Projects/regime-trader',
+      interpreter: 'C:/Code/regime-trader/.venv/Scripts/python.exe',
+      cwd: 'C:/Code/regime-trader',
       autorestart: false,
       cron_restart: '30 9 * * 1-5',
       out_file: 'C:/Users/Richard/.pm2/logs/regime-trader-spy-cons-out.log',

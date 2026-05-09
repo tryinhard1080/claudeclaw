@@ -2,7 +2,7 @@
 
 > **Status**: Approved design, ready for implementation plan
 > **Scope**: Read-only intel (Phase A) + autonomous paper trading MVP (Phase C)
-> **Full blueprint reference**: `docs/mega-prompt-polymarket-bot.md` (836-line research doc)
+> **Archived blueprint reference**: `docs/archive/blueprints/mega-prompt-polymarket-bot.md` (historical research doc)
 > **What this spec covers**: the narrow, shippable subset of that blueprint
 
 ## 1. Goals and non-goals
@@ -493,4 +493,4 @@ The following are called out so they don't silently leak into the implementation
 
 ## 9. Relationship to the full blueprint
 
-`docs/mega-prompt-polymarket-bot.md` remains the canonical research-backed design doc for the end-state system. This spec is the practical first slice — ~20% of the blueprint, chosen to deliver a running, learning-producing paper trader with minimal architectural lock-in. When Phase D work begins, it will extend these modules (add strategies to `strategies/`, add analyst agents that feed a debate pipeline above `strategy-engine.ts`) rather than replace them.
+`docs/archive/blueprints/mega-prompt-polymarket-bot.md` remains archived reference material, while the live source of truth is `MISSION.md`, `HEARTBEAT.md`, current runbooks, and the code/tests. This spec is the practical first slice of that older blueprint, chosen to deliver a running, learning-producing paper trader with minimal architectural lock-in. When Phase D work begins, it should extend these modules (add strategies to `strategies/`, add analyst agents that feed a debate pipeline above `strategy-engine.ts`) rather than replace them.

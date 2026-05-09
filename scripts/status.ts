@@ -29,6 +29,12 @@ export function pm2ServiceDescribeCommands(): string[] {
   return ['pm2 describe claudeclaw-main', 'pm2 describe claudeclaw'];
 }
 
+export function resolveStoreDir(projectRoot: string, configuredStoreDir?: string): string {
+  return configuredStoreDir
+    ? path.resolve(configuredStoreDir)
+    : path.join(projectRoot, 'store');
+}
+
 function ok(msg: string) {
   console.log(`  ${c.green}✓${c.reset}  ${msg}`);
 }
@@ -203,7 +209,7 @@ async function main() {
   }
 
   // Memory DB
-  const dbPath = path.join(PROJECT_ROOT, 'store', 'claudeclaw.db');
+  const dbPath = path.join(resolveStoreDir(PROJECT_ROOT, env.STORE_DIR), 'claudeclaw.db');
   if (fs.existsSync(dbPath)) {
     try {
       const db = new Database(dbPath, { readonly: true });

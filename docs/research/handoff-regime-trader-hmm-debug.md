@@ -1,6 +1,6 @@
 # Handoff — regime-trader HMM prediction size-0 bug
 
-> This is a handoff for a **separate Claude Code session** opened in `C:/Projects/regime-trader/`. Do not work on this from ClaudeClaw — per `CLAUDE.md`, equity logic lives only in the regime-trader repo. Copy-paste the "Starter prompt" section into that session.
+> This is a historical handoff for a **separate Claude Code session** opened in `C:/Code/regime-trader/`. Do not work on this from ClaudeClaw - equity logic lives only in the regime-trader repo. Copy-paste the "Starter prompt" section into that session only if this old failure reappears.
 
 ## Status snapshot (2026-04-16)
 

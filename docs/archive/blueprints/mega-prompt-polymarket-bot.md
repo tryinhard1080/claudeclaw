@@ -1,4 +1,8 @@
-# Mega Prompt: Polymarket Prediction Market Trading Bot
+# Archived Blueprint: Polymarket Prediction Market Trading Bot
+
+This is a historical blueprint, not the current operating source of truth.
+Use `MISSION.md`, `HEARTBEAT.md`, `docs/runbooks/`, and the current code for
+live work.
 
 > **Target**: Claude Code (autonomous agent mode) integrated with ClaudeClaw Telegram bot
 > **Framework**: Multi-Agent Pipeline with Bull/Bear Debate + Fractional Kelly Sizing
