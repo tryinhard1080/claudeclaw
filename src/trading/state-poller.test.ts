@@ -16,6 +16,16 @@ function mkState(regime = 'NEUTRAL', confidence = 0.8, breakers: Record<string, 
   });
 }
 
+function mkClosedMarketState(nextOpen: string) {
+  return JSON.stringify({
+    mode: 'paper',
+    market_open: false,
+    next_open: nextOpen,
+    equity: 100_000,
+    cash: 50_000,
+  });
+}
+
 async function writeStateFile(base: string, name: string, content: string, mtime?: number): Promise<string> {
   const dir = path.join(base, 'instances', name, 'data');
   await mkdir(dir, { recursive: true });
@@ -121,6 +131,30 @@ describe('StatePoller', () => {
     poller.on('instance_stale', (e: InstanceStaleEvent) => events.push(e));
     await (poller as any).pollAll();
     expect(events).toHaveLength(0);
+  });
+
+  it('does NOT emit instance_stale for an old closed-market state before next_open', async () => {
+    const now = Date.parse('2026-05-09T15:00:00.000Z');
+    const old = now - 24 * 60 * 60 * 1000;
+    await writeStateFile(
+      base,
+      'spy',
+      mkClosedMarketState('2026-05-11T13:30:00.000Z'),
+      old,
+    );
+    const poller = new StatePoller(base, ['spy'], 99999, {
+      stalenessMs: 60 * 60 * 1000,
+      now: () => now,
+    });
+    const staleEvents: InstanceStaleEvent[] = [];
+    const errorEvents: InstanceErrorEvent[] = [];
+    poller.on('instance_stale', (e: InstanceStaleEvent) => staleEvents.push(e));
+    poller.on('instance_error', (e: InstanceErrorEvent) => errorEvents.push(e));
+
+    await (poller as any).pollAll();
+
+    expect(staleEvents).toHaveLength(0);
+    expect(errorEvents).toHaveLength(0);
   });
 
   it('re-arms staleness alert after file becomes fresh then stale again', async () => {

@@ -25,6 +25,19 @@ function formatPct(n: number): string {
 }
 
 function formatInstanceStatus(name: string, state: InstanceState, halted: boolean): string {
+  if (!state.regime || !state.risk) {
+    const lines = [
+      `⚪ ${name} (${state.mode})${halted ? ' [HALTED]' : ''}`,
+      `  Market: ${state.market_open ? 'OPEN' : 'CLOSED'}`,
+      `  Equity: ${formatEquity(state.equity)}`,
+      `  Cash: ${formatEquity(state.cash)}`,
+    ];
+    if (state.next_open) {
+      lines.push(`  Next open: ${state.next_open}`);
+    }
+    return lines.join('\n');
+  }
+
   const emoji = REGIME_EMOJI[state.regime.regime] || '⚪';
   const lines = [
     `${emoji} ${name} (${state.mode})${halted ? ' [HALTED]' : ''}`,
@@ -32,7 +45,7 @@ function formatInstanceStatus(name: string, state: InstanceState, halted: boolea
     `  Equity: ${formatEquity(state.equity)}`,
     `  Cash: ${formatEquity(state.cash)}`,
     `  Drawdown: daily ${formatPct(state.risk.daily_dd_pct)}, peak ${formatPct(state.risk.peak_dd_pct)}`,
-    `  Positions: ${state.positions.length}`,
+    `  Positions: ${state.positions?.length ?? 0}`,
   ];
 
   const activeBreakers = Object.entries(state.risk.circuit_breakers)
@@ -86,6 +99,12 @@ export function registerTradingCommands(
             const state = poller.getState(name);
             if (!state) {
               lines.push(`${name}: no data`);
+              continue;
+            }
+            if (!state.regime) {
+              lines.push(`${name}: market ${state.market_open ? 'OPEN' : 'CLOSED'}`);
+              if (state.next_open) lines.push(`  Next open: ${state.next_open}`);
+              lines.push('');
               continue;
             }
             const emoji = REGIME_EMOJI[state.regime.regime] || '⚪';
@@ -165,12 +184,16 @@ export function registerTradingCommands(
             const state = poller.getState(name);
             if (!state) continue;
             totalEquity += state.equity;
-            const unrealizedPnl = state.positions.reduce((sum, p) => sum + p.unrealized_pnl, 0);
+            const unrealizedPnl = (state.positions ?? []).reduce((sum, p) => sum + p.unrealized_pnl, 0);
             lines.push(`${name}:`);
             lines.push(`  Equity: ${formatEquity(state.equity)}`);
             lines.push(`  Unrealized P&L: ${formatEquity(unrealizedPnl)}`);
-            lines.push(`  Daily DD: ${formatPct(state.risk.daily_dd_pct)}`);
-            lines.push(`  Peak DD: ${formatPct(state.risk.peak_dd_pct)}`);
+            if (state.risk) {
+              lines.push(`  Daily DD: ${formatPct(state.risk.daily_dd_pct)}`);
+              lines.push(`  Peak DD: ${formatPct(state.risk.peak_dd_pct)}`);
+            } else {
+              lines.push(`  Market: ${state.market_open ? 'OPEN' : 'CLOSED'}`);
+            }
             lines.push('');
           }
           lines.push(`Total Equity: ${formatEquity(totalEquity)}`);
