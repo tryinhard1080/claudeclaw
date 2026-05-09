@@ -1,5 +1,7 @@
 # Trading Bot Operational Readiness Implementation Plan
 
+<!-- markdownlint-disable MD024 -->
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Bring the ClaudeClaw trading stack to a repeatable, monitored, paper-trading operational state with Weather Goat shadow evaluation, Regime Trader bridge health, authenticated research data, and explicit gates before any live-capital work.
@@ -29,6 +31,7 @@ The next target is "fully operational paper trading." Do not add real-money orde
 ### Task 1: Trading Readiness Command
 
 **Files:**
+
 - Create: `src/trading/ops-status.ts`
 - Create: `src/trading/ops-status.test.ts`
 - Create: `scripts/trading-readiness.ts`
@@ -36,9 +39,10 @@ The next target is "fully operational paper trading." Do not add real-money orde
 
 **Purpose:** One command should answer "is the trading bot operational right now?" without manually checking PM2, logs, DB rows, MCP, and Weather Goat.
 
-**Step 1: Write failing tests**
+#### Step 1: Write failing tests
 
 Test pure helpers in `src/trading/ops-status.test.ts`:
+
 - `summarizePm2Apps()` returns healthy when `claudeclaw-main` is online, Regime Trader apps are either running during market hours or stopped before `next_open`, and paths point to `C:\Code`.
 - `summarizeFinancialDatasetsMcp()` returns `needs_auth` for `financial-datasets: ... Needs authentication`.
 - `summarizeWeatherGoatDoctor()` returns healthy for `{"api":"reachable","auth":"not required"}`.
@@ -53,13 +57,14 @@ npx vitest run src/trading/ops-status.test.ts
 
 Expected: FAIL because the module does not exist.
 
-**Step 2: Implement minimal helpers**
+#### Step 2: Implement minimal helpers
 
 Implement pure functions in `src/trading/ops-status.ts`. Keep shell execution outside the pure helpers so tests do not require PM2, MCP, Weather Goat, or the live DB.
 
-**Step 3: Add the CLI wrapper**
+#### Step 3: Add the CLI wrapper
 
 Create `scripts/trading-readiness.ts` that:
+
 - Runs `pm2 jlist`.
 - Runs `weather-goat-pp-cli doctor --agent`.
 - Runs `claude mcp list`.
@@ -73,7 +78,7 @@ Add script:
 "trading:status": "tsx scripts/trading-readiness.ts"
 ```
 
-**Step 4: Verify**
+#### Step 4: Verify
 
 Run:
 
@@ -86,7 +91,7 @@ npm run trading:status
 
 Expected: tests/typecheck/build pass. `trading:status` should show one warning until `financial-datasets` OAuth is completed.
 
-**Step 5: Commit**
+#### Step 5: Commit
 
 ```powershell
 git add src/trading/ops-status.ts src/trading/ops-status.test.ts scripts/trading-readiness.ts package.json
@@ -98,6 +103,7 @@ git commit -m "Add trading readiness status command"
 ### Task 2: Durable Regime Trader PM2 Management
 
 **Files:**
+
 - Create: `scripts/regime-trader-pm2-config.ts`
 - Create: `scripts/regime-trader-pm2-config.test.ts`
 - Create: `scripts/regime-trader-pm2.ts`
@@ -106,9 +112,10 @@ git commit -m "Add trading readiness status command"
 
 **Purpose:** The live PM2 manifest now exists in `C:\Users\Richard\.claudeclaw\regime-trader.pm2.json`, but it should be regenerable from repo-owned code and documented.
 
-**Step 1: Write failing config tests**
+#### Step 1: Write failing config tests
 
 Test that the generated config contains:
+
 - `regime-trader-spy-agg` and `regime-trader-spy-cons`.
 - `cwd=C:/Code/regime-trader`.
 - `script=C:/Code/regime-trader/main.py`.
@@ -125,7 +132,7 @@ npx vitest run scripts/regime-trader-pm2-config.test.ts
 
 Expected: FAIL because the config builder does not exist.
 
-**Step 2: Implement config builder and installer**
+#### Step 2: Implement config builder and installer
 
 `scripts/regime-trader-pm2-config.ts` exports a pure `buildRegimeTraderPm2Config()` function.
 
@@ -142,16 +149,17 @@ Add script:
 "trading:pm2:write": "tsx scripts/regime-trader-pm2.ts"
 ```
 
-**Step 3: Document operating behavior**
+#### Step 3: Document operating behavior
 
 In `docs/runbooks/regime-trader-pm2.md`, document:
+
 - Why Regime Trader stops on weekends and after market close.
 - Why `autorestart=false` is intentional.
 - How to regenerate PM2 config.
 - How to verify paths with `pm2 describe`.
 - How to confirm fresh state files.
 
-**Step 4: Verify**
+#### Step 4: Verify
 
 Run:
 
@@ -166,7 +174,7 @@ pm2 describe regime-trader-spy-cons
 
 Expected: PM2 paths point at `C:\Code\regime-trader`; apps are either running during market hours or stopped after clean market-closed exit.
 
-**Step 5: Commit**
+#### Step 5: Commit
 
 ```powershell
 git add scripts/regime-trader-pm2-config.ts scripts/regime-trader-pm2-config.test.ts scripts/regime-trader-pm2.ts docs/runbooks/regime-trader-pm2.md package.json
@@ -178,6 +186,7 @@ git commit -m "Add durable Regime Trader PM2 setup"
 ### Task 3: Regime State Contract Hardening
 
 **Files:**
+
 - Create: `src/trading/state-schema.ts`
 - Create: `src/trading/state-schema.test.ts`
 - Modify: `src/trading/state-poller.ts`
@@ -186,9 +195,10 @@ git commit -m "Add durable Regime Trader PM2 setup"
 
 **Purpose:** ClaudeClaw should handle both full open-market Regime Trader state and partial closed-market state explicitly.
 
-**Step 1: Write failing schema tests**
+#### Step 1: Write failing schema tests
 
 Cover:
+
 - Full open-market state with `regime`, `risk`, `positions`, and `recent_signals`.
 - Partial closed-market state with `next_open`, `equity`, and `cash`.
 - Invalid state missing `market_open`.
@@ -203,20 +213,21 @@ npx vitest run src/trading/state-schema.test.ts
 
 Expected: FAIL because schema module does not exist.
 
-**Step 2: Implement schema parser**
+#### Step 2: Implement schema parser
 
 Use `zod` if already accepted locally, otherwise lightweight TypeScript validation. Export:
+
 - `parseInstanceState(raw: unknown): InstanceStateParseResult`
 - `isClosedUntilNextOpen(state, nowMs): boolean`
 - `isFullRegimeState(state): boolean`
 
-**Step 3: Wire poller and Telegram commands through schema**
+#### Step 3: Wire poller and Telegram commands through schema
 
 Update `src/trading/state-poller.ts` to parse with the schema before staleness decisions.
 
 Update `src/trading/telegram-commands.ts` to render partial closed-market state without touching optional regime/risk fields.
 
-**Step 4: Verify**
+#### Step 4: Verify
 
 Run:
 
@@ -227,7 +238,7 @@ npm run typecheck
 
 Expected: PASS.
 
-**Step 5: Commit**
+#### Step 5: Commit
 
 ```powershell
 git add src/trading/state-schema.ts src/trading/state-schema.test.ts src/trading/state-poller.ts src/trading/types.ts src/trading/telegram-commands.ts
@@ -239,14 +250,16 @@ git commit -m "Harden Regime Trader state contract"
 ### Task 4: Monday Market-Open Drill
 
 **Files:**
+
 - Create: `docs/runbooks/market-open-drill.md`
 - Create: `docs/runbooks/market-open-drill-results-template.md`
 
 **Purpose:** The bot is not fully operational until it survives a real weekday market open.
 
-**Step 1: Write the runbook**
+#### Step 1: Write the runbook
 
 Include exact schedule:
+
 - 8:20 AM Central / 9:20 AM Eastern: preflight.
 - 8:30 AM Central / 9:30 AM Eastern: confirm Regime Trader cron starts.
 - 8:35 AM Central: confirm state files move from closed-market partial state to open-market full state.
@@ -266,9 +279,10 @@ Get-Content C:\Code\regime-trader\instances\spy-aggressive\data\state.json -Tota
 Get-Content C:\Code\regime-trader\instances\spy-conservative\data\state.json -TotalCount 40
 ```
 
-**Step 2: Define pass/fail**
+#### Step 2: Define pass/fail
 
 Pass:
+
 - ClaudeClaw PM2 online.
 - Both Regime Trader instances start at cron.
 - State files update within 10 minutes of market open.
@@ -276,12 +290,13 @@ Pass:
 - Dashboard and Telegram commands still respond.
 
 Fail:
+
 - PM2 points at `C:\Projects`.
 - State files do not update.
 - Regime Trader exits because of missing credentials.
 - ClaudeClaw still reports stale after fresh state exists.
 
-**Step 3: Commit**
+#### Step 3: Commit
 
 ```powershell
 git add docs/runbooks/market-open-drill.md docs/runbooks/market-open-drill-results-template.md
@@ -293,6 +308,7 @@ git commit -m "Add market-open trading drill"
 ### Task 5: Polymarket Paper-Trading Acceptance Gate
 
 **Files:**
+
 - Modify: `scripts/poly-qa-smoke.ts`
 - Create: `scripts/poly-paper-readiness.ts`
 - Create: `scripts/poly-paper-readiness.test.ts`
@@ -301,9 +317,10 @@ git commit -m "Add market-open trading drill"
 
 **Purpose:** Paper trading should prove scanner, CLOB, evaluator, paper fills, positions, exits, and alerts before any live-order design.
 
-**Step 1: Write failing readiness tests**
+#### Step 1: Write failing readiness tests
 
 Test pure helpers that classify:
+
 - Recent scan health from `poly_scan_runs`.
 - Open paper position counts from `poly_paper_trades`.
 - Whether halt flag is on.
@@ -318,9 +335,10 @@ npx vitest run scripts/poly-paper-readiness.test.ts
 
 Expected: FAIL.
 
-**Step 2: Implement CLI**
+#### Step 2: Implement CLI
 
 `scripts/poly-paper-readiness.ts` should print:
+
 - Latest successful scan age.
 - Market count and captured count.
 - Number of signals in last 24h.
@@ -337,7 +355,7 @@ Add script:
 "poly:paper:status": "tsx scripts/poly-paper-readiness.ts"
 ```
 
-**Step 3: Run smoke checks**
+#### Step 3: Run smoke checks
 
 Run:
 
@@ -352,16 +370,17 @@ Optional paid evaluator check:
 npx tsx scripts/poly-qa-live-eval.ts
 ```
 
-**Step 4: Acceptance gate**
+#### Step 4: Acceptance gate
 
 Do not enable live-capital work until:
+
 - `poly-qa-smoke` passes.
 - Paper bot records at least 20 fresh signals.
 - At least one paper position opens and is visible in `/poly positions`.
 - Halt/resume drill passes.
 - DB backup/restore drill passes.
 
-**Step 5: Commit**
+#### Step 5: Commit
 
 ```powershell
 git add scripts/poly-qa-smoke.ts scripts/poly-paper-readiness.ts scripts/poly-paper-readiness.test.ts docs/runbooks/polymarket-paper-readiness.md package.json
@@ -373,6 +392,7 @@ git commit -m "Add Polymarket paper readiness gate"
 ### Task 6: Weather Goat Shadow Operationalization
 
 **Files:**
+
 - Create: `scripts/poly-weather-shadow-report.ts`
 - Create: `scripts/poly-weather-shadow-report.test.ts`
 - Modify: `src/poly/weather-shadow.ts`
@@ -381,9 +401,10 @@ git commit -m "Add Polymarket paper readiness gate"
 
 **Purpose:** Weather Goat should become a measurable advisory signal for weather markets, not a hidden toggle.
 
-**Step 1: Write failing report tests**
+#### Step 1: Write failing report tests
 
 Cover:
+
 - Count of `prompt_version='v3-weather-shadow'` rows.
 - Count of weather rows with matching resolved market.
 - Brier score for Weather Goat shadow rows.
@@ -398,9 +419,10 @@ npx vitest run scripts/poly-weather-shadow-report.test.ts
 
 Expected: FAIL.
 
-**Step 2: Implement report**
+#### Step 2: Implement report
 
 `scripts/poly-weather-shadow-report.ts` should print:
+
 - Total weather markets detected.
 - Shadow rows written.
 - Unsupported parse/location count.
@@ -408,11 +430,11 @@ Expected: FAIL.
 - Brier score if enough samples exist.
 - Recommendation: keep shadow only, expand parser, or consider promotion.
 
-**Step 3: Expand parser only when live coverage proves gaps**
+#### Step 3: Expand parser only when live coverage proves gaps
 
 Add new city/market-pattern tests only from observed unsupported market rows. Avoid overbuilding.
 
-**Step 4: Enable shadow safely**
+#### Step 4: Enable shadow safely
 
 In local `.env`, set:
 
@@ -434,15 +456,16 @@ Restart:
 npm run pm2:restart
 ```
 
-**Step 5: Acceptance gate**
+#### Step 5: Acceptance gate
 
 Weather Goat remains shadow-only until:
+
 - At least 50 shadow rows exist.
 - At least 10 resolved rows exist.
 - Brier score beats or usefully complements the primary strategy.
 - No weather shadow row has `paper_trade_id`.
 
-**Step 6: Commit**
+#### Step 6: Commit
 
 ```powershell
 git add scripts/poly-weather-shadow-report.ts scripts/poly-weather-shadow-report.test.ts src/poly/weather-shadow.ts src/poly/weather-shadow.test.ts docs/runbooks/weather-shadow-ops.md
@@ -454,12 +477,13 @@ git commit -m "Add Weather Goat shadow operations report"
 ### Task 7: Financial Datasets MCP Research Enablement
 
 **Files:**
+
 - Create: `docs/runbooks/financial-datasets-mcp.md`
 - Create: `docs/research/financial-research-agent-prompts.md`
 
 **Purpose:** Financial Datasets MCP benefits the agent research workflow, but it is not a runtime trading data feed until a deliberate integration exists.
 
-**Step 1: Complete manual OAuth**
+#### Step 1: Complete manual OAuth
 
 Inside Claude Code:
 
@@ -481,26 +505,28 @@ Expected:
 financial-datasets: https://mcp.financialdatasets.ai/ (HTTP) - ✓ Connected
 ```
 
-Official docs reference: https://docs.financialdatasets.ai/mcp-server
+Official docs reference: <https://docs.financialdatasets.ai/mcp-server>
 
-**Step 2: Write the runbook**
+#### Step 2: Write the runbook
 
 Document:
+
 - Install command.
 - Auth command.
 - Verification command.
 - What data it is allowed to influence: research notes, context, comparison.
 - What it must not do yet: directly trigger trades.
 
-**Step 3: Write prompt templates**
+#### Step 3: Write prompt templates
 
 Create prompts for:
+
 - Equity fundamentals snapshot.
 - Crypto context snapshot.
 - Company event research.
 - Cross-checking a market claim before a Polymarket evaluation.
 
-**Step 4: Commit**
+#### Step 4: Commit
 
 ```powershell
 git add docs/runbooks/financial-datasets-mcp.md docs/research/financial-research-agent-prompts.md
@@ -512,6 +538,7 @@ git commit -m "Document Financial Datasets MCP research workflow"
 ### Task 8: Dashboard And Alert Surface
 
 **Files:**
+
 - Create: `src/trading/ops-dashboard.ts`
 - Create: `src/trading/ops-dashboard.test.ts`
 - Modify: `src/dashboard.ts`
@@ -519,9 +546,10 @@ git commit -m "Document Financial Datasets MCP research workflow"
 
 **Purpose:** The dashboard should show the same operational truth as `npm run trading:status`.
 
-**Step 1: Write failing pure renderer tests**
+#### Step 1: Write failing pure renderer tests
 
 Test `buildTradingOpsPayload()` with fixture inputs:
+
 - PM2 healthy.
 - Financial datasets needs auth.
 - Weather Goat healthy.
@@ -536,13 +564,14 @@ npx vitest run src/trading/ops-dashboard.test.ts
 
 Expected: FAIL.
 
-**Step 2: Implement API payload**
+#### Step 2: Implement API payload
 
 Create `/api/trading/ops` in `src/dashboard.ts`, using the pure `ops-status` helpers from Task 1.
 
-**Step 3: Add a compact dashboard section**
+#### Step 3: Add a compact dashboard section
 
 In `src/dashboard-html.ts`, add a small "Trading Ops" panel:
+
 - ClaudeClaw PM2 status.
 - Polymarket scan age.
 - Regime Trader state.
@@ -550,7 +579,7 @@ In `src/dashboard-html.ts`, add a small "Trading Ops" panel:
 - Financial Datasets MCP auth.
 - Last paper P&L summary.
 
-**Step 4: Verify**
+#### Step 4: Verify
 
 Run:
 
@@ -563,7 +592,7 @@ npm run pm2:restart
 
 Open dashboard and confirm the panel renders.
 
-**Step 5: Commit**
+#### Step 5: Commit
 
 ```powershell
 git add src/trading/ops-dashboard.ts src/trading/ops-dashboard.test.ts src/dashboard.ts src/dashboard-html.ts
@@ -575,47 +604,51 @@ git commit -m "Add trading ops dashboard panel"
 ### Task 9: Drills And Recovery Proof
 
 **Files:**
+
 - Modify: `docs/runbooks/README.md`
 - Create: `docs/runbooks/trading-drill-log.md`
 
 **Purpose:** Operational means recovery is practiced, not just documented.
 
-**Step 1: Run halt/resume drill**
+#### Step 1: Run halt/resume drill
 
 ```powershell
 npx tsx scripts/drill-halt-resume.ts
 ```
 
 Expected:
+
 - Halt flag is set.
 - Strategy engine refuses new paper trades while halted.
 - Resume clears halt flag.
 
-**Step 2: Run backup/restore drill**
+#### Step 2: Run backup/restore drill
 
 ```powershell
 npx tsx scripts/drill-db-restore.ts
 ```
 
 Expected:
+
 - Restored DB readable in scratch workspace.
 - Live DB untouched.
 - Key tables present.
 
-**Step 3: Run DB bloat check**
+#### Step 3: Run DB bloat check
 
 ```powershell
 npx tsx scripts/check-db-bloat.ts
 ```
 
 Expected:
+
 - DB and WAL sizes within documented thresholds.
 
-**Step 4: Document results**
+#### Step 4: Document results
 
 Record date, commands, outputs, and pass/fail in `docs/runbooks/trading-drill-log.md`.
 
-**Step 5: Commit**
+#### Step 5: Commit
 
 ```powershell
 git add docs/runbooks/README.md docs/runbooks/trading-drill-log.md
@@ -627,12 +660,13 @@ git commit -m "Record trading operations drill results"
 ### Task 10: Controlled Feature Activation
 
 **Files:**
+
 - Create: `docs/runbooks/trading-feature-flags.md`
 - Modify: `.env.example`
 
 **Purpose:** Make every trading toggle intentional.
 
-**Step 1: Update `.env.example`**
+#### Step 1: Update `.env.example`
 
 Add the currently supported trading flags if missing:
 
@@ -648,20 +682,22 @@ POLY_KELLY_MED_MULT=0.7
 POLY_KELLY_HIGH_MULT=1.0
 ```
 
-**Step 2: Write activation runbook**
+#### Step 2: Write activation runbook
 
 Document three profiles:
+
 - Baseline paper: `POLY_ENABLED=true`, all advanced toggles false.
 - Weather shadow: baseline plus `POLY_WEATHER_SHADOW_ENABLED=true`.
 - Advanced paper: enable exits and exposure-aware sizing only after drills pass.
 
-**Step 3: Define live-capital no-go rule**
+#### Step 3: Define live-capital no-go rule
 
 Write explicitly:
+
 - No live Polymarket order adapter until a separate plan adds signing, wallet/key custody, min-size checks, kill switch, and live-order dry-run review.
 - No live order path can be enabled by `POLY_ENABLED=true`; it must require a separate `POLY_LIVE_EXECUTION_ENABLED=true` and a startup confirmation check.
 
-**Step 4: Verify**
+#### Step 4: Verify
 
 Run:
 
@@ -673,7 +709,7 @@ npm test
 
 Expected: PASS.
 
-**Step 5: Commit**
+#### Step 5: Commit
 
 ```powershell
 git add .env.example docs/runbooks/trading-feature-flags.md
