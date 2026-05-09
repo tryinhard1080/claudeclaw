@@ -120,14 +120,14 @@ describe('Weather Goat adapter helpers', () => {
     const gte = estimateWeatherProbability({
       kind: 'high_temp', city: 'Seattle', dateYmd: '2026-05-11',
       unit: 'fahrenheit', operator: 'gte', threshold: 65,
-    }, 69, 0.4);
+    }, 69);
     expect(gte?.probability).toBeGreaterThan(0.6);
     expect(gte?.confidence).toBe('medium');
 
     const exact = estimateWeatherProbability({
       kind: 'high_temp', city: 'Seattle', dateYmd: '2026-05-11',
       unit: 'fahrenheit', operator: 'exact', threshold: 65,
-    }, 72, 0.4);
+    }, 72);
     expect(exact?.probability).toBeLessThan(0.25);
   });
 

@@ -127,8 +127,9 @@ function parseUnit(raw: string): WeatherUnit {
 function titleCity(city: string): string {
   return city
     .replace(/\s+/g, ' ')
+    .trim()
     .split(' ')
-    .map(part => part.length === 0 ? part : part[0]!.toUpperCase() + part.slice(1).toLowerCase())
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(' ');
 }
 
@@ -174,7 +175,6 @@ export function extractForecastHigh(raw: unknown, dateYmd: string): number | nul
 export function estimateWeatherProbability(
   spec: WeatherMarketSpec,
   forecastHigh: number,
-  marketAsk: number,
 ): ProbabilityEstimate | null {
   const scale = spec.unit === 'celsius' ? 5 : 10;
   const unit = spec.unit === 'celsius' ? 'C' : 'F';
@@ -206,7 +206,6 @@ export function estimateWeatherProbability(
   }
 
   probability = clamp(probability, 0.05, 0.95);
-  void marketAsk;
   const confidence = thresholdDistance >= scale
     ? 'high'
     : thresholdDistance >= scale * 0.25
@@ -249,7 +248,7 @@ export async function evaluateWeatherShadow(args: EvaluateWeatherShadowArgs): Pr
   }
   const forecastHigh = extractForecastHigh(raw, spec.dateYmd);
   if (forecastHigh === null) return null;
-  return estimateWeatherProbability(spec, forecastHigh, args.bestAsk);
+  return estimateWeatherProbability(spec, forecastHigh);
 }
 
 export const runWeatherGoatCli: WeatherGoatRunner = (args) => new Promise((resolve, reject) => {
