@@ -89,6 +89,9 @@ describe('Weather Goat adapter helpers', () => {
   it('resolves known cities without the broken CLI geocoder', () => {
     expect(resolveWeatherLocation('Seattle')).toEqual({ latitude: 47.6062, longitude: -122.3321 });
     expect(resolveWeatherLocation('Hong Kong')).toEqual({ latitude: 22.3193, longitude: 114.1694 });
+    expect(resolveWeatherLocation('New York City')).toEqual({ latitude: 40.7128, longitude: -74.006 });
+    expect(resolveWeatherLocation('San Francisco')).toEqual({ latitude: 37.7749, longitude: -122.4194 });
+    expect(resolveWeatherLocation('Singapore')).toEqual({ latitude: 1.3521, longitude: 103.8198 });
     expect(resolveWeatherLocation('Atlantis')).toBeNull();
   });
 
