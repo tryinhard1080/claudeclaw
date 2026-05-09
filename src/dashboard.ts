@@ -66,6 +66,7 @@ import { buildPositionsLivePayload } from './poly/positions-view.js';
 import { buildPnlBars, type DailyPnlPoint } from './dashboard-charts.js';
 import { latestSnapshot as latestCalibrationSnapshot, fetchResolvedSamples, calibrationCurve } from './poly/calibration.js';
 import { composeDriftReport } from './poly/drift.js';
+import { collectTradingOpsPayload } from './trading/ops-dashboard.js';
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -535,6 +536,11 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       marketCount: report.marketCount,
       rejection: { total: rejectionTotal, byGate: rejectionArr },
     });
+  });
+
+  app.get('/api/trading/ops', (c) => {
+    const db = getDb();
+    return c.json(collectTradingOpsPayload(db));
   });
 
   app.get('/api/poly/pnl/chart', (c) => {

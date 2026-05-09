@@ -215,6 +215,22 @@ export function getDashboardHtml(token: string, chatId: string): string {
   </div>
 
   <div class="card">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Trading Ops</h3>
+      <span id="trading-ops-status" class="pill">-</span>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div><div class="stat-val text-base" id="trading-ops-pm2">-</div><div class="stat-label">PM2</div></div>
+      <div><div class="stat-val text-base" id="trading-ops-poly">-</div><div class="stat-label">Poly scans</div></div>
+      <div><div class="stat-val text-base" id="trading-ops-regime">-</div><div class="stat-label">Regime Trader</div></div>
+      <div><div class="stat-val text-base" id="trading-ops-weather">-</div><div class="stat-label">Weather Goat</div></div>
+      <div><div class="stat-val text-base" id="trading-ops-mcp">-</div><div class="stat-label">Financial MCP</div></div>
+      <div><div class="stat-val text-base" id="trading-ops-paper">-</div><div class="stat-label">Paper P&amp;L</div></div>
+    </div>
+    <div id="trading-ops-detail" class="text-xs text-gray-500 border-t border-gray-800 mt-3 pt-2">Loading...</div>
+  </div>
+
+  <div class="card">
     <div class="flex items-center justify-between mb-2">
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Open positions</h3>
       <span id="poly-unrealized-agg" class="text-xs text-gray-500">-</span>
@@ -1975,6 +1991,69 @@ function escapeHtml(s) {
   if (s === null || s === undefined) return '';
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+function opsColor(status) {
+  if (status === 'pass') return '#6ee7b7';
+  if (status === 'warn') return '#fbbf24';
+  return '#f87171';
+}
+function opsText(check) {
+  if (!check) return '-';
+  return (check.status || '-').toUpperCase() + ' ' + (check.state || '');
+}
+function setOpsText(id, check) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = opsText(check);
+  el.style.color = opsColor(check && check.status);
+}
+async function loadTradingOps() {
+  try {
+    const payload = await fetch('/api/trading/ops?token=' + encodeURIComponent(TOKEN)).then(r => r.json());
+    const statusEl = document.getElementById('trading-ops-status');
+    if (statusEl) {
+      statusEl.textContent = (payload.status || 'unknown').toUpperCase();
+      statusEl.style.background = payload.status === 'pass' ? '#064e3b' : (payload.status === 'warn' ? '#422006' : '#3b0f0f');
+      statusEl.style.color = opsColor(payload.status);
+    }
+
+    setOpsText('trading-ops-pm2', payload.checks && payload.checks.pm2);
+    setOpsText('trading-ops-poly', payload.checks && payload.checks.polymarketScans);
+    setOpsText('trading-ops-weather', payload.checks && payload.checks.weatherGoat);
+    setOpsText('trading-ops-mcp', payload.checks && payload.checks.financialDatasets);
+
+    const regimes = (payload.checks && payload.checks.regimes) || [];
+    const regimeWorst = regimes.find(r => r.status === 'fail') || regimes.find(r => r.status === 'warn') || regimes[0] || null;
+    setOpsText('trading-ops-regime', regimeWorst);
+
+    const paper = payload.paper || {};
+    const paperEl = document.getElementById('trading-ops-paper');
+    if (paperEl) {
+      const pnl = Number(paper.realizedPnlToday || 0);
+      paperEl.textContent = fmtUsd(pnl);
+      paperEl.style.color = pnl > 0 ? '#6ee7b7' : (pnl < 0 ? '#f87171' : '#fff');
+    }
+
+    const detailEl = document.getElementById('trading-ops-detail');
+    if (detailEl) {
+      const mcp = payload.checks && payload.checks.financialDatasets;
+      const poly = payload.checks && payload.checks.polymarketScans;
+      detailEl.textContent =
+        'signals 24h ' + (paper.signals24h ?? 0) +
+        ' / approved ' + (paper.approved24h ?? 0) +
+        ' / open ' + (paper.openPositions ?? 0) +
+        ' / scans ' + (poly ? poly.detail : '-') +
+        ' / mcp ' + (mcp ? mcp.state : '-');
+      detailEl.style.color = payload.status === 'fail' ? '#f87171' : '#9ca3af';
+    }
+  } catch (err) {
+    console.error('loadTradingOps failed', err);
+    const detailEl = document.getElementById('trading-ops-detail');
+    if (detailEl) {
+      detailEl.textContent = 'Trading ops unavailable';
+      detailEl.style.color = '#f87171';
+    }
+  }
+}
 async function loadPoly() {
   try {
     const [overview, live, signals, regime, pnlChart, calibration, drift] = await Promise.all([
@@ -2270,7 +2349,7 @@ async function loadPoly() {
 async function refreshAll() {
   const btn = document.getElementById('refresh-btn').querySelector('svg');
   btn.classList.add('refresh-spin');
-  await Promise.all([loadInfo(), loadTasks(), loadMemories(), loadHealth(), loadTokens(), loadAgents(), loadHiveMind(), loadSummary(), loadMissionControl(), loadPoly()]);
+  await Promise.all([loadInfo(), loadTasks(), loadMemories(), loadHealth(), loadTokens(), loadAgents(), loadHiveMind(), loadSummary(), loadMissionControl(), loadPoly(), loadTradingOps()]);
   btn.classList.remove('refresh-spin');
   document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 }
