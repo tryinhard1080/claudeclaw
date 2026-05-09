@@ -9,6 +9,7 @@ import {
   computeAvailableCapital,
   selectPriceCaptureCandidates,
 } from './strategy-engine.js';
+import { WEATHER_SHADOW_PROMPT_VERSION } from './weather-shadow.js';
 
 function bootDb(): Database.Database {
   const db = new Database(':memory:');
@@ -544,6 +545,66 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]!.approved).toBe(0);
     expect(rows[1]!.prompt_version).toBe('v3-reflect');
+  });
+
+  it('Sprint weather-shadow: writes advisory weather row when weatherShadowEnabled=true', async () => {
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+      weatherShadowEnabled: true,
+      weatherEvaluator: async () => ({
+        probability: 0.72,
+        confidence: 'medium',
+        reasoning: 'Weather Goat forecast high clears threshold.',
+        contrarian: 'Station mismatch.',
+      }),
+    });
+    await engine.onScanComplete({
+      markets: [mkMarket({
+        slug: 'highest-temperature-in-seattle-on-april-24-2026-54-55f',
+        question: 'Will the highest temperature in Seattle be between 54-55°F on April 24?',
+      })],
+    });
+
+    const rows = db.prepare(`SELECT prompt_version, estimated_prob, approved, rejection_reasons, paper_trade_id, provider FROM poly_signals ORDER BY id`).all() as Array<{
+      prompt_version: string; estimated_prob: number; approved: number;
+      rejection_reasons: string | null; paper_trade_id: number | null; provider: string | null;
+    }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.prompt_version).toBe('v3');
+    expect(rows[1]!.prompt_version).toBe(WEATHER_SHADOW_PROMPT_VERSION);
+    expect(rows[1]!.estimated_prob).toBe(0.72);
+    expect(rows[1]!.approved).toBe(0);
+    expect(rows[1]!.rejection_reasons).toBe('shadow:weather');
+    expect(rows[1]!.paper_trade_id).toBeNull();
+    expect(rows[1]!.provider).toBe('weather-goat');
+  });
+
+  it('Sprint weather-shadow: does not call weather evaluator when disabled', async () => {
+    let weatherCalls = 0;
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+      weatherShadowEnabled: false,
+      weatherEvaluator: async () => {
+        weatherCalls++;
+        return { probability: 0.72, confidence: 'medium', reasoning: 'r' };
+      },
+    });
+    await engine.onScanComplete({
+      markets: [mkMarket({
+        slug: 'highest-temperature-in-seattle-on-april-24-2026-54-55f',
+        question: 'Will the highest temperature in Seattle be between 54-55°F on April 24?',
+      })],
+    });
+
+    const rows = db.prepare(`SELECT prompt_version FROM poly_signals ORDER BY id`).all() as Array<{ prompt_version: string }>;
+    expect(rows.map(r => r.prompt_version)).toEqual(['v3']);
+    expect(weatherCalls).toBe(0);
   });
 });
 

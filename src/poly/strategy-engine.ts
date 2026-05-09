@@ -8,6 +8,7 @@ import {
   POLY_REFLECTION_ENABLED,
   POLY_KELLY_LOW_MULT, POLY_KELLY_MED_MULT, POLY_KELLY_HIGH_MULT,
   POLY_EXPOSURE_AWARE_SIZING, POLY_MAX_DEPLOYED_PCT,
+  POLY_WEATHER_SHADOW_ENABLED,
 } from '../config.js';
 import type { Market, Signal, ProbabilityEstimate } from './types.js';
 import { bestAskAndDepth, fetchBook } from './clob-client.js';
@@ -23,6 +24,12 @@ import {
 import { execute, type SignalWithId } from './paper-broker.js';
 import { getDailyRealizedPnl } from './pnl-tracker.js';
 import { latestRegimeSnapshot, UNKNOWN_REGIME_TAG } from './regime.js';
+import {
+  evaluateWeatherShadow,
+  WEATHER_SHADOW_MODEL,
+  WEATHER_SHADOW_PROMPT_VERSION,
+  WEATHER_SHADOW_PROVIDER,
+} from './weather-shadow.js';
 
 const STRATEGY = 'ai-probability';
 const HALT_KEY = 'poly.halt';
@@ -41,6 +48,10 @@ export interface CriticFn {
     question: string; category: string | null; endDateSec: number; ask: number;
     initial: ProbabilityEstimate;
   }): Promise<CriticJudgment | null>;
+}
+
+export interface WeatherShadowFn {
+  (args: { market: Market; bestAsk: number; nowSec: number }): Promise<ProbabilityEstimate | null>;
 }
 
 export interface StrategyEngineOptions {
@@ -62,6 +73,10 @@ export interface StrategyEngineOptions {
   reflectionEnabled?: boolean;
   /** Sprint 2.5: injectable critic for tests. */
   critic?: CriticFn;
+  /** Weather Goat shadow evaluator. Writes advisory rows only. */
+  weatherShadowEnabled?: boolean;
+  /** Injectable weather evaluator for tests. */
+  weatherEvaluator?: WeatherShadowFn;
   /** Sprint 7: confidence-weighted Kelly multipliers. Defaults from config. */
   confidenceMults?: ConfidenceMultipliers;
   /** Sprint 9: deduct live open-trade exposure from paperCapital before sizing. */
@@ -224,6 +239,8 @@ export class StrategyEngine extends EventEmitter {
   private readonly now: () => number;
   private readonly reflectionEnabled: boolean;
   private readonly critic: CriticFn;
+  private readonly weatherShadowEnabled: boolean;
+  private readonly weatherEvaluator: WeatherShadowFn;
   private readonly confidenceMults: ConfidenceMultipliers;
   private readonly exposureAwareSizing: boolean;
   private running = false;
@@ -245,6 +262,8 @@ export class StrategyEngine extends EventEmitter {
     this.now = opts.now ?? Date.now;
     this.reflectionEnabled = opts.reflectionEnabled ?? POLY_REFLECTION_ENABLED;
     this.critic = opts.critic ?? runCritic;
+    this.weatherShadowEnabled = opts.weatherShadowEnabled ?? POLY_WEATHER_SHADOW_ENABLED;
+    this.weatherEvaluator = opts.weatherEvaluator ?? ((args) => evaluateWeatherShadow(args));
     this.confidenceMults = opts.confidenceMults ?? {
       low: POLY_KELLY_LOW_MULT, medium: POLY_KELLY_MED_MULT, high: POLY_KELLY_HIGH_MULT,
     };
@@ -363,6 +382,10 @@ export class StrategyEngine extends EventEmitter {
       await this.writeShadowReflection(market, yesOutcome, bestAsk, est);
     }
 
+    if (this.weatherShadowEnabled) {
+      await this.writeWeatherShadow(market, yesOutcome, bestAsk);
+    }
+
     if (!gates.passed) {
       this.emit('signal_rejected', {
         slug: market.slug, outcomeLabel: yesOutcome.label, bestAsk,
@@ -426,6 +449,38 @@ export class StrategyEngine extends EventEmitter {
       bestAsk, reflected.probability, edgePct,
       reflected.confidence, reflected.reasoning, reflected.contrarian ?? null,
       REFLECT_PROMPT_VERSION, GLM_MODEL, regime?.regimeLabel ?? UNKNOWN_REGIME_TAG,
+    );
+  }
+
+  private async writeWeatherShadow(
+    market: Market,
+    outcome: Market['outcomes'][number],
+    bestAsk: number,
+  ): Promise<void> {
+    let estimate: ProbabilityEstimate | null;
+    const nowSec = Math.floor(this.now() / 1000);
+    try {
+      estimate = await this.weatherEvaluator({ market, bestAsk, nowSec });
+    } catch (err) {
+      logger.warn({ err: String(err), slug: market.slug }, 'weather shadow evaluator threw');
+      return;
+    }
+    if (!estimate) return;
+
+    const edgePct = computeEdgePct(estimate.probability, bestAsk);
+    const regime = latestRegimeSnapshot(this.db);
+    this.db.prepare(`
+      INSERT INTO poly_signals
+        (created_at, market_slug, outcome_token_id, outcome_label, market_price,
+         estimated_prob, edge_pct, confidence, reasoning, contrarian, approved,
+         rejection_reasons, prompt_version, model, regime_label, provider)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'shadow:weather', ?, ?, ?, ?)
+    `).run(
+      nowSec, market.slug, outcome.tokenId, outcome.label,
+      bestAsk, estimate.probability, edgePct,
+      estimate.confidence, estimate.reasoning, estimate.contrarian ?? null,
+      WEATHER_SHADOW_PROMPT_VERSION, WEATHER_SHADOW_MODEL,
+      regime?.regimeLabel ?? UNKNOWN_REGIME_TAG, WEATHER_SHADOW_PROVIDER,
     );
   }
 

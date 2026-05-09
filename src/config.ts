@@ -51,6 +51,7 @@ const envConfig = readEnvFile([
   'POLY_MIN_MARKET_PRICE',
   'POLY_MAX_MARKET_PRICE',
   'POLY_RESEARCH_NOTEBOOK_ID',
+  'POLY_WEATHER_SHADOW_ENABLED',
   'ANTHROPIC_API_KEY',
   'MEMORY_ENABLED',
   'VOICE_ENABLED',
@@ -269,6 +270,10 @@ export const POLY_MIN_MARKET_PRICE = num('POLY_MIN_MARKET_PRICE', 0.15);
 export const POLY_MAX_MARKET_PRICE = num('POLY_MAX_MARKET_PRICE', 0.85);
 export const POLY_RESEARCH_NOTEBOOK_ID =
   process.env.POLY_RESEARCH_NOTEBOOK_ID || envConfig.POLY_RESEARCH_NOTEBOOK_ID || '';
+// Weather Goat shadow evaluator. Writes advisory `v3-weather-shadow` rows for
+// supported weather markets only; never drives risk gates or execution.
+export const POLY_WEATHER_SHADOW_ENABLED =
+  (process.env.POLY_WEATHER_SHADOW_ENABLED || envConfig.POLY_WEATHER_SHADOW_ENABLED || 'false').toLowerCase() === 'true';
 // Sprint 2.5 reflection pass — when true, every approved primary evaluation
 // also triggers a critic call and records a shadow signal (approved=0,
 // rejection_reasons='shadow:reflect') tagged prompt_version='v3-reflect'.
