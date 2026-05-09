@@ -67,6 +67,21 @@ export interface InstanceState {
   recent_signals?: RecentSignal[];
 }
 
+export type FullRegimeInstanceState = InstanceState & {
+  market_open: true;
+  regime: RegimeState;
+  risk: RiskState;
+  positions: PositionState[];
+  recent_signals: RecentSignal[];
+};
+
+export type ClosedMarketInstanceState = InstanceState & {
+  market_open: false;
+  next_open: string;
+  equity: number;
+  cash: number;
+};
+
 export interface TradingAlert {
   type: 'regime_change' | 'circuit_breaker' | 'instance_down' | 'instance_halted' | 'instance_stale';
   instance: string;

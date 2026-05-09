@@ -5,6 +5,7 @@ import type { StatePoller } from './state-poller.js';
 import type { InstanceController } from './instance-control.js';
 import type { TradingAlertManager } from './alerts.js';
 import type { InstanceState, RegimeLabel } from './types.js';
+import { isFullRegimeState } from './state-schema.js';
 
 const REGIME_EMOJI: Record<RegimeLabel, string> = {
   CRASH: '🔴',
@@ -25,7 +26,7 @@ function formatPct(n: number): string {
 }
 
 function formatInstanceStatus(name: string, state: InstanceState, halted: boolean): string {
-  if (!state.regime || !state.risk) {
+  if (!isFullRegimeState(state)) {
     const lines = [
       `⚪ ${name} (${state.mode})${halted ? ' [HALTED]' : ''}`,
       `  Market: ${state.market_open ? 'OPEN' : 'CLOSED'}`,
@@ -101,7 +102,7 @@ export function registerTradingCommands(
               lines.push(`${name}: no data`);
               continue;
             }
-            if (!state.regime) {
+            if (!isFullRegimeState(state)) {
               lines.push(`${name}: market ${state.market_open ? 'OPEN' : 'CLOSED'}`);
               if (state.next_open) lines.push(`  Next open: ${state.next_open}`);
               lines.push('');

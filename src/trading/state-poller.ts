@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 
 import { logger } from '../logger.js';
 import type { InstanceState } from './types.js';
+import { isClosedUntilNextOpen, parseInstanceState } from './state-schema.js';
 
 const DEFAULT_STALENESS_MS = 60 * 60 * 1000; // 1 hour
 
@@ -28,18 +29,6 @@ export interface InstanceStaleEvent {
   instance: string;
   stateFileMtime: number;
   ageMs: number;
-}
-
-function parseNextOpenMs(value: string | undefined): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function isClosedUntilNextOpen(state: InstanceState, nowMs: number): boolean {
-  if (state.market_open !== false) return false;
-  const nextOpenMs = parseNextOpenMs(state.next_open);
-  return nextOpenMs !== null && nowMs < nextOpenMs;
 }
 
 /**
@@ -93,7 +82,9 @@ export class StatePoller extends EventEmitter {
       const nowMs = this.now();
       const ageMs = nowMs - st.mtimeMs;
       const raw = await readFile(stateFile, 'utf8');
-      const state: InstanceState = JSON.parse(raw);
+      const parsed = parseInstanceState(JSON.parse(raw));
+      if (!parsed.ok) throw new Error(parsed.error);
+      const state: InstanceState = parsed.state;
       const intentionallyPaused = isClosedUntilNextOpen(state, nowMs);
 
       if (!intentionallyPaused && ageMs > this.stalenessMs) {
