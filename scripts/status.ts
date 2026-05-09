@@ -18,10 +18,16 @@ const c = {
   gray: '\x1b[90m',
 };
 
-const PROJECT_ROOT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-);
+const __filename = fileURLToPath(import.meta.url);
+const PROJECT_ROOT = path.resolve(path.dirname(__filename), '..');
+
+export function claudeLookupCommand(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? 'where claude' : 'which claude';
+}
+
+export function pm2ServiceDescribeCommands(): string[] {
+  return ['pm2 describe claudeclaw-main', 'pm2 describe claudeclaw'];
+}
 
 function ok(msg: string) {
   console.log(`  ${c.green}✓${c.reset}  ${msg}`);
@@ -74,7 +80,7 @@ async function main() {
   }
 
   // Claude CLI
-  const claudeCmd = process.platform === 'win32' ? 'where claude' : 'which claude';
+  const claudeCmd = claudeLookupCommand();
   try {
     execSync(claudeCmd, { stdio: 'pipe' });
     let claudeVersion = '';
@@ -181,10 +187,17 @@ async function main() {
       warn('Service: not installed (systemd)');
     }
   } else {
-    try {
-      execSync('pm2 describe claudeclaw', { stdio: 'pipe' });
+    const detected = pm2ServiceDescribeCommands().some((cmd) => {
+      try {
+        execSync(cmd, { stdio: 'pipe' });
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (detected) {
       ok('Service: running (PM2)');
-    } catch {
+    } else {
       warn('Service: not detected (check PM2 or start manually)');
     }
   }
@@ -213,7 +226,7 @@ async function main() {
   const hasToken = !!env.TELEGRAM_BOT_TOKEN;
   const hasClaude = (() => {
     try {
-      execSync('which claude', { stdio: 'pipe' });
+      execSync(claudeLookupCommand(), { stdio: 'pipe' });
       return true;
     } catch {
       return false;
@@ -231,7 +244,10 @@ async function main() {
   console.log();
 }
 
-main().catch((err) => {
-  console.error(`  ${c.red}Status check failed:${c.reset}`, err);
-  process.exit(1);
-});
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (invokedPath === __filename) {
+  main().catch((err) => {
+    console.error(`  ${c.red}Status check failed:${c.reset}`, err);
+    process.exit(1);
+  });
+}
