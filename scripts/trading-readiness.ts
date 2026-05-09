@@ -25,7 +25,14 @@ const REGIME_APP_TO_INSTANCE: Record<string, string> = {
 
 function runCommand(command: string): { ok: true; output: string } | { ok: false; output: string } {
   try {
-    return { ok: true, output: execSync(command, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
+    return {
+      ok: true,
+      output: execSync(command, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      }),
+    };
   } catch (error) {
     const err = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
     const stdout = err.stdout ? String(err.stdout) : '';

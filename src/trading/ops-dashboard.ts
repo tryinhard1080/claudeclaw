@@ -15,7 +15,6 @@ import {
   type OpsStatus,
   type Pm2AppLike,
   type PolyScanRunLike,
-  summarizeFinancialDatasetsMcp,
   summarizePm2Apps,
   summarizePolyScanRuns,
   summarizeRegimeState,
@@ -76,7 +75,15 @@ export function buildTradingOpsPayload(args: BuildTradingOpsPayloadArgs): Tradin
 
 function runCommand(command: string, timeoutMs = 20_000): { ok: true; output: string } | { ok: false; output: string } {
   try {
-    return { ok: true, output: execSync(command, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs }) };
+    return {
+      ok: true,
+      output: execSync(command, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: timeoutMs,
+        windowsHide: true,
+      }),
+    };
   } catch (error) {
     const err = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
     const stdout = err.stdout ? String(err.stdout) : '';
@@ -144,16 +151,12 @@ function summarizeWeatherGoat(): OpsCheck {
 }
 
 function summarizeMcp(): OpsCheck {
-  const result = runCommand('claude mcp list');
-  if (!result.ok) {
-    return {
-      name: 'Financial Datasets MCP',
-      status: 'warn',
-      state: 'mcp_list_failed',
-      detail: result.output.slice(0, 220),
-    };
-  }
-  return summarizeFinancialDatasetsMcp(result.output);
+  return {
+    name: 'Financial Datasets MCP',
+    status: 'warn',
+    state: 'manual_check_required',
+    detail: 'Run `claude mcp list` manually; dashboard auto-refresh does not spawn Claude CLI.',
+  };
 }
 
 function summarizePolyDb(db: Database.Database): OpsCheck {
