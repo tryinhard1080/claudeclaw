@@ -17,11 +17,13 @@ Tracker for Codex code-review findings across every shipped sprint. This artifac
 |---|---|---|---|---|---|
 | 2026-04-22 | 12-19 | P1 | `telegram-commands.ts` `/poly` handler missing auth guard — any Telegram user with bot username could call `/poly halt`, `/poly resume`, read internal state | FIXED | `d186090` |
 | 2026-04-22 | 12-19 | P1 | `telegram-commands.ts:291` `renderPnl` unrealized SUM joins all `poly_positions` rows; stale rows from crashed resolutions would inflate the total | FIXED | `d186090` |
-| 2026-05-11 | 20-27 + readiness | P1 | `strategy-engine.ts:532` `buildPortfolioSnapshot` realized-P&L sum missing `'exited'` — drawdown understated, `maybeAutoHaltOnDrawdown` could fail to fire after Sprint-8 stop-loss exits. Latent (POLY_EXIT_ENABLED=false) but blocks Phase 7 flag-flip. | FIXED | _this session_ |
+| 2026-05-11 | 20-27 + readiness | P1 | `strategy-engine.ts:532` `buildPortfolioSnapshot` realized-P&L sum missing `'exited'` — drawdown understated, `maybeAutoHaltOnDrawdown` could fail to fire after Sprint-8 stop-loss exits. Latent (POLY_EXIT_ENABLED=false) but blocks Phase 7 flag-flip. | FIXED | `fb48f5c` |
+| 2026-05-11 | 27 (implementation) | — | Codex CLI aborted (skill-loader stalls on malformed `~/.agents/skills/*/SKILL.md` files; `codex-review.js` wrapper has `--full-auto` flag-ordering bug). Self-review on `e40955c` flagged no P0 / P1. Two P3 perf/style notes recorded but not actioned. | DEFERRED (re-run pending tooling fix) | _self-review only_ |
 
 See per-sprint review notes:
 
 - `sprints-12-19-2026-04-22.md` — first review pass.
 - `2026-05-11-sprints-20-27-plus-readiness.md` — second pass covering 30 commits since `d186090`.
+- `sprint-27-2026-05-11.md` — self-review on `e40955c`, codex re-run pending tooling fix.
 
-_(Last codex pass: 2026-05-11. Re-run trigger: any Phase 7 flag-flip OR any subsequent edit to a TRUST Tier-3 surface — `risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, `strategy-engine.ts`.)_
+_(Last codex pass: 2026-05-11 sprints 20-27 + readiness. Re-run triggers: any Phase 7 flag-flip; any subsequent edit to a TRUST Tier-3 surface — `risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, `strategy-engine.ts`; OR resolution of the codex-CLI tooling defects so `e40955c` can be reviewed properly.)_
