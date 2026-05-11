@@ -529,7 +529,7 @@ export class StrategyEngine extends EventEmitter {
 
     const realizedRow = this.db.prepare(`
       SELECT COALESCE(SUM(realized_pnl), 0) AS total
-        FROM poly_paper_trades WHERE status IN ('won','lost','voided')
+        FROM poly_paper_trades WHERE status IN ('won','lost','voided','exited')
     `).get() as { total: number };
     const totalRealized = realizedRow.total;
 

@@ -213,6 +213,32 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(signals.n).toBe(0);
   });
 
+  it('[hotfix 2026-05-11] exited trades count toward drawdown auto-halt', async () => {
+    // Regression for codex P1: buildPortfolioSnapshot omitted 'exited' from
+    // realized-P&L sum, so Sprint-8 take-profit/stop-loss closes did not
+    // contribute to drawdown. Auto-halt could fail to fire after a string
+    // of exits. Fix: include 'exited' in the status filter (line ~532).
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 1000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+      gateConfig: { ...(await import('./risk-gates.js')).defaultGateConfig(), haltDdPct: 0.10 },
+    });
+    db.prepare(`CREATE TABLE IF NOT EXISTS poly_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).run();
+    // One Sprint-8 exit with -200 realized: drawdown should be 200/1000 = 20%.
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status, resolved_at, realized_pnl, voided_reason)
+      VALUES (?, 'old', 'tok', 'Yes', 'BUY', 0.5, 200, 400, 0.25, 'ai-probability', 'exited', ?, -200, 'exit:stop_loss')`)
+      .run(Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000));
+
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    const halt = db.prepare(`SELECT value FROM poly_kv WHERE key='poly.halt'`).get() as { value: string } | undefined;
+    expect(halt?.value).toBe('1');
+  });
+
   it('happy path: creates approved signal and executes paper trade', async () => {
     const engine = new StrategyEngine({
       db, scanner, paperCapital: 5000, minVolumeUsd: 10_000, minTtrHours: 24,
