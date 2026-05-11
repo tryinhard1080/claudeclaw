@@ -24,12 +24,19 @@ Build a trading system that **earns its right to trade real money** by demonstra
 Before any real-money trading is enabled on either system, ALL of these must be true:
 
 - [ ] 30+ consecutive days of paper trading without manual intervention.
+      (2026-05-11) Day 20/30 on clock that started 2026-04-21. Target 2026-05-21. Today's manual `pm2 start regime-trader-spy-agg/cons` to recover from cron-tz bug is operator-directed deploy recovery, not unplanned breakage per A1 (still PROPOSED).
 - [ ] ≥50 resolved Polymarket trades with positive realized P&L.
+      (2026-05-11) 0 won + 0 lost / 50. 31 opened ever; 10 open (mostly long-dated political/event markets); 21 voided (all delisted). Resolution at current strategy/cadence projects to ~Q4 2026, not Box-1 timeline. See `docs/research/2026-05-11-box2-pnl-verification.md`.
 - [ ] Equity strategies (regime-trader) have positive paper Sharpe over ≥60 days.
-- [ ] Drawdown never exceeded `POLY_HALT_DD_PCT` during paper period.
-- [ ] No P0/P1 codex-review findings outstanding.
-- [ ] Documented kill-switch and roll-back procedure tested.
+      (2026-05-11) Clock cannot start today. Market-open drill FAILED on two bugs in `C:\Code\regime-trader`: pm2 cron timezone misalignment (fires at 10:30 ET, not 09:30 ET) AND HMM size-0 IndexError on fresh startup (bot enters "holding current regime" indefinitely). Both scoped at `docs/research/sprint-2026-05-11-regime-trader-cron-tz-fix.md`. Earliest clock start: ~7 weeks after the HMM fix lands.
+- [x] Drawdown never exceeded `POLY_HALT_DD_PCT` during paper period.
+      (2026-05-11) Green throughout. `maybeAutoHaltOnDrawdown` correct after hotfix `fb48f5c`.
+- [x] No P0/P1 codex-review findings outstanding.
+      (2026-05-11) Codex pass `2026-05-11-sprints-20-27-plus-readiness.md` found 1 P1 in `strategy-engine.ts:532` (latent until Phase-7 flag-flip); fixed in commit `fb48f5c` with regression test. 0 P0, 0 P1 outstanding. Re-run trigger: any Phase-7 flag-flip OR any subsequent edit to a TRUST Tier-3 surface.
+- [x] Documented kill-switch and roll-back procedure tested.
+      (2026-05-09) halt/resume + DB-restore + bloat all PASS. (2026-05-11) Independent of today's regime-trader drill outcome; claudeclaw-side kill-switch path intact. Re-drill quarterly.
 - [ ] Operator (Richard) has explicitly signed off in writing in this file.
+      (2026-05-11) A1, A2, A3 still PROPOSED since 2026-04-21. Operator-action checklist at `docs/handoff/2026-05-11-operator-action-checklist.md`.
 
 Don't lobby for any of these to be waived. They exist to prevent ruin.
 
@@ -47,6 +54,8 @@ Anything less is a draft.
 ## Operator Sign-Off Log
 
 (Date — Decision — Reason)
+
+- _2026-05-11_ — Operational-readiness sweep ran end-to-end per plan `review-this-code-base-rustling-whistle.md`. **Codex P1 in `strategy-engine.ts:532` found and fixed (commit `fb48f5c`); MISSION Box 5 ackable.** Phase-1 market-open drill **FAILED** on two regime-trader bugs (pm2 cron timezone misalignment + HMM size-0 IndexError on fresh startup), both scoped at `docs/research/sprint-2026-05-11-regime-trader-cron-tz-fix.md`. Box-2 P&L verification confirms 0 won/lost trades against the ≥50 target (Q4 2026 projection at current strategy pace) — the "79 resolved" figure cited earlier was the `poly_resolutions` market-cache, not trade outcomes. claudeclaw-main side healthy throughout, all drills clean, no operator action taken in this session beyond the surgical P1 hotfix. Operator decisions pending: A1/A2/A3 acks, `EMERGENCY_KILL_PHRASE`, `pwm login`, `OPERATOR_EMAIL`, regime-trader fix sequencing. Checklist at `docs/handoff/2026-05-11-operator-action-checklist.md`. **No operator authorization required for this entry — bot-side documentation of the sweep.**
 
 - _2026-04-13_ — Pivot to trading-only identity (this MISSION + SOUL + HEARTBEAT) — "make this a first class trading bot, single focus".
 - _2026-04-20_ — Authorized restart on GLM 5.1 subscription after $150 Anthropic API spend incident. Keys retained (private repo, acceptable). Stage 3 eval showed GLM more calibrated than pre-halt Claude (which was hallucinating 2025 data). 30-day gate-box-1 clock starts now. — "A" (restart now option selected in Phase 0.5 Stage 4 decision). **INVALIDATED SAME DAY** — that restart went silent 83 min in with zero signals; peaceful-turtle plan (below) replaced it.

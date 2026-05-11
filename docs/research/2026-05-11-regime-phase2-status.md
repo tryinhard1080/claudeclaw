@@ -119,7 +119,68 @@ after. Target: one regime-trader-scoped commit. No claudeclaw-side changes.
 
 ### Disposition
 
-**Deferred to drill outcome.** Updates land in `docs/runbooks/trading-drill-log.md` (Phase 1 entry) and back-propagate to this doc.
+**Likely RESOLVED — pending today's drill for final confirmation.**
+
+### Pre-drill log evidence (added after initial doc write)
+
+Reading `pm2 logs regime-trader-spy-agg --lines 50 --nostream` shows the most recent session (Friday 2026-05-08, 14:00-15:00 ET window) running clean:
+
+```
+14:00:01 [INFO] core.regime_strategies: vol_rank=0.17 conf=1.00 -> low_vol_bull alloc=0.95 (delta=0.95, rebal=True)
+14:00:01 [INFO] core.signal_generator:  Signal: SPY LONG alloc=0.95 stop=672.09 regime=WEAK_BEAR conf=1.00 rebal=True
+14:00:01 [INFO] __main__:                Signal rejected: Max total exposure reached
+...
+15:00:00 [INFO] __main__: Market closed. Ending session.
+15:00:00 [INFO] __main__: Session summary: 0 trades, final equity=$100621.64, peak=$100649.24
+```
+
+Observations:
+- HMM live prediction is producing regime + confidence + vol_rank every 5 minutes. The 2026-04-16 size-0 failure mode is **not present** in current logs.
+- Strategy engine (`core.regime_strategies`) is correctly mapping regime → allocation.
+- Signal generator is emitting valid LONG signals.
+- Risk gate is rejecting them with `Max total exposure reached` — implies upstream positions are at the configured exposure cap, preventing new entries. That's a behavioral observation, not a bug.
+- Zero `HMM prediction failed:` log lines in the visible window.
+
+### Updated conclusion (pre-drill — proved WRONG by drill outcome)
+
+> ~~Box 3 (60-day paper Sharpe > 0) is **time-blocked, not code-blocked.** The fetch-window / HMM-size-0 risk surfaced in the 2026-04-16 handoff is no longer firing. Sharpe clock can begin accumulating now and reach the 60-day mark on ~2026-07-10 if uninterrupted.~~
+
+> ~~When to re-open the regime-trader handoff prompt~~ — see Drill Outcome section below.
+
+### Drill outcome (added 2026-05-11 after the actual market-open test)
+
+The conclusion above was wrong. The pre-drill log inspection looked at *warm-running* sessions where the HMM had already trained and the bug doesn't fire. **Fresh startup at market open today DID reproduce the 2026-04-16 size-0 bug.**
+
+Reproduced log line (from `pm2 logs regime-trader-spy-agg --lines 25` after manual start at 08:34 CT):
+
+```
+08:36:16 [INFO] __main__: === Paper trading started for SPY (5-min bars) ===
+08:40:00 [WARNING] __main__: HMM prediction failed: index 0 is out of bounds
+  for axis 0 with size 0. Holding current regime.
+```
+
+The first 5-min bar after `Paper trading started` fails. Bot stays in "holding current regime" mode for the rest of the session. State files do not refresh.
+
+A SECOND bug also surfaced — the pm2 cron didn't fire at the design-intended 09:30 ET because pm2 interprets `30 9 * * 1-5` against local system time (CT), making it fire at 10:30 ET daily.
+
+Both bugs are scoped in `docs/research/sprint-2026-05-11-regime-trader-cron-tz-fix.md`. Drill log entry at `docs/runbooks/trading-drill-log.md` under the `## 2026-05-11 Market-Open Drill` heading.
+
+### Real MISSION Box-3 line for Phase 9 (corrected)
+
+```
+- [ ] Equity strategies (regime-trader) have positive paper Sharpe over ≥60 days.
+      (2026-05-11) Box 3 clock CANNOT start today. 2026-05-11 market-open drill
+      FAILED on two independent bugs:
+        (1) pm2 cron timezone misalignment — fires at 10:30 ET not 09:30 ET
+        (2) HMM size-0 IndexError on fresh startup — bot enters "holding
+            current regime" indefinitely; state files never refresh.
+      Both bugs scoped at docs/research/sprint-2026-05-11-regime-trader-cron-tz-fix.md.
+      Bug 1 fix is claudeclaw-side (scripts/regime-trader-pm2-config.ts).
+      Bug 2 fix is in C:\Code\regime-trader Python repo (open a separate
+      session per the starter prompt in
+      docs/research/handoff-regime-trader-hmm-debug.md, updated 2026-05-11).
+      Earliest 60-day clock start: ~7 weeks after Bug 2 lands.
+```
 
 ## What this Phase did NOT touch
 

@@ -1,5 +1,80 @@
 # Handoff — ClaudeClaw
 
+## ✅ 2026-05-11 — Operational Readiness Closure (one-day sweep)
+
+- **Date**: 2026-05-11 (Monday)
+- **Model**: Claude Opus 4.7 (1M context)
+- **Branch**: `main`. Commits: `fb48f5c` (hotfix), `f980d56` (chore docs). Closure commit pending at the end of this section.
+- **Plan**: `C:\Users\Richard\.claude\plans\review-this-code-base-rustling-whistle.md` — 9 phases, executed as one session.
+- **Tests**: 733 / 733 pass (was 691 at last HANDOFF — gained 41 tests, mostly Sprint 21/22/24/26/27 and one new hotfix regression).
+
+### What changed
+
+**Code (one P1 fix only — `fb48f5c`):**
+
+- `src/poly/strategy-engine.ts:532` — `buildPortfolioSnapshot` realized-P&L sum now includes `'exited'` in the status filter. The query was `WHERE status IN ('won','lost','voided')` — missing `'exited'`, the status Sprint 8 `exitPosition` writes for take-profit / stop-loss closes. Consequence chain: `totalRealized` undercounted → equity overstated → `totalDrawdownPct` understated → `maybeAutoHaltOnDrawdown` could fail to fire after a string of stop-loss exits. Latent today (POLY_EXIT_ENABLED=false) but blocks the Phase-7 flag-flip. Caught by codex review; fixed surgically with regression test at `strategy-engine.test.ts` ("`[hotfix 2026-05-11] exited trades count toward drawdown auto-halt`"). 733/733 pass after fix; pm2 restarted with new dist.
+
+**Docs (commit `f980d56` + this session's later artifacts):**
+
+- `docs/codex-review/2026-05-11-sprints-20-27-plus-readiness.md` — second codex pass (first was 2026-04-22 sprints 12-19). Covers diff `d186090..HEAD`, force-re-verifies all four TRUST-Tier-3 surfaces. **Verdict: 1 P1 found and fixed; MISSION Box 5 ackable on this pass.**
+- `docs/codex-review/findings.md` — central register updated with 2026-05-11 row.
+- `docs/research/2026-05-11-box2-pnl-verification.md` — Box 2 reality check. **The "79 resolutions" cited in 2026-05-09 drill log was the `poly_resolutions` market-cache, NOT bot trade outcomes.** Actual won/lost: 0. 31 paper trades opened lifetime, 10 open (mostly long-dated 2026-Q3/Q4/2027/2028 political markets), 21 voided (all delisted). Approval rate 31/39,996 = 0.078%. Projection to 50 resolved is ~Q4 2026 at current strategy pace. Box 2 **structurally blocked** for the Box-1 30-day timeline (2026-05-21 target).
+- `docs/research/2026-05-11-regime-phase2-status.md` — Phase-2 closure for the 2026-04-15 regime audit. Issue A (35% NULL `regime_label`) self-resolved (0 NULL of 39,999 live signals; regression test already at `strategy-engine.test.ts:373`). Issue B (single-regime population) still 98% in `vnorm_bbtc_ymid` — data-blocked behind resolved-trade count. **Issue C — pre-drill thought RESOLVED based on warm-running logs; drill proved WRONG.**
+- `docs/research/sprint-27-resolution-backfill-audit-2026-05-11.md` — Sprint 27 audit. 0 of 87 cached markets are closed on Polymarket (confirms Phase-4 Box-2 finding); 20 of 31 lifetime trades lack a cache row. Code change deferred to a focused Sprint 27 implementation session.
+- `docs/research/sprint-2026-05-11-regime-trader-cron-tz-fix.md` — written after drill FAIL. Scopes two regime-trader bugs (cron timezone, HMM size-0).
+- `docs/handoff/2026-05-11-operator-action-checklist.md` — copy-paste Telegram-ready checklist of pending Tier-3 operator items.
+- `docs/prompts/operational-readiness-prompt-v2.md` — `/enhance` output on the originating prompt. Reproducible re-run trigger.
+
+**Memory:**
+
+- `~/.claude/projects/C--Code-claudeclaw/memory/project_2026-05-11_readiness_closure.md` + MEMORY.md pointer.
+
+### Phase 1 — Market-Open Drill: **FAIL**
+
+Two independent regime-trader bugs surfaced:
+
+1. **pm2 cron timezone misalignment.** Manifest says `cron_restart: '30 9 * * 1-5'`. PM2 interprets against system local time (US Central), so cron fires at 09:30 CT = **10:30 ET**, not the intended 09:30 ET. Bot misses the first hour of trading daily.
+2. **HMM size-0 IndexError on fresh startup.** First 5-min bar after `=== Paper trading started ===` fails with `index 0 is out of bounds for axis 0 with size 0`. Bot enters indefinite "holding current regime" mode. State files never refresh. This is the same bug `handoff-regime-trader-hmm-debug.md` flagged on 2026-04-16; my pre-drill log inspection misread a warm-running session as evidence the bug was fixed. It was not.
+
+claudeclaw-main side passed every check throughout — 71m+ uptime, no errors, scans fresh, dashboard up. **Failure is entirely in the regime-trader sibling repo at `C:\Code\regime-trader`.** Both fixes scoped in `docs/research/sprint-2026-05-11-regime-trader-cron-tz-fix.md`. Manual `pm2 start` at 08:34 CT brought instances online but the HMM bug prevents real predictions. Instances left running as the operator decides next move.
+
+### Real-money gate state movement
+
+| Box | Before | After | Movement |
+|---|---|---|---|
+| 1. 30-day clock | Day 20/30 | Day 20/30 | passive; target 2026-05-21 |
+| 2. ≥50 resolved + positive P&L | "79 resolved" misread | 0 resolved verified, Q4 2026 projection | structural finding surfaced |
+| 3. regime-trader 60-day paper Sharpe | "blocked external" | **clock cannot start**; two bugs scoped | drill exposed real blockers |
+| 4. Drawdown ≤ threshold | Green | Green | passive |
+| 5. No P0/P1 codex | Never run | **ACKABLE** after codex P1 fixed | ✅ closeable |
+| 6. Kill-switch tested | 2026-05-09 drilled | Still good (today's drill orthogonal) | passive (quarterly re-drill) |
+| 7. Operator A1/A2/A3 sign-off | PROPOSED since 2026-04-21 | Still PROPOSED — checklist at `docs/handoff/2026-05-11-operator-action-checklist.md` | awaiting operator |
+
+### Pending (operator)
+
+1. **MISSION.md A1/A2/A3 acks** — closes Box 7.
+2. **regime-trader fixes** — Bug 1 is claudeclaw-side (~30 min); Bug 2 is regime-trader-side Python work (~2-4 hr). Both required before Box 3 60-day clock can start. Starter prompts in `docs/research/sprint-2026-05-11-regime-trader-cron-tz-fix.md`.
+3. **regime-trader instances currently running but predictions broken.** Stop at market close (15:00 CT) OR let them run until tomorrow's cron at 09:30 CT.
+4. **`pwm login` + `PPLX_API_KEY=pwm`**, `EMERGENCY_KILL_PHRASE`, `.env.stale-2026-04-26.bak` rotation, `OPERATOR_EMAIL`, `POLY_RESEARCH_NOTEBOOK_ID`, `CLAUDE_CODE_OAUTH_TOKEN`, `.gitignore` extension — all in operator checklist.
+5. **Phase-3 flag flips** (`POLY_REFLECTION_ENABLED`, `POLY_EXIT_ENABLED`, `POLY_EXPOSURE_AWARE_SIZING`) — defer. Per A2 already deferred behind calibration data; Phase-4 finding says calibration data won't exist before ~Q4 2026.
+
+### Pre-existing dirty state (not mine)
+
+- `M .claude/settings.json` — present since at least 2026-04-29.
+- `?? docs/research/handoff-regime-trader-10k-forensic-layer.md` — separate future-scope doc by an earlier session. Untouched.
+
+### Stale roadmap items closed by this session
+
+- **Sprint 25 (`computeAvailableCapital` ceiling refinement)** — already shipped silently. `src/poly/strategy-engine.ts:179-190` already uses `maxDeployedPct * paperCapital - exposure`. Codex confirmed sizer ↔ gate-1 alignment.
+- **Regime Issue A** — already resolved at the code level (`regime?.regimeLabel ?? UNKNOWN_REGIME_TAG` on all 3 INSERT paths + regression test at line 373).
+
+### Skills + patterns the operator may want to apply elsewhere
+
+- **Verify subagent claims** — the codex subagent declared "Sprint 25 sizer alignment confirmed" without a write tool. Verified independently before relaying.
+- **Drill outcome > warm-running logs.** I inferred Issue C "likely resolved" from already-warmed-up Friday logs. Drill on fresh startup proved that wrong. Lesson: when verifying a startup-path bug, only fresh-startup logs are evidence.
+
+---
+
 ## Last Session
 - **Date**: 2026-05-02 (continuation of 2026-05-01 session)
 - **Model**: Claude Opus 4.7 (1M context)
