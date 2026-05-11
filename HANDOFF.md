@@ -1,5 +1,48 @@
 # Handoff — ClaudeClaw
 
+## ✅ 2026-05-11 (afternoon) — Sprint 27 ship + hygiene
+
+- **Date**: 2026-05-11 (Monday), 14:57–17:25 CT. Continuation of the morning operational-readiness sweep.
+- **Model**: Claude Opus 4.7 (1M context).
+- **Branch**: `main`. Commits this session: `9ee256c` `[chore] gitignore: add .env*.bak`, `18ce57b` `[chore] docs: forensic 10-K veto-filter handoff to regime-trader`, `e40955c` `feat(poly): Sprint 27 — open-trade slug priority + coverage alarm`.
+- **Tests**: 759 / 759 pass (was 733). Added 26 tests in `src/poly/resolution-coverage.test.ts`.
+
+### What changed
+
+**Sprint 27 (`e40955c`).** `scripts/fetch-resolutions.ts` now seeds its slug list from open-trade slugs first, then signal-evaluated slugs (deduplicated). Closes the 20-of-31 coverage gap surfaced in the morning audit. After each fetch run the script computes `resolution_cache_coverage_pct`, persists the last 5 measurements in `poly_kv` under `poly.coverage.history`, and emits a `[coverage-alarm]` stderr line when the last two consecutive measurements are both <80%. Pure helpers live in new module `src/poly/resolution-coverage.ts`; tests in `src/poly/resolution-coverage.test.ts` (26 tests). **No new migration** — `poly_kv` is created on demand (same pattern as `strategy-engine.ts` and `news-sync.ts`). **No Tier-3 surface touched.**
+
+**Hygiene (`9ee256c`, `18ce57b`).** `.gitignore` extended with `.env*.bak` per operator checklist item 8 (pre-authorized). Landed the orphaned `docs/research/handoff-regime-trader-10k-forensic-layer.md` scope spec (forensic 10-K veto-filter pattern for regime-trader, authored by an earlier session) so the regime-trader maintainer can pick it up cold.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | clean |
+| `npm test` | 759/759 pass (49 files) |
+| `npm run build` | dist regenerated |
+| pm2 `claudeclaw-main` | online, restart count 6 → 7, no errors post-restart |
+| `:3141/health` | HTTP 200 — `{"status":"healthy","database":"ok","telegram":"connected"}` |
+| First post-restart scan | 861 markets parsed in 982ms |
+
+### Pending (operator)
+
+Same list as the morning session — none of the operator-action items were touched this session. Specifically:
+
+1. **MISSION.md A1/A2/A3 sign-offs** — still `PROPOSED`. Closes Box 7.
+2. **regime-trader foreground debug** — deferred to tomorrow 08:30 CT per session decision. Operator runs `cd C:\Code\regime-trader && .venv\Scripts\python.exe main.py --paper --instance spy-aggressive` in a separate shell, pastes traceback back to claudeclaw session.
+3. **`pwm login`, `EMERGENCY_KILL_PHRASE`, `OPERATOR_EMAIL`, `POLY_RESEARCH_NOTEBOOK_ID`, `CLAUDE_CODE_OAUTH_TOKEN`, `.env.stale-2026-04-26.bak` rotation** — full list at `docs/handoff/2026-05-11-operator-action-checklist.md`.
+4. **Codex review on `e40955c`** — Sprint 27 did not touch a TRUST Tier-3 surface so Box-5 re-run trigger is not engaged, but Definition of Done step 3 wants codex on every change. Can be run in a separate session.
+
+### Pre-existing dirty state (not mine)
+
+- `M .claude/settings.json` — present since 2026-04-29. Trivial schema URL swap. Left untouched.
+
+### regime-trader instance state
+
+`regime-trader-spy-agg` + `regime-trader-spy-cons` remain STOPPED (no change from morning session close). Reason: origin/main HEAD `8e33adb` exits silently during HMM training on fresh startup; needs the foreground-debug step (tomorrow 08:30 CT) to identify the actual error. The bot fires `[Trading alert sent] type=instance_down` per restart — that's working as designed.
+
+---
+
 ## ✅ 2026-05-11 — Operational Readiness Closure (one-day sweep)
 
 - **Date**: 2026-05-11 (Monday)
