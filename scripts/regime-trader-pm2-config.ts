@@ -25,7 +25,10 @@ export function buildRegimeTraderPm2Config(
     script,
     interpreter: python,
     autorestart: false as const,
-    cron_restart: '30 9 * * 1-5',
+    // 08:30 CT = 09:30 ET = NYSE open. PM2 evaluates this in system local time
+    // (US Central); both CT and ET observe DST in lockstep so the 1-hour offset
+    // is constant year-round.
+    cron_restart: '30 8 * * 1-5',
   };
 
   return {

@@ -16,7 +16,11 @@ describe('buildRegimeTraderPm2Config', () => {
       expect(app.script).toBe('C:/Code/regime-trader/main.py');
       expect(app.interpreter).toBe('C:/Code/regime-trader/.venv/Scripts/python.exe');
       expect(app.autorestart).toBe(false);
-      expect(app.cron_restart).toBe('30 9 * * 1-5');
+      // Cron is evaluated in system local time (US Central). 08:30 CT = 09:30 ET
+      // = NYSE open. CT and ET both observe DST identically, so the 1-hour offset
+      // is constant year-round. The 2026-05-11 drill caught the prior `30 9` form
+      // firing at 10:30 ET daily, missing the first hour of trading.
+      expect(app.cron_restart).toBe('30 8 * * 1-5');
     }
 
     expect(config.apps[0]?.args).toBe('--paper --instance spy-aggressive');
