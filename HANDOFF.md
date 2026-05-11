@@ -41,6 +41,14 @@ Same list as the morning session — none of the operator-action items were touc
 
 `regime-trader-spy-agg` + `regime-trader-spy-cons` remain STOPPED (no change from morning session close). Reason: origin/main HEAD `8e33adb` exits silently during HMM training on fresh startup; needs the foreground-debug step (tomorrow 08:30 CT) to identify the actual error. The bot fires `[Trading alert sent] type=instance_down` per restart — that's working as designed.
 
+**Diagnostic instrumentation shipped to regime-trader (`e8c6b59` on origin/main):**
+
+- `main.py` now imports `faulthandler` and calls `.enable()` at module top. Surfaces C-level segfault tracebacks from hmmlearn / sklearn / numpy on SIGSEGV / SIGBUS / SIGFPE / SIGILL / SIGABRT — the only exit modes Python's `try/except Exception` cannot catch.
+- `core/hmm_engine.py` `fit()` adds a "BIC search: trying n_components=N" log line BEFORE each fit attempt (with stdout/stderr flush), and upgrades the exception branch from `logger.warning` to `logger.exception` so full Python tracebacks land in the log.
+- 144 passed + 10 skipped in `pytest tests/`. No algorithm change. No new dependency (faulthandler is stdlib).
+
+Tomorrow's foreground run will surface the root cause regardless of whether Bug 2 is a segfault, an uncaught exception, or a sys.exit() — one of those three is the only way the current pm2 logs go silent after the n=4 BIC line without a `Selected N-state model` line.
+
 ---
 
 ## ✅ 2026-05-11 — Operational Readiness Closure (one-day sweep)
