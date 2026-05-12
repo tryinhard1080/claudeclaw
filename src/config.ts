@@ -50,6 +50,8 @@ const envConfig = readEnvFile([
   'POLY_REGIME_REFRESH_MIN',
   'POLY_MIN_MARKET_PRICE',
   'POLY_MAX_MARKET_PRICE',
+  'POLY_MIN_MARKET_TTL_DAYS',
+  'POLY_MAX_MARKET_TTL_DAYS',
   'POLY_RESEARCH_NOTEBOOK_ID',
   'POLY_WEATHER_SHADOW_ENABLED',
   'ANTHROPIC_API_KEY',
@@ -268,6 +270,12 @@ export const POLY_REGIME_REFRESH_MIN = num('POLY_REGIME_REFRESH_MIN', 15);
 // markets. 0.15-0.85 keeps us in the middle of the probability space.
 export const POLY_MIN_MARKET_PRICE = num('POLY_MIN_MARKET_PRICE', 0.15);
 export const POLY_MAX_MARKET_PRICE = num('POLY_MAX_MARKET_PRICE', 0.85);
+// Sprint S2 (Path A) — TTL band filter (shadow mode). Scanner writes per-tick
+// stats to poly_ttl_shadow_ticks but does NOT exclude markets in shadow mode.
+// Flag-flip from shadow to active is Sprint S4, Tier-3, operator-only, gated
+// on 14 days of shadow data. See docs/research/sprint-s2-ttl-filter-shadow.md.
+export const POLY_MIN_MARKET_TTL_DAYS = num('POLY_MIN_MARKET_TTL_DAYS', 1);
+export const POLY_MAX_MARKET_TTL_DAYS = num('POLY_MAX_MARKET_TTL_DAYS', 30);
 export const POLY_RESEARCH_NOTEBOOK_ID =
   process.env.POLY_RESEARCH_NOTEBOOK_ID || envConfig.POLY_RESEARCH_NOTEBOOK_ID || '';
 // Weather Goat shadow evaluator. Writes advisory `v3-weather-shadow` rows for

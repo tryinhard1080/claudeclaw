@@ -9,11 +9,14 @@ import {
   POLY_MIN_TTR_HOURS,
   POLY_MIN_MARKET_PRICE,
   POLY_MAX_MARKET_PRICE,
+  POLY_MIN_MARKET_TTL_DAYS,
+  POLY_MAX_MARKET_TTL_DAYS,
 } from '../config.js';
 import { fetchActiveMarkets } from './gamma-client.js';
 import type { Market } from './types.js';
 import { recordScanRun } from './drift.js';
 import { selectPriceCaptureCandidates } from './strategy-engine.js';
+import { partitionByTtl, summarizeTick, recordTtlShadowTick } from './ttl-filter.js';
 
 // Diagnostic instrumentation for the 2026-04-20 scanner hang bug. Writes
 // directly to process.stdout (bypassing pino's worker thread) so it produces
@@ -109,6 +112,20 @@ export class MarketScanner extends EventEmitter {
       // pre-fix scenario where prune failed mid-scan but captures succeeded.
       scanWrite(this.db, markets, candidates, this.retentionHours);
       scanTrace('post-db');
+
+      // Sprint S2 TTL shadow: partition candidates by TTL band and persist
+      // tick stats. SHADOW only — the candidate list above was NOT mutated.
+      // Try/catch matches recordScanRun pattern below; a shadow write must
+      // never break the trading path.
+      try {
+        const tickSec = Math.floor(started / 1000);
+        const band = { minDays: POLY_MIN_MARKET_TTL_DAYS, maxDays: POLY_MAX_MARKET_TTL_DAYS };
+        const partition = partitionByTtl(candidates, band, tickSec);
+        const tickStats = summarizeTick(partition, tickSec);
+        recordTtlShadowTick(this.db, tickStats, band, tickSec);
+      } catch (e) {
+        logger.warn({ err: String(e) }, 'recordTtlShadowTick failed');
+      }
 
       const duration = Date.now() - started;
       logger.info({ count: markets.length, captured: candidates.length, ms: duration }, 'poly scan complete');
