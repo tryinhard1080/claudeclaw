@@ -1,0 +1,68 @@
+{
+  "_comment": "Reference catalog of finance MCP endpoints from anthropics/financial-services. Do NOT copy this file wholesale into .mcp.json. Per docs/research/mcp-finance-vendors.md: probe each vendor in one paper-mode session before promotion. Prompt-injection surface area grows with every added MCP.",
+  "_currently_active_in_mcp_json": ["financial-datasets"],
+  "_adopt_candidates": ["aiera", "mt-newswires"],
+  "_watch_candidates": ["kensho", "morningstar", "factset", "lseg"],
+  "_pass": ["daloopa", "moodys", "pitchbook", "chronograph", "egnyte"],
+  "mcpServers": {
+    "financial-datasets": {
+      "type": "http",
+      "url": "https://mcp.financialdatasets.ai/"
+    },
+    "aiera": {
+      "type": "http",
+      "url": "https://mcp-pub.aiera.com",
+      "_notes": "Earnings call transcripts + real-time event summaries. Public endpoint. ADOPT after paper-mode probe."
+    },
+    "mt-newswires": {
+      "type": "http",
+      "url": "https://vast-mcp.blueskyapi.com/mtnewswires",
+      "_notes": "Real-time financial news wire. Complements pwm Sonar route. ADOPT-pending access check."
+    },
+    "kensho": {
+      "type": "http",
+      "url": "https://kfinance.kensho.com/integrations/mcp",
+      "_notes": "S&P Global Kfinance. Equity fundamentals + capital structure. WATCH - likely Enterprise tier."
+    },
+    "morningstar": {
+      "type": "http",
+      "url": "https://mcp.morningstar.com/mcp",
+      "_notes": "Factor data + fund research. Feeds Multi-Factor Rotation regime. WATCH - Enterprise tier check."
+    },
+    "factset": {
+      "type": "http",
+      "url": "https://mcp.factset.com/mcp",
+      "_notes": "Pro data terminal. WATCH - paid; only if Greystar covers."
+    },
+    "lseg": {
+      "type": "http",
+      "url": "https://api.analytics.lseg.com/lfa/mcp",
+      "_notes": "Refinitiv. Overlaps Morningstar coverage. WATCH - pick one of LSEG or Morningstar, not both."
+    },
+    "daloopa": {
+      "type": "http",
+      "url": "https://mcp.daloopa.com/server/mcp",
+      "_notes": "Fundamental extraction from filings. PASS - regime-trader is technical, not fundamental."
+    },
+    "moodys": {
+      "type": "http",
+      "url": "https://api.moodys.com/genai-ready-data/m1/mcp",
+      "_notes": "Credit ratings + default data. PASS - no credit-cycle consumer in current strategies."
+    },
+    "pitchbook": {
+      "type": "http",
+      "url": "https://premium.mcp.pitchbook.com/mcp",
+      "_notes": "Private market data. PASS - out of scope (anti-goal)."
+    },
+    "chronograph": {
+      "type": "http",
+      "url": "https://ai.chronograph.pe/mcp",
+      "_notes": "PE portfolio monitoring. PASS - out of scope."
+    },
+    "egnyte": {
+      "type": "http",
+      "url": "https://mcp-server.egnyte.com/mcp",
+      "_notes": "Secure file collaboration. PASS - not a data source."
+    }
+  }
+}

@@ -7,6 +7,7 @@ can find the newest source of truth without spelunking the whole folder.
 ## Current Operating References
 
 - [`financial-research-agent-prompts.md`](./financial-research-agent-prompts.md) - Prompt templates for using Financial Datasets MCP as research context, not trading execution.
+- [`mcp-finance-vendors.md`](./mcp-finance-vendors.md) - Vendor matrix for 11 finance MCP endpoints from `anthropics/financial-services`. ADOPT/WATCH/PASS verdicts and access-check action items. Paired with `.mcp.json.example`.
 - [`sprint-weather-shadow.md`](./sprint-weather-shadow.md) - Weather Goat shadow-evaluator research and implementation notes.
 - [`atlas-self-improving-trading-agents.md`](./atlas-self-improving-trading-agents.md) - Atlas and self-improving trading-agent comparison; use as blueprint material only.
 - [`sprint-27-sonar-refusal-detection.md`](./sprint-27-sonar-refusal-detection.md) - News-sync skip-vs-fail handling for Sonar real-time refusals.
