@@ -133,7 +133,7 @@ export function recordTtlShadowTick(
     stats.avgTtlFiltered,
     band.minDays,
     band.maxDays,
-    Date.now(),
+    Math.floor(Date.now() / 1000),
   );
 }
 

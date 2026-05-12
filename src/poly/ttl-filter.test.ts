@@ -165,6 +165,21 @@ describe('recordTtlShadowTick + summarizeTtlShadowWindow', () => {
     db.close();
   });
 
+  // [hotfix 2026-05-12] codex P2: created_at must be unix seconds, not ms.
+  it('persists created_at in unix seconds (not milliseconds)', () => {
+    const db = makeDb();
+    const stats = summarizeTick({ pass: [], filteredMin: [], filteredMax: [] }, NOW);
+    const before = Math.floor(Date.now() / 1000);
+    recordTtlShadowTick(db, stats, { minDays: 1, maxDays: 30 }, NOW);
+    const after = Math.floor(Date.now() / 1000);
+    const row = db.prepare(`SELECT created_at FROM poly_ttl_shadow_ticks WHERE scan_tick_at = ?`).get(NOW) as { created_at: number };
+    expect(row.created_at).toBeGreaterThanOrEqual(before);
+    expect(row.created_at).toBeLessThanOrEqual(after);
+    // Sanity: must be in unix-seconds range (~1.78e9 in 2026), not ms (~1.78e12).
+    expect(row.created_at).toBeLessThan(1e11);
+    db.close();
+  });
+
   it('INSERT OR REPLACE makes same-tick re-write idempotent', () => {
     const db = makeDb();
     const stats = { candidatesTotal: 5, candidatesTtlPass: 2, filteredMin: 1, filteredMax: 2, avgTtlPass: 10, avgTtlFiltered: 50 };
