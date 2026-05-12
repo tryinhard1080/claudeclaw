@@ -58,13 +58,9 @@ Currently the Sunday 18:00 ET adversarial-review cron silent-skips because `kind
 
 **Note (A3):** with Box-2 P&L at 0 resolved trades, adversarial review will produce speculative critique, not actionable findings. Setting this token now is harmless but won't add value until ≥15 trades have resolved. Recommended: defer until late 2026-Q2 / early 2026-Q3.
 
-## 8. `.gitignore` extension
+## 8. `.gitignore` extension — ✅ DONE 2026-05-11
 
-Append to `.gitignore`:
-```
-.env*.bak
-```
-So future stale-key backup files stop surfacing as untracked. Bot can do this in Phase 9 wrap — included here only so you know it's coming.
+Shipped in commit `9ee256c` `[chore] gitignore: add .env*.bak`. `.gitignore` line 9 now reads `.env*.bak`. No operator action needed.
 
 ---
 
