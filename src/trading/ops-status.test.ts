@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type SharpeRow,
   summarizeFinancialDatasetsMcp,
   summarizePm2Apps,
   summarizePolyScanRuns,
   summarizeRegimeState,
+  summarizeSharpeFreshness,
   summarizeWeatherGoatDoctor,
 } from './ops-status.js';
 
@@ -99,5 +101,117 @@ describe('summarizePolyScanRuns', () => {
 
     expect(result.status).toBe('pass');
     expect(result.state).toBe('fresh');
+  });
+});
+
+describe('summarizeSharpeFreshness', () => {
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+
+  it('returns warn when the table is missing (migration pending)', () => {
+    const result = summarizeSharpeFreshness([], { nowMs: NOW, tableMissing: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.state).toBe('table_missing');
+    expect(result.detail).toMatch(/migration pending/);
+  });
+
+  it('returns warn when no snapshots exist yet and bot is fresh', () => {
+    const result = summarizeSharpeFreshness([], { nowMs: NOW, tradingDaysSinceStart: 2 });
+
+    expect(result.status).toBe('warn');
+    expect(result.state).toBe('no_snapshots');
+  });
+
+  it('returns fail when no snapshots exist after 5+ trading days', () => {
+    const result = summarizeSharpeFreshness([], { nowMs: NOW, tradingDaysSinceStart: 7 });
+
+    expect(result.status).toBe('fail');
+    expect(result.state).toBe('missing');
+  });
+
+  it('returns pass when both instances have fresh rows with n_days >= 1', () => {
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-08', n_days: 21, created_at: NOW - 2 * HOUR },
+      { instance: 'spy-conservative', snapshot_date: '2026-05-08', n_days: 21, created_at: NOW - 2 * HOUR },
+    ];
+    const result = summarizeSharpeFreshness(rows, { nowMs: NOW });
+
+    expect(result.status).toBe('pass');
+    expect(result.state).toBe('fresh');
+    expect(result.detail).toMatch(/spy-aggressive/);
+    expect(result.detail).toMatch(/spy-conservative/);
+  });
+
+  it('returns warn when latest row is 1-3 days stale', () => {
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-07', n_days: 20, created_at: NOW - 2 * DAY },
+      { instance: 'spy-conservative', snapshot_date: '2026-05-08', n_days: 21, created_at: NOW - 2 * HOUR },
+    ];
+    const result = summarizeSharpeFreshness(rows, { nowMs: NOW });
+
+    expect(result.status).toBe('warn');
+    expect(result.state).toBe('stale');
+    expect(result.detail).toMatch(/spy-aggressive/);
+  });
+
+  it('returns warn when an instance has n_days=0 despite a fresh row', () => {
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-08', n_days: 0, created_at: NOW - 2 * HOUR },
+      { instance: 'spy-conservative', snapshot_date: '2026-05-08', n_days: 5, created_at: NOW - 2 * HOUR },
+    ];
+    const result = summarizeSharpeFreshness(rows, { nowMs: NOW });
+
+    expect(result.status).toBe('warn');
+    expect(result.detail).toMatch(/n_days=0/);
+  });
+
+  it('returns fail when latest row is more than 3 days stale', () => {
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-04', n_days: 18, created_at: NOW - 5 * DAY },
+      { instance: 'spy-conservative', snapshot_date: '2026-05-08', n_days: 21, created_at: NOW - 2 * HOUR },
+    ];
+    const result = summarizeSharpeFreshness(rows, { nowMs: NOW });
+
+    expect(result.status).toBe('fail');
+    expect(result.state).toBe('stale');
+    expect(result.detail).toMatch(/spy-aggressive/);
+  });
+
+  it('returns fail when an expected instance is missing after 5+ trading days', () => {
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-08', n_days: 7, created_at: NOW - 2 * HOUR },
+    ];
+    const result = summarizeSharpeFreshness(rows, {
+      nowMs: NOW,
+      tradingDaysSinceStart: 10,
+    });
+
+    expect(result.status).toBe('fail');
+    expect(result.detail).toMatch(/spy-conservative missing/);
+  });
+
+  it('returns warn when an expected instance is missing but bot is too young to fail', () => {
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-08', n_days: 1, created_at: NOW - 2 * HOUR },
+    ];
+    const result = summarizeSharpeFreshness(rows, {
+      nowMs: NOW,
+      tradingDaysSinceStart: 1,
+    });
+
+    expect(result.status).toBe('warn');
+    expect(result.detail).toMatch(/spy-conservative missing/);
+  });
+
+  it('picks the latest row per instance when multiple exist', () => {
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-06', n_days: 19, created_at: NOW - 3 * DAY },
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-08', n_days: 21, created_at: NOW - 2 * HOUR },
+      { instance: 'spy-conservative', snapshot_date: '2026-05-08', n_days: 21, created_at: NOW - 2 * HOUR },
+    ];
+    const result = summarizeSharpeFreshness(rows, { nowMs: NOW });
+
+    expect(result.status).toBe('pass');
   });
 });

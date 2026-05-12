@@ -10,10 +10,12 @@ import {
   type OpsCheck,
   type Pm2AppLike,
   type PolyScanRunLike,
+  type SharpeRow,
   summarizeFinancialDatasetsMcp,
   summarizePm2Apps,
   summarizePolyScanRuns,
   summarizeRegimeState,
+  summarizeSharpeFreshness,
   summarizeWeatherGoatDoctor,
   worstStatus,
 } from '../src/trading/ops-status.js';
@@ -144,6 +146,55 @@ function summarizePolyDb(): OpsCheck {
   }
 }
 
+function summarizeRegimeSharpe(): OpsCheck {
+  const dbPath = path.join(STORE_DIR, 'claudeclaw.db');
+  if (!fs.existsSync(dbPath)) {
+    return {
+      name: 'regime-sharpe',
+      status: 'fail',
+      state: 'db_missing',
+      detail: dbPath,
+    };
+  }
+
+  try {
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      db.pragma('busy_timeout = 5000');
+      const tableRow = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='regime_sharpe_snapshots'",
+        )
+        .get() as { name?: string } | undefined;
+
+      if (!tableRow || !tableRow.name) {
+        return summarizeSharpeFreshness([], { tableMissing: true });
+      }
+
+      const rows = db
+        .prepare(
+          `SELECT instance, snapshot_date, n_days, created_at
+             FROM regime_sharpe_snapshots
+            WHERE (instance, created_at) IN (
+              SELECT instance, MAX(created_at) FROM regime_sharpe_snapshots GROUP BY instance
+            )`,
+        )
+        .all() as SharpeRow[];
+
+      return summarizeSharpeFreshness(rows);
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    return {
+      name: 'regime-sharpe',
+      status: 'fail',
+      state: 'db_read_failed',
+      detail: String(error).slice(0, 220),
+    };
+  }
+}
+
 function formatStatus(status: OpsCheck['status']): string {
   return status.toUpperCase().padEnd(4);
 }
@@ -170,6 +221,7 @@ function main(): void {
     summarizeWeatherGoat(),
     summarizeMcp(),
     summarizePolyDb(),
+    summarizeRegimeSharpe(),
     ...regimeChecks,
   ];
 

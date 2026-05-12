@@ -1,12 +1,15 @@
 import type { Bot, Context } from 'grammy';
+import Database from 'better-sqlite3';
+import path from 'node:path';
 
 import { logger } from '../logger.js';
-import { ALLOWED_CHAT_ID } from '../config.js';
+import { ALLOWED_CHAT_ID, STORE_DIR } from '../config.js';
 import type { StatePoller } from './state-poller.js';
 import type { InstanceController } from './instance-control.js';
 import type { TradingAlertManager } from './alerts.js';
 import type { InstanceState, RegimeLabel } from './types.js';
 import { isFullRegimeState } from './state-schema.js';
+import { summarizeSharpe, type SharpeSnapshot } from './sharpe.js';
 
 const REGIME_EMOJI: Record<RegimeLabel, string> = {
   CRASH: '🔴',
@@ -219,12 +222,29 @@ export function registerTradingCommands(
           break;
         }
 
+        case 'sharpe': {
+          let db: Database.Database | null = null;
+          try {
+            db = new Database(path.join(STORE_DIR, 'claudeclaw.db'), { readonly: true });
+            await ctx.reply(renderSharpe(db));
+          } catch (err) {
+            const m = err instanceof Error ? err.message : String(err);
+            await ctx.reply(`sharpe command failed: ${m.slice(0, 200)}`);
+          } finally {
+            if (db) {
+              try { db.close(); } catch { /* ignore */ }
+            }
+          }
+          break;
+        }
+
         default:
           await ctx.reply(
             'Trading commands:\n' +
             '/trade status -- Instance overview\n' +
             '/trade regime -- Regime details\n' +
             '/trade pnl -- P&L summary\n' +
+            '/trade sharpe -- Rolling 60d Sharpe per instance\n' +
             '/trade halt [instance] -- Halt trading\n' +
             '/trade resume <instance> -- Resume\n' +
             '/trade start <instance> [paper] -- Start\n' +
@@ -241,4 +261,85 @@ export function registerTradingCommands(
   });
 
   logger.info('Trading commands registered (/trade)');
+}
+
+interface SharpeDbRow {
+  instance: string;
+  snapshot_date: string;
+  equity: number;
+  cash: number | null;
+  peak_equity: number | null;
+  daily_return: number | null;
+  rolling_sharpe_60d: number | null;
+  n_days: number;
+}
+
+function formatSharpeNumber(s: number): string {
+  const sign = s >= 0 ? '+' : '';
+  return `${sign}${s.toFixed(2)}`;
+}
+
+function formatNDays(n: number): string {
+  return n >= 60 ? `n_days=${n}` : `n_days=${n}/60`;
+}
+
+/**
+ * Renders /trade sharpe output from the regime_sharpe_snapshots table.
+ * Returns a stable string; never throws on empty/missing table — returns
+ * a friendly empty-state message instead.
+ */
+export function renderSharpe(db: Database.Database): string {
+  // Detect table absence (migration pending) — sqlite_master probe.
+  const tableRow = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='regime_sharpe_snapshots'`)
+    .get();
+  if (!tableRow) {
+    return 'Regime Trader Sharpe (rolling 60d):\n  no Sharpe snapshots yet (table not migrated)';
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT instance, snapshot_date, equity, cash, peak_equity,
+              daily_return, rolling_sharpe_60d, n_days
+         FROM regime_sharpe_snapshots
+        ORDER BY instance ASC, snapshot_date ASC`,
+    )
+    .all() as SharpeDbRow[];
+
+  if (rows.length === 0) {
+    return 'Regime Trader Sharpe (rolling 60d):\n  no Sharpe snapshots yet';
+  }
+
+  const snapshots: SharpeSnapshot[] = rows.map((r) => ({
+    instance: r.instance,
+    snapshotDate: r.snapshot_date,
+    equity: r.equity,
+    cash: r.cash,
+    peakEquity: r.peak_equity,
+    dailyReturn: r.daily_return,
+    rollingSharpe60d: r.rolling_sharpe_60d,
+    nDays: r.n_days,
+  }));
+
+  const summaries = summarizeSharpe(snapshots);
+  const lines: string[] = ['Regime Trader Sharpe (rolling 60d):'];
+
+  // Pad instance labels to align the columns visually.
+  const labelWidth = Math.max(...summaries.map((s) => s.instance.length)) + 1;
+
+  for (const s of summaries) {
+    const label = (s.instance + ':').padEnd(labelWidth + 1, ' ');
+    if (s.nDays < 2) {
+      lines.push(`  ${label} not enough data yet (n_days=${s.nDays})`);
+      continue;
+    }
+    const sharpeStr = s.latestSharpe60d === null
+      ? 'sharpe=n/a'
+      : `sharpe=${formatSharpeNumber(s.latestSharpe60d)}`;
+    const ndStr = formatNDays(s.nDays);
+    const trendStr = `trend=${s.trend}`;
+    lines.push(`  ${label} ${sharpeStr}  ${ndStr}  ${trendStr}`);
+  }
+
+  return lines.join('\n');
 }

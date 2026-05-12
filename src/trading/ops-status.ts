@@ -268,6 +268,129 @@ export function summarizeRegimeState(
   };
 }
 
+export interface SharpeRow {
+  instance: string;
+  snapshot_date: string;
+  n_days: number;
+  created_at: number;
+}
+
+export interface SharpeFreshnessOptions {
+  nowMs?: number;
+  expectedInstances?: ReadonlyArray<string>;
+  tradingDaysSinceStart?: number;
+  tableMissing?: boolean;
+}
+
+const SHARPE_EXPECTED_INSTANCES: ReadonlyArray<string> = ['spy-aggressive', 'spy-conservative'];
+const SHARPE_FRESH_MS = 24 * 60 * 60 * 1000;
+const SHARPE_WARN_MS = 3 * 24 * 60 * 60 * 1000;
+const SHARPE_MIN_TRADING_DAYS_FOR_FAIL = 5;
+
+export function summarizeSharpeFreshness(
+  rows: ReadonlyArray<SharpeRow>,
+  opts: SharpeFreshnessOptions = {},
+): OpsCheck {
+  if (opts.tableMissing) {
+    return {
+      name: 'regime-sharpe',
+      status: 'warn',
+      state: 'table_missing',
+      detail: 'regime_sharpe_snapshots table not present (migration pending)',
+    };
+  }
+
+  const nowMs = opts.nowMs ?? Date.now();
+  const expected = opts.expectedInstances ?? SHARPE_EXPECTED_INSTANCES;
+  const tradingDays = opts.tradingDaysSinceStart ?? 0;
+
+  if (rows.length === 0) {
+    if (tradingDays >= SHARPE_MIN_TRADING_DAYS_FOR_FAIL) {
+      return {
+        name: 'regime-sharpe',
+        status: 'fail',
+        state: 'missing',
+        detail: `no snapshots after ${tradingDays} trading days`,
+      };
+    }
+    return {
+      name: 'regime-sharpe',
+      status: 'warn',
+      state: 'no_snapshots',
+      detail: 'no snapshots yet',
+    };
+  }
+
+  const latestByInstance = new Map<string, SharpeRow>();
+  for (const row of rows) {
+    const existing = latestByInstance.get(row.instance);
+    if (!existing || row.created_at > existing.created_at) {
+      latestByInstance.set(row.instance, row);
+    }
+  }
+
+  const failures: string[] = [];
+  const warnings: string[] = [];
+  const passes: string[] = [];
+
+  for (const instance of expected) {
+    const row = latestByInstance.get(instance);
+    if (!row) {
+      if (tradingDays >= SHARPE_MIN_TRADING_DAYS_FOR_FAIL) {
+        failures.push(`${instance} missing`);
+      } else {
+        warnings.push(`${instance} missing`);
+      }
+      continue;
+    }
+
+    const ageMs = nowMs - row.created_at;
+    const ageDays = Math.max(0, Math.round(ageMs / (24 * 60 * 60 * 1000)));
+
+    if (ageMs > SHARPE_WARN_MS) {
+      failures.push(`${instance} ${ageDays}d stale`);
+      continue;
+    }
+
+    if (ageMs > SHARPE_FRESH_MS) {
+      warnings.push(`${instance} ${ageDays}d stale`);
+      continue;
+    }
+
+    if (row.n_days < 1) {
+      warnings.push(`${instance} n_days=0`);
+      continue;
+    }
+
+    passes.push(`${instance} n_days=${row.n_days}`);
+  }
+
+  if (failures.length > 0) {
+    return {
+      name: 'regime-sharpe',
+      status: 'fail',
+      state: 'stale',
+      detail: failures.concat(warnings).join('; '),
+    };
+  }
+
+  if (warnings.length > 0) {
+    return {
+      name: 'regime-sharpe',
+      status: 'warn',
+      state: 'stale',
+      detail: warnings.concat(passes).join('; '),
+    };
+  }
+
+  return {
+    name: 'regime-sharpe',
+    status: 'pass',
+    state: 'fresh',
+    detail: passes.join('; '),
+  };
+}
+
 export function summarizePolyScanRuns(
   rows: PolyScanRunLike[],
   nowMs: number = Date.now(),
