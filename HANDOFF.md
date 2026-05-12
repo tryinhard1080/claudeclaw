@@ -1,5 +1,97 @@
 # Handoff — ClaudeClaw
 
+## ✅ 2026-05-12 — Plan, Path A lock, codex review, Sprint S1 ship, codex wrapper hardening
+
+- **Date**: 2026-05-12 (Tuesday), 07:19 CT to 13:30 CT. Single ~6-hour session.
+- **Model**: Claude Opus 4.7 (1M context). Four parallel `general-purpose` sonnet implementation agents on Sprint S1.
+- **Branch**: `main`. 11 commits shipped this session.
+- **Tests**: 813 / 813 pass (was 759 at session start). Net +54 tests across Sprint S1 + hotfix regression + codex review docs.
+
+### What changed (organized by gate impact)
+
+**Box 3 (60-day paper Sharpe) — instrumentation shipped end-to-end.**
+
+- `b2419f8 feat(trading): Sprint S1 part 1 — sharpe.ts pure functions` (28 tests). `computeDailyReturn`, `computeRollingSharpe`, `summarizeSharpe`, `formatSnapshotDate`. Risk-free rate defaults to 0; window 60; periodsPerYear 252; std<1e-12 treated as degenerate (catches FP-noise blow-up on constant-return inputs).
+- `734c317 feat(trading): Sprint S1 ship — Box-3 Sharpe instrumentation end-to-end` (10 files, 1226+ lines, 26+ new tests). Four parallel agents A/B/C/D delivered: migration v1.15.0 (new table `regime_sharpe_snapshots`), `scripts/regime-sharpe-snapshot.ts` (daily cron entry point), `/trade sharpe` Telegram subcommand with `renderSharpe(db)` pure renderer, `summarizeSharpeFreshness` check on trading-readiness, and `scripts/register-regime-sharpe-cron.ts` (one-shot idempotent registration).
+- Migration applied: v1.14.0 → v1.15.0 against live DB.
+- Cron registered: `regime-sharpe-9a08`, schedule `0 17 * * 1-5`, script_path `scripts/regime-sharpe-snapshot.ts`. Next fire 2026-05-12 17:00 CT (auto). Status: active.
+- Manual first run today wrote 2 rows (one per instance): `equity=$102,809.84 daily_return=null n_days=0`. Day-1 expected.
+- `npm run trading:status` now reports `regime-sharpe` row (WARN day-1 because n_days=0; will PASS at n_days≥1 tomorrow).
+- `03f717e [chore] mission: Box-3 60-day clock starts 2026-05-12`. Day 1/60. Target 2026-07-11.
+
+**Box 2 (≥50 resolved Polymarket trades) — Path A authorized.**
+
+- `5c2bd2c [chore] mission: Path A authorized for Box 2`. Operator approved Path A in chat: add `POLY_MAX_MARKET_TTL_DAYS=30` filter to scanner, 14-day shadow comparison via existing A/B harness, flip live only if shadow shows positive lift. Reversible.
+- Sprint S2 is NOT yet built. Scope is queued for next session per plan §6.
+
+**Box 5 (no P0/P1 codex outstanding) — stays ackable.**
+
+- `dc8f926 [hotfix] fix(telegram): /trade auth guard + renderPnl include 'exited' status`. Two findings from the full-project codex review:
+  - P1: `src/trading/telegram-commands.ts:73` `/trade` handler missing `ALLOWED_CHAT_ID` guard — mirror of the 2026-04-22 `d186090` poly fix. Confidence 0.88.
+  - P2: `src/poly/telegram-commands.ts:287` `renderPnl` SQL omitted `'exited'` status — display-layer mirror of the `fb48f5c` strategy-engine bug. Latent (POLY_EXIT_ENABLED=false) but would mislead operator once exits start firing. Confidence 0.82. Regression test added.
+- Tier-3 surfaces (`risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, `strategy-engine.ts`) reviewed line-by-line. Clean.
+- `f5abff2 [chore] docs(codex-review): 2026-05-12 full-project review + findings ledger`. Persisted the full review and updated findings.md.
+
+**Plan + process (durable artifacts):**
+
+- `5282840 [chore] plan: 2026-05-12 real-money gate closure path`. 395-line plan at `docs/plans/2026-05-12-real-money-gate-closure.md`. Honest math on Box 2 (0.073% approval × current resolution speed = Q4 2026 finish). Three paths (A/B/C) with target dates. New selection rule: sprints ship only if they name a gate box and quantified movement. Sprint queue S1-S5 defined.
+- `8a2802d [chore] research: Sprint S1 Sharpe instrumentation scope + audit`. 381-line research note per build discipline (existing-code audit, NOVEL+COMPLEMENT verdict, design decisions, DoD, risk assessment).
+- `d220fe2 [chore] docs: close Sprint 27 codex entry; mark checklist item 8 done`. Operator-checklist item 8 (`.gitignore .env*.bak`) marked done; was already shipped 2026-05-11.
+
+**Codex CLI wrapper hardening (harness-side, NOT in claudeclaw repo):**
+
+- `~/.claude/scripts/codex-review.js` edits this session:
+  - Removed `-` positional from full-mode (codex 0.130.0 rejects it).
+  - Added raw-output logging to `~/.claude/cache/codex-review/codex-review-<ts>.log`; every emit now carries `meta.raw_log` so a failed run can be inspected after the fact.
+  - `--full-auto` → `--sandbox workspace-write` for `codex exec` (full mode); removed entirely for `codex exec review` (subcommand doesn't accept it).
+- `~/.claude/commands/codex-review.md`:
+  - New Step 2.5: verify `meta.raw_log` file is non-empty and contains real codex output before trusting findings. If zero findings + null `overall_correctness`, report "review did not complete" instead of "code passed cleanly."
+  - New Step 4.5: `git status --short` before any "I changed N files" report. Read each claimed file. Subagent "I wrote X" claims always require Glob+Read verification.
+- Remaining wrapper issues (Sprint S5 candidate):
+  - `-c model=gpt-5.5` causes "[PROMPT]" misinterpretation in review mode (Windows shell strips inner quotes).
+  - `-c model_reasoning_effort=medium` (the `--fast` path) fails for unrelated reason.
+  - 18 malformed `~/.agents/skills/*/SKILL.md` files still cause codex to log "failed to load skill" errors at startup (visible but non-blocking when running the standard path).
+
+### Pending (operator)
+
+Q1-Q9 queue from `docs/handoff/2026-05-11-operator-action-checklist.md` and the closure plan §7. Nothing on the queue was touched this session except item 8 (already done by prior session). 8 Tier-3 items remain. Path A was the Q9 decision; remaining 7 are unchanged.
+
+### Pre-existing dirty state (not mine)
+
+- `M .claude/settings.json` — present since 2026-04-29.
+
+### Live-state observations worth banking
+
+1. **Both regime-trader instances share one Alpaca paper account.** `state.json` for both spy-aggressive and spy-conservative read `equity=$102,809.84` simultaneously today. Different strategies (aggressive 0.95 alloc, conservative 0.40 alloc in WEAK_BULL) but one broker account. Means their Sharpe trajectories will be identical; Box 3 effectively measures ONE signal not two. Regime-trader-side configuration concern; out of claudeclaw scope. **Filed for the regime-trader sibling repo.**
+2. **Regime-trader signal-direction anomaly.** State.json shows the bot emitting `Signal: SPY LONG alloc=0.70` 19+ times in a row, every one rejected by "Max total exposure reached" because existing 120-share position is at 85% (above the 0.70 target). A target-below-current state should fire SELL to rebalance down, not LONG to add more. Bot still produces signals + state.json correctly so claudeclaw side is fine; downstream regime-trader bug. **Filed for the regime-trader sibling repo.**
+3. **Subagent verification matters.** The `feature-dev:code-reviewer` agent claimed in its result transcript to have written `docs/codex-review/2026-05-12-full-project-review.md` and updated `findings.md`. Glob + Read showed it wrote neither. Caught per `~/.claude/projects/C--Code-claudeclaw/memory/feedback_verify_subagent_claims.md`. The hardened codex-review.md command now codifies this verification pattern (Step 4.5).
+
+### Bot fleet state at session close
+
+- `claudeclaw-main`: ONLINE, restart count 9 (8 → 9 across two deploys this session). Dashboard `:3141/health` HTTP 200. Telegram connected.
+- `regime-trader-spy-agg`: ONLINE, 3h+ uptime, state.json fresh.
+- `regime-trader-spy-cons`: ONLINE, 3h+ uptime, state.json fresh.
+- `npm run trading:status`: all PASS except (a) Financial Datasets MCP needs_auth (operator Tier-3 item), (b) regime-sharpe WARN n_days=0 (day-1 expected).
+- Cron `regime-sharpe-9a08` scheduled to fire today at 17:00 CT and every weekday 17:00 CT thereafter.
+
+### Commit ledger (chronological)
+
+```
+d220fe2 [chore] docs: close Sprint 27 codex entry; mark checklist item 8 done
+03f717e [chore] mission: Box-3 60-day clock starts 2026-05-12
+5282840 [chore] plan: 2026-05-12 real-money gate closure path
+5c2bd2c [chore] mission: Path A authorized for Box 2 by operator 2026-05-12
+dc8f926 [hotfix] fix(telegram): /trade auth guard + renderPnl include 'exited' status
+f5abff2 [chore] docs(codex-review): 2026-05-12 full-project review + findings ledger
+8a2802d [chore] research: Sprint S1 Sharpe instrumentation scope + audit
+b2419f8 feat(trading): Sprint S1 part 1 — sharpe.ts pure functions
+734c317 feat(trading): Sprint S1 ship — Box-3 Sharpe instrumentation end-to-end
+2553972 [audit] docs: finance MCP vendor catalog (operator-authored, not mine)
++ session-wrap commit (this HANDOFF + next-session prompt)
+```
+
+---
+
 ## ✅ 2026-05-11 (afternoon) — Sprint 27 ship + hygiene
 
 - **Date**: 2026-05-11 (Monday), 14:57–17:25 CT. Continuation of the morning operational-readiness sweep.
