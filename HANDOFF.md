@@ -86,13 +86,22 @@ f5abff2 [chore] docs(codex-review): 2026-05-12 full-project review + findings le
 8a2802d [chore] research: Sprint S1 Sharpe instrumentation scope + audit
 b2419f8 feat(trading): Sprint S1 part 1 — sharpe.ts pure functions
 734c317 feat(trading): Sprint S1 ship — Box-3 Sharpe instrumentation end-to-end
-2553972 [audit] docs: finance MCP vendor catalog (operator-authored, not mine)
+2553972 [audit] docs: finance MCP vendor catalog from anthropics/financial-services (afternoon session)
 + session-wrap commit (this HANDOFF + next-session prompt)
 ```
 
----
+### Afternoon addendum — anthropics/financial-services scout
 
-## ✅ 2026-05-11 (afternoon) — Sprint 27 ship + hygiene
+- **Date**: 2026-05-12, ~16:00–16:25 CT. Short read-then-build session.
+- **Trigger**: operator pasted `github.com/anthropics/financial-services` URL.
+- **Scope decision**: cherry-pick the vendor catalog, defer the rest. Repo is analyst-workflow tooling with human-sign-off baked into every agent — opposite of an autonomous trading bot. Full eval in commit `2553972`.
+- **Artifacts**: `docs/research/mcp-finance-vendors.md` (11-vendor matrix with ADOPT/WATCH/PASS verdicts for both asset classes), `.mcp.json.example` (staged-off wiring reference), one new `INDEX.md` entry.
+- **What got declined**: the `agent.yaml` Managed Agent cookbook pattern (premature; `dist/schedule-cli.js` already covers the scheduled-jobs surface), the analyst skills (DCF, IC memo, comps — analyst work product, not signals), the Microsoft 365 add-in install tooling, the partner-built plugins.
+- **Operator action items (Tier-3-ish, not mine to execute)**:
+  1. Probe `https://mcp-pub.aiera.com` and `https://vast-mcp.blueskyapi.com/mtnewswires` from a paper-mode session — if either answers without auth, ADOPT.
+  2. Check Greystar Anthropic Enterprise tier for Kensho Kfinance + Morningstar access (most likely partner-tier covered).
+  3. Decision: LSEG OR Morningstar, not both (overlapping coverage).
+- **No `src/` touched**, no live `.mcp.json` change, no push. Tier-2 commit only.
 
 - **Date**: 2026-05-11 (Monday), 14:57–17:25 CT. Continuation of the morning operational-readiness sweep.
 - **Model**: Claude Opus 4.7 (1M context).
