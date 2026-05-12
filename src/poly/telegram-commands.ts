@@ -281,10 +281,13 @@ function signedUsd(n: number): string {
 }
 
 export function renderPnl(db: Database.Database): string {
+  // status filter mirrors buildPortfolioSnapshot / getDailyRealizedPnl so the
+  // /poly pnl display equity matches the gate-computed equity once Sprint-8
+  // 'exited' rows start landing (POLY_EXIT_ENABLED=true).
   const realized = db.prepare(`
     SELECT status, COUNT(*) AS n, COALESCE(SUM(realized_pnl), 0) AS total
       FROM poly_paper_trades
-     WHERE status IN ('won','lost','voided')
+     WHERE status IN ('won','lost','voided','exited')
      GROUP BY status
   `).all() as Array<{ status: string; n: number; total: number }>;
 
@@ -305,8 +308,9 @@ export function renderPnl(db: Database.Database): string {
   const won = realized.find(r => r.status === 'won') ?? { n: 0, total: 0 };
   const lost = realized.find(r => r.status === 'lost') ?? { n: 0, total: 0 };
   const voided = realized.find(r => r.status === 'voided') ?? { n: 0, total: 0 };
+  const exited = realized.find(r => r.status === 'exited') ?? { n: 0, total: 0 };
 
-  const totalRealized = won.total + lost.total + voided.total;
+  const totalRealized = won.total + lost.total + voided.total + exited.total;
   const settled = won.n + lost.n;
   const winRate = settled > 0 ? (won.n / settled) * 100 : 0;
   const equity = POLY_PAPER_CAPITAL + totalRealized + unrealizedRow.total;
@@ -314,11 +318,12 @@ export function renderPnl(db: Database.Database): string {
     ? Math.max(0, (POLY_PAPER_CAPITAL - equity) / POLY_PAPER_CAPITAL) * 100
     : 0;
 
+  const exitedSuffix = exited.n > 0 ? `  · exited ${exited.n}` : '';
   return [
     'Paper P&L',
     `Capital: ${fmtUsd(POLY_PAPER_CAPITAL)}  Equity: ${fmtUsd(equity)}  DD: ${ddPct.toFixed(1)}%`,
     `Today realized: ${signedUsd(dailyPnl)}`,
-    `Lifetime realized: ${signedUsd(totalRealized)}  (won ${won.n} · lost ${lost.n} · void ${voided.n}` +
+    `Lifetime realized: ${signedUsd(totalRealized)}  (won ${won.n} · lost ${lost.n} · void ${voided.n}${exitedSuffix}` +
       (settled > 0 ? `  · win rate ${winRate.toFixed(0)}%` : '') + ')',
     `Open: ${openRow.n}  Deployed: ${fmtUsd(openRow.deployed)}  Unrealized: ${signedUsd(unrealizedRow.total)}`,
   ].join('\n');

@@ -1,6 +1,7 @@
 import type { Bot, Context } from 'grammy';
 
 import { logger } from '../logger.js';
+import { ALLOWED_CHAT_ID } from '../config.js';
 import type { StatePoller } from './state-poller.js';
 import type { InstanceController } from './instance-control.js';
 import type { TradingAlertManager } from './alerts.js';
@@ -71,8 +72,9 @@ export function registerTradingCommands(
   instanceNames: readonly string[],
 ): void {
   bot.command('trade', async (ctx) => {
+    if (!ALLOWED_CHAT_ID || ctx.chat?.id.toString() !== ALLOWED_CHAT_ID) return;
     const text = ctx.message?.text || '';
-    const parts = text.replace(/^\/trade\s*/, '').trim().split(/\s+/);
+    const parts = text.replace(/^\/trade(?:@\w+)?\s*/, '').trim().split(/\s+/);
     const subcommand = parts[0]?.toLowerCase() || 'status';
     const arg = parts[1] || '';
 

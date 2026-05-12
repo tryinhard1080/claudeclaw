@@ -56,7 +56,7 @@ function insertOpenTrade(db: Database.Database, id: number, o: {
 }
 
 function insertResolved(db: Database.Database, o: {
-  slug: string; status: 'won' | 'lost' | 'voided'; realized: number;
+  slug: string; status: 'won' | 'lost' | 'voided' | 'exited'; realized: number;
 }): void {
   db.prepare(`
     INSERT INTO poly_paper_trades (created_at, market_slug, outcome_token_id, outcome_label,
@@ -163,6 +163,18 @@ describe('renderPnl', () => {
     expect(txt).toContain('Open: 2');
     expect(txt).toContain('Deployed: $65');
     expect(txt).toContain('Unrealized: +$5.00');
+  });
+
+  it('[hotfix 2026-05-12] includes exited status in realized P&L sum and tail', () => {
+    // Mirror of the strategy-engine.ts fb48f5c fix at the display layer.
+    // Display-equity must match gate-equity once POLY_EXIT_ENABLED=true.
+    insertResolved(db, { slug: 'sl-1', status: 'exited', realized: -8 });
+    insertResolved(db, { slug: 'tp-1', status: 'exited', realized: 15 });
+    insertResolved(db, { slug: 'w-1', status: 'won', realized: 30 });
+    const txt = renderPnl(db);
+    // 30 (won) + -8 + 15 (exited) = +$37
+    expect(txt).toContain('Lifetime realized: +$37.00');
+    expect(txt).toContain('exited 2');
   });
 
   it('excludes stale poly_positions rows for closed trades from unrealized total', () => {
