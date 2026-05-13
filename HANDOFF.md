@@ -1,5 +1,94 @@
 # Handoff — ClaudeClaw
 
+## ✅ 2026-05-12 (evening) — regime-trader recovery, Sprint S2 ship + hotfix, Box 7 closed
+
+- **Date**: 2026-05-12 (Tuesday), 16:16 CT to 18:30 CT. Single ~2.5-hour session, resuming same-day after the morning S1 session closed at 13:30 CT.
+- **Model**: Claude Opus 4.7 (1M context). One background `feature-dev:code-reviewer` subagent for the Sprint S2 codex pass.
+- **Branch**: `main`. 4 commits shipped this session (recovery doc, S2 ship, S2 hotfix, session wrap).
+- **Tests**: 813 → 832 pass (was 813 at session start). Net +19 tests (18 from S2 + 1 from the codex P2 regression).
+
+### What changed (organized by gate impact)
+
+**Box 3 — regime-trader recovery + verified S1 cron path.**
+
+- Both `regime-trader-spy-agg` and `regime-trader-spy-cons` were STOPPED at session start with `exit_code=0` (clean Python exit, no traceback). Last log line was a routine 5-min signal at 13:25 CT — clean exit ~5 minutes after the previous session closed at 13:30 CT.
+- Restarted via `pm2 start regime-trader-spy-agg && pm2 start regime-trader-spy-cons` (operator-approved). Both connected to Alpaca successfully (`equity=$103,495.64 cash=$14,930.84`), then immediately exited gracefully via main.py's `Market is CLOSED. Next open: 2026-05-13 09:30:00-04:00. Exiting gracefully.` path. Faulthandler `e8c6b59` instrumentation present but did not fire — exit was Python-level, not a C-level signal.
+- **Root cause discovery**: regime-trader's `main.py` has an intentional "exit gracefully when market closed" path. Filed in `docs/research/handoff-regime-trader-clean-exit-2026-05-12.md` for the regime-trader sibling-repo maintainer with hypotheses, suggested actions, and bot-side compensating control. The 13:25 CT mid-market exit (when market was open) remains unexplained — escalation criteria documented for the regime-trader repo if it recurs.
+- **Box-3 cron verified independently**: Sharpe cron `regime-sharpe-9a08` fired exactly on time at 17:00:01 CT and wrote 2 fresh rows for 2026-05-12 (`equity=$103,259.24`, +$449.40 vs morning manual run from market drift on existing 120-share SPY position). Day-1 nulls expected; tomorrow 17:00 CT writes the FIRST row with non-null daily_return.
+- Box-3 status: **Day 1/60 ticking on schedule**. Recovery + verification both clean. Independence of Sharpe-cron from regime-trader run state confirmed (cron reads Alpaca account directly).
+
+**Box 2 — Sprint S2 (TTL filter shadow mode) shipped end-to-end.**
+
+- `feat(poly): Sprint S2 ship — TTL filter shadow mode (Box 2)` — 9 files, 849+ insertions, 18 new tests:
+  - Migration v1.16.0 added `poly_ttl_shadow_ticks` table (`UNIQUE(scan_tick_at)`, `band_min_days/max_days` snapshotted per row for audit trail). Applied to live DB.
+  - Pure module `src/poly/ttl-filter.ts`: `partitionByTtl`, `summarizeTick`, `recordTtlShadowTick`, `summarizeTtlShadowWindow`. Inclusive band boundaries, null-safe averages, idempotent re-write.
+  - Scanner `runOnce()` writes one shadow row per scan tick AFTER `selectPriceCaptureCandidates` — **SHADOW only, candidate list NOT mutated**. try/catch defensive pattern matching `recordScanRun`.
+  - Two new env vars: `POLY_MIN_MARKET_TTL_DAYS=1`, `POLY_MAX_MARKET_TTL_DAYS=30` (defaults). Plumbed through `src/config.ts` + `.env.example`.
+  - New script `scripts/poly-ttl-shadow-report.ts` (read-only): aggregates over a configurable window, prints per-tick averages, pass-rate, mean-TTL distribution, naive what-if uplift estimate.
+  - Research note `docs/research/sprint-s2-ttl-filter-shadow.md` (per build discipline; existing-code audit verdict NOVEL).
+- `[hotfix] fix(poly): Sprint S2 ttl-filter created_at unix seconds` — codex review found 1 P2: `recordTtlShadowTick` stored `Date.now()` (ms ~1.78e12) for `created_at` instead of unix seconds. Zero functional impact today (no reader queries `created_at`), but landed BEFORE first pm2 restart so no production rows ever carried the bad value. Regression test added asserting `created_at < 1e11`.
+- `claudeclaw-main` pm2 restarted with new dist (count 9 → 10) per A1 PERMISSIVE reading authorized in this same session.
+- **First post-restart scan tick at 18:17 CT wrote a real shadow row**: `candidates_total=20 candidates_ttl_pass=2 filtered_max=18 avg_ttl_pass=19.03d avg_ttl_filtered=205.57d created_at=2026-05-12 18:17:44 (unix sec confirmed)`. Confirms plan §3 hypothesis exactly: 90% of topN candidates are long-dated. 14-day shadow window opens NOW; comparison report due 2026-06-03.
+- Sprint S4 flag-flip eligibility: **2026-06-05+** (Tier-3 operator-only, separate from this entry).
+
+**Box 5 — codex review pass on Sprint S2.**
+
+- `feature-dev:code-reviewer` agent ran the review (codex CLI 0.130.0 stdin regression still unfixed; agent path from 2026-05-12 morning is the documented working route).
+- Verdict: **0 P0 / 0 P1 / 1 P2 (FIXED same-session) / 1 P3 (no action — `ensureTable` per-tick, consistent with `news-intersection.ts` pattern)**.
+- Review doc: `docs/codex-review/2026-05-12-sprint-s2-review.md`. `findings.md` ledger updated with two new rows + last-pass note.
+- Box 5 stays **ackable** (0 P0 / 0 P1 outstanding).
+
+**Box 7 — fully closed.**
+
+- A1 ACKed: PERMISSIVE clock-reading. Operator-directed sprint deploys do NOT reset Box-1 30-day clock; only failure-driven unplanned restarts do. Codifies what the bot was already operating under.
+- A2 ACKed: defer reflection / exit / exposure-aware flag flips pre-calibration. Mandatory because the flags depend on calibration data the bot does not have (0 resolved trades).
+- A3 ACKed: defer adversarial-review OAuth (`CLAUDE_CODE_OAUTH_TOKEN`). Resolution data needed to ground critique.
+- All three landed in MISSION sign-off log this session.
+
+**Operator queue partially cleared, .env edits aborted.**
+
+- Operator selected Q5 (`EMERGENCY_KILL_PHRASE`) and Q7 (`OPERATOR_EMAIL=rickybates@gmail.com`) for this session.
+- After surfacing the kill-phrase question, operator typed "KILL THIS" — disambiguation question landed on **Abort**. No `.env` edit, no second pm2 restart.
+- MISSION sign-off entry for Q5 + Q7 contained a placeholder line (left in for traceability — operator can edit / remove if intent was full revert).
+- Q4 (pwm login), Q6 (Anthropic key rotation), Q8 (NotebookLM ID) remain PROPOSED — deferred to next session by operator choice.
+
+### Pending (operator)
+
+1. **Q4, Q6, Q8** — see plan §7 / `docs/handoff/2026-05-11-operator-action-checklist.md`.
+2. **EMERGENCY_KILL_PHRASE** — still empty. If you want to set it next session, supply the phrase value (avoid common English / short imperatives so chat collisions don't trigger it).
+3. **OPERATOR_EMAIL** — still empty. Default `rickybates@gmail.com` proposed; not added to .env this session.
+4. **Box-1 clock**: Day 21/30 holds (no failure-driven restart this session; A1 PERMISSIVE makes today's deploy restart non-resetting). Target close 2026-05-21.
+
+### Live-state observations worth banking
+
+1. **regime-trader's "Market is CLOSED → exit gracefully" path is intentional in main.py.** Future post-market diagnostics: do NOT assume Bug 2 (HMM size-0) when seeing a graceful exit with `exit_code=0` and the market-closed log line. This was the cause of my initial misread that prompted this session's recovery dive. Documented in `docs/research/handoff-regime-trader-clean-exit-2026-05-12.md` and the new `reference_regime_trader_market_closed_exit` memory.
+2. **The 13:25 CT mid-market silent exit remains unexplained.** Faulthandler instrumentation didn't fire (Python-level exit, not C-level). Hypotheses ranked in the recovery handoff doc; most likely external `pm2 stop`. **Bot fleet should NOT autonomously restart regime-trader if it goes down mid-market in a future session — surface to operator first** (per this session's pattern).
+3. **PM2 `cron_restart: '30 8 * * 1-5'` semantics for stopped processes**: assumed to start them at the cron time (per pm2 docs). UNVERIFIED LIVE. If 08:30 CT tomorrow does not auto-start `regime-trader-spy-agg/cons`, that's a new finding worth filing.
+4. **First S2 scan-tick row provides a directional answer to the Path A bet**: 18 of 20 topN candidates are long-dated (avg 205 days), 2 inside [1,30] band (avg 19 days). Plan §3's hypothesis is now empirically supported on a single-tick sample. After 14 days of accumulation the report can be a real comparison rather than a naive what-if.
+
+### Bot fleet state at session close
+
+- `claudeclaw-main`: ONLINE, restart count 10, dashboard `:3141/health` HTTP 200, scans fresh, `poly_ttl_shadow_ticks` writing rows.
+- `regime-trader-spy-agg`: STOPPED post-market (graceful exit). Awaiting tomorrow 08:30 CT pm2 cron_restart fire.
+- `regime-trader-spy-cons`: STOPPED post-market (graceful exit). Same.
+- `npm run trading:status`: PASS for Polymarket scans + regime-sharpe (rows present). FAIL on PM2 (regime-trader stopped — expected post-market). WARN on Financial Datasets MCP needs_auth (operator Tier-3 item, no change).
+- Cron `regime-sharpe-9a08`: scheduled, fired today at 17:00:01 CT exactly.
+
+### Commit ledger (chronological)
+
+```
+b71fb20 [chore] docs: regime-trader silent-exit note 2026-05-12
+<S2 ship hash>      feat(poly): Sprint S2 ship — TTL filter shadow mode (Box 2)
+<S2 hotfix hash>    [hotfix] fix(poly): Sprint S2 ttl-filter created_at unix seconds + codex review docs
++ session-wrap commit (this HANDOFF + 2026-05-13 resume prompt + MISSION ACKs)
+```
+
+### Pre-existing dirty state (not mine)
+
+- `M .claude/settings.json` — present since 2026-04-29.
+
+---
+
 ## ✅ 2026-05-12 — Plan, Path A lock, codex review, Sprint S1 ship, codex wrapper hardening
 
 - **Date**: 2026-05-12 (Tuesday), 07:19 CT to 13:30 CT. Single ~6-hour session.

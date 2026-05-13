@@ -36,7 +36,7 @@ Before any real-money trading is enabled on either system, ALL of these must be 
 - [x] Documented kill-switch and roll-back procedure tested.
       (2026-05-09) halt/resume + DB-restore + bloat all PASS. (2026-05-11) Independent of today's regime-trader drill outcome; claudeclaw-side kill-switch path intact. Re-drill quarterly.
 - [ ] Operator (Richard) has explicitly signed off in writing in this file.
-      (2026-05-11) A1, A2, A3 still PROPOSED since 2026-04-21. Operator-action checklist at `docs/handoff/2026-05-11-operator-action-checklist.md`.
+      (2026-05-12 evening) A1, A2, A3 ACKed in this session — Box 7 (per plan §2) intermediate decisions cleared. The final real-money authorization signature here remains pending until Boxes 1–6 close. Operator-action checklist at `docs/handoff/2026-05-11-operator-action-checklist.md`; remaining items are Q4 / Q6 / Q8 (deferred to next session).
 
 Don't lobby for any of these to be waived. They exist to prevent ruin.
 
@@ -54,6 +54,14 @@ Anything less is a draft.
 ## Operator Sign-Off Log
 
 (Date — Decision — Reason)
+
+- _2026-05-12 (evening session)_ — **Sprint S2 (TTL filter shadow) shipped + Box 7 closed.** Sprint S2 (Path A instrumentation) shipped end-to-end this session: migration v1.16.0 applied; pure module `src/poly/ttl-filter.ts` + 19 tests; scanner wired in shadow mode (no candidate-list mutation); `scripts/poly-ttl-shadow-report.ts`; codex review found 1 P2 (`created_at` ms→sec convention violation), FIXED same-session via hotfix with regression test. 832/832 tests pass. claudeclaw-main pm2 restarted (count 9→10) per A1 PERMISSIVE reading authorized in this same session. First post-restart scan tick wrote a real `poly_ttl_shadow_ticks` row at 18:17 CT: 20 topN candidates, 2 inside [1,30] day band, 18 long-dated (avg 205 days). Confirms plan §3 hypothesis. 14-day shadow window opens now; Sprint S2 comparison report due 2026-06-03; Sprint S4 flag-flip eligibility 2026-06-05+ (Tier-3 operator-only, separate from this entry). Box-5 stays ackable (0 P0 / 0 P1 outstanding). **Operator authorizations A1/A2/A3 cleared in this session below; Box 7 fully closed. Q5 (`EMERGENCY_KILL_PHRASE`) + Q7 (`OPERATOR_EMAIL`) were initially selected but operator aborted the bundled .env edit before it landed — both remain unset.**
+
+- _2026-05-12_ — **A1 ACK: Gate-clock reading PERMISSIVE.** Operator-directed sprint deploys (Sprint S1 ship 13:30 CT, Sprint S2 ship 18:17 CT, future authorized sprint deploys) do NOT reset the Box-1 30-day "no manual intervention" clock. Only failure-driven unplanned restarts reset it. Bot has been operating under this reading implicitly since 2026-04-21; this entry codifies it. Closes Box 7 (1/3). Retroactively legitimizes today's S1 + S2 deploys.
+
+- _2026-05-12_ — **A2 ACK: Defer reflection / exit / exposure-aware flag flips pre-calibration.** `POLY_REFLECTION_ENABLED`, `POLY_EXIT_ENABLED`, `POLY_EXPOSURE_AWARE_SIZING` all stay `false` until ≥15-20 resolved trades exist (Phase-4 finding: 0 resolved today, projection mid-June at earliest under Path A). Mandatory because the flags depend on calibration data the bot does not have. Re-evaluate per-flag once resolutions land. Closes Box 7 (2/3).
+
+- _2026-05-12_ — **A3 ACK: Defer adversarial-review OAuth (`CLAUDE_CODE_OAUTH_TOKEN`).** Adversarial review of strategy without resolution data produces speculative critique, not actionable findings. Sun 18:00 ET cron currently skips correctly when auth absent. Re-evaluate after Box 2 has data to ground critique. Closes Box 7 (3/3). **Box 7 fully closed.**
 
 - _2026-05-12_ — **Path A authorized for Box 2.** Operator approved Path A in chat: add `POLY_MAX_MARKET_TTL_DAYS=30` filter to scanner, run 14-day shadow comparison via existing A/B harness, flip live if shadow shows positive lift. Reversible via env-var revert. Plan reference: `docs/plans/2026-05-12-real-money-gate-closure.md` §4. Sprint S1 (Sharpe instrumentation, Box 3 prerequisite) begins immediately. Sprint S2 (TTL filter shadow, Box 2 acceleration) begins after S1 ships. Target real-money date with Path A working: ~2026-08-01. **Tier-3 strategy parameter change authorized by operator in chat 2026-05-12; flag-flip from shadow to active still requires separate operator nod after shadow data lands.**
 
