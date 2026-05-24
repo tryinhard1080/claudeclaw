@@ -202,7 +202,7 @@ interface PwmAskJsonOutput {
 export function makePwmCliFetcher(runner: PwmRunner = realPwmRunner): PerplexityFetcher {
   return async ({ prompt }) => {
     const args = [
-      'ask', prompt,
+      'ask-cmd', prompt,
       '--json',
       '--intent', 'quick',     // free Sonar tier; preserves Pro/Deep quotas
       '--source', 'web',

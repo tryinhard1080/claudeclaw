@@ -251,7 +251,7 @@ describe('pwmCliFetcher (Sprint 26 — pwm CLI subprocess)', () => {
     const fetcher = makePwmCliFetcher(runner);
     await fetcher({ prompt: 'test prompt', apiKey: '', baseUrl: '', model: '' });
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.args).toEqual(['ask', 'test prompt', '--json', '--intent', 'quick', '--source', 'web']);
+    expect(calls[0]!.args).toEqual(['ask-cmd', 'test prompt', '--json', '--intent', 'quick', '--source', 'web']);
   });
 
   it('sets PYTHONIOENCODING=utf-8 in env', async () => {
