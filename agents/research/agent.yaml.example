@@ -1,6 +1,12 @@
-name: Research
-description: Deep web research, academic sources, competitive intel, trend analysis
+name: Trading Research
+description: Trading research, market microstructure, risk frameworks, and source-backed strategy notes
 
 telegram_bot_token_env: RESEARCH_BOT_TOKEN
 
 model: claude-sonnet-4-6
+
+deny_prefixes:
+  - mcp__gmail
+  - mcp__slack
+  - mcp__outlook
+  - mcp__teams

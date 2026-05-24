@@ -1,14 +1,21 @@
-name: Ops
-description: Calendar, scheduling, billing, Stripe, Gumroad, admin, task management
+name: Trading Ops
+description: Trading runtime health, PM2 checks, readiness scripts, and drill logs
 
 telegram_bot_token_env: OPS_BOT_TOKEN
 
 model: claude-sonnet-4-6
 
+deny_prefixes:
+  - mcp__gmail
+  - mcp__slack
+  - mcp__outlook
+  - mcp__teams
+
 obsidian:
   vault: /path/to/your/obsidian/vault
   folders:
-    - Finance/
-    - Inbox/
+    - Trading Ops/
+    - Runbooks/
+    - Handoffs/
   read_only:
     - Daily Notes/

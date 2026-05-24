@@ -1,0 +1,105 @@
+# Full Capacity Runbook
+
+## Trigger
+
+Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, ready for a trading day, or ready to move a gate box.
+
+## Preconditions
+
+- You have read `TRUST.md`, `SOUL.md`, `MISSION.md`, and `HEARTBEAT.md`.
+- You are in the repo root: `C:\Code\claudeclaw`.
+- You will not touch Tier 3 surfaces without explicit operator approval.
+- You will not treat real-money enablement as available until every `MISSION.md` checkbox is closed and signed.
+
+## Procedure
+
+1. Check git state.
+
+   ```powershell
+   git status --short --branch
+   ```
+
+2. Check the combined agent status.
+
+   ```powershell
+   npm run agent:surface:check
+   npm run source:freshness:refresh
+   npm run trading:benchmark:snapshot
+   npm run capacity:status
+   ```
+
+3. Check PM2 details.
+
+   ```powershell
+   pm2 list
+   pm2 describe claudeclaw-main
+   ```
+
+4. Check dashboard health.
+
+   ```powershell
+   Invoke-RestMethod -Uri http://127.0.0.1:3141/health
+   ```
+
+5. Run the code gates if files changed.
+
+   ```powershell
+   npm run typecheck
+   npm test
+   ```
+
+6. Query live paper evidence read-only when gate state matters.
+
+   ```powershell
+   @'
+   const Database = require('better-sqlite3');
+   const db = new Database('C:/claudeclaw-store/claudeclaw.db', { readonly: true, fileMustExist: true });
+   console.log(db.prepare("SELECT status, COUNT(*) AS count, ROUND(COALESCE(SUM(realized_pnl),0), 4) AS realized_pnl FROM poly_paper_trades GROUP BY status ORDER BY status").all());
+   console.log(db.prepare("SELECT value FROM poly_kv WHERE key='poly.halt'").get());
+   console.log(db.prepare("SELECT instance, snapshot_date, rolling_sharpe_60d, n_days FROM regime_sharpe_snapshots ORDER BY created_at DESC LIMIT 4").all());
+   '@ | node -
+   ```
+
+## PASS Criteria
+
+- `claudeclaw-main` is online in PM2 with unstable restarts at `0`.
+- Dashboard `/health` returns `status=healthy`, `database=ok`, and `telegram=connected`.
+- `npm run trading:status` has no FAIL rows. A stopped regime-trader instance is acceptable only when the script reports `closed_until_next_open`, `opening_grace`, or `closed_stale_open_state` outside regular session.
+- `npm run trading:benchmark` reports a benchmark row for each regime-trader instance.
+- `npm run gate:status` reports real-money gate progress and source freshness rows.
+- `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled.
+- `npm run typecheck` passes after edits.
+- `npm test` passes after code or config changes that can affect behavior.
+- Any WARN row has a named owner, next action, and gate impact.
+
+## Capacity Definition
+
+Full capacity does not mean real money. It means:
+
+- The paper trader is running unattended inside existing risk gates.
+- The equity bridge is scheduled and ready for market-open cycles.
+- Gate evidence is current enough for a human to trust the next decision.
+- Future agents see only trading-aligned instructions.
+- External architecture ideas are documented as blueprints, not imported as uncontrolled dependencies.
+
+## Current Known WARNs
+
+- Financial Datasets MCP may be missing from the active tool list. This blocks some research context, not trading execution.
+- News sync source freshness may be stale until the Perplexity or equivalent news feed is re-authorized.
+- Polymarket Box 2 remains structurally constrained until resolved trade count improves.
+- TTL shadow data is still evidence-gathering. Active TTL filtering is a separate Tier 3 decision.
+- Regime-trader Sharpe has only a small sample until the 60-day clock completes.
+
+## Rollback
+
+This runbook is read-only except for docs or instruction-surface fixes. If a check fails:
+
+1. Do not change risk parameters.
+2. Do not lift halt switches.
+3. Capture the exact failing command and output.
+4. Fix root cause in the smallest relevant surface.
+5. Re-run this runbook from the top.
+
+## Outcome Signature
+
+Summarize the result in `docs/handoff/YYYY-MM-DD-full-capacity-readiness.md` when the run changes gate evidence or operator next actions.

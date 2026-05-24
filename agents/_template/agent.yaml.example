@@ -7,8 +7,8 @@
 # Start with:
 #   npm start -- --agent myagent
 
-name: My Agent
-description: What this agent does
+name: My Trading Agent
+description: Trading-only specialist role inside ClaudeClaw
 
 # The env var name in .env that holds this agent's Telegram bot token.
 # Create a bot via @BotFather in Telegram, paste the token into .env.
@@ -20,20 +20,22 @@ model: claude-sonnet-4-6
 
 # Tool restrictions (optional).
 # Deny specific tools or tool prefixes for this agent.
-# Agents without these fields have full access (default).
+# Trading-only agents should block personal-assistant connectors by default.
 # deny_tools:
 #   - Bash            # Block shell access entirely
 #   - Write           # Block file creation
-# deny_prefixes:
-#   - mcp__slack      # Block all Slack MCP tools
-#   - mcp__gmail      # Block all Gmail MCP tools
+deny_prefixes:
+  - mcp__slack
+  - mcp__gmail
+  - mcp__outlook
+  - mcp__teams
 
 # Obsidian integration (optional).
 # Assign folders from your vault so this agent auto-loads relevant context.
 # obsidian:
 #   vault: /path/to/your/obsidian/vault
 #   folders:
-#     - FolderA/
-#     - FolderB/
+#     - Trading/
+#     - Runbooks/
 #   read_only:
 #     - Daily Notes/

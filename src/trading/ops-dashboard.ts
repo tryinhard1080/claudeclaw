@@ -104,16 +104,27 @@ function regimeRoot(): string {
   return REGIME_TRADER_PATH || 'C:\\Code\\regime-trader';
 }
 
-function readRegimeStatesByApp(root: string): Record<string, MinimalRegimeState | null> {
+interface RegimeStateReadResult {
+  states: Record<string, MinimalRegimeState | null>;
+  mtimes: Record<string, number | null>;
+}
+
+function readRegimeStatesByApp(root: string): RegimeStateReadResult {
   const states: Record<string, MinimalRegimeState | null> = {};
+  const mtimes: Record<string, number | null> = {};
   for (const [appName, instanceName] of Object.entries(REGIME_APP_TO_INSTANCE)) {
     const statePath = path.join(root, 'instances', instanceName, 'data', 'state.json');
     states[appName] = readJsonFile<MinimalRegimeState>(statePath);
+    try {
+      mtimes[appName] = fs.statSync(statePath).mtimeMs;
+    } catch {
+      mtimes[appName] = null;
+    }
   }
-  return states;
+  return { states, mtimes };
 }
 
-function summarizePm2(regimeStatesByApp: Record<string, MinimalRegimeState | null>): OpsCheck {
+function summarizePm2(regimeStates: RegimeStateReadResult): OpsCheck {
   const result = runCommand('pm2 jlist');
   if (!result.ok) {
     return {
@@ -126,7 +137,10 @@ function summarizePm2(regimeStatesByApp: Record<string, MinimalRegimeState | nul
 
   try {
     const apps = JSON.parse(result.output) as Pm2AppLike[];
-    return summarizePm2Apps(apps, { regimeStatesByApp });
+    return summarizePm2Apps(apps, {
+      regimeStatesByApp: regimeStates.states,
+      regimeStateMtimesByApp: regimeStates.mtimes,
+    });
   } catch {
     return {
       name: 'PM2',
@@ -197,9 +211,11 @@ function summarizePaper(db: Database.Database, nowSec: number): TradingOpsPaperS
 export function collectTradingOpsPayload(db: Database.Database): TradingOpsPayload {
   const nowSec = Math.floor(Date.now() / 1000);
   const states = readRegimeStatesByApp(regimeRoot());
-  const regimeChecks = Object.entries(states).map(([appName, state]) => {
+  const regimeChecks = Object.entries(states.states).map(([appName, state]) => {
     const instanceName = REGIME_APP_TO_INSTANCE[appName] ?? appName;
-    const check = summarizeRegimeState(state);
+    const check = summarizeRegimeState(state, Date.now(), {
+      stateMtimeMs: states.mtimes[appName] ?? undefined,
+    });
     return { ...check, name: `Regime ${instanceName}` };
   });
 

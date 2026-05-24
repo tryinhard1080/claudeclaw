@@ -8,6 +8,13 @@ can find the newest source of truth without spelunking the whole folder.
 
 - [`financial-research-agent-prompts.md`](./financial-research-agent-prompts.md) - Prompt templates for using Financial Datasets MCP as research context, not trading execution.
 - [`mcp-finance-vendors.md`](./mcp-finance-vendors.md) - Vendor matrix for 11 finance MCP endpoints from `anthropics/financial-services`. ADOPT/WATCH/PASS verdicts and access-check action items. Paired with `.mcp.json.example`.
+- [`2026-05-22-full-trading-bot-research.md`](./2026-05-22-full-trading-bot-research.md) - Current web-sourced research pass for stock and Polymarket real-money readiness, data sources, and strategy direction.
+- [`sprint-2026-05-24-regime-weekend-readiness.md`](./sprint-2026-05-24-regime-weekend-readiness.md) - Readiness fix for stale Friday open-state when regime-trader is stopped outside regular session.
+- [`sprint-2026-05-24-equity-benchmark.md`](./sprint-2026-05-24-equity-benchmark.md) - Equity benchmark table and comparison surface for regime-trader.
+- [`sprint-2026-05-24-polymarket-us-readonly.md`](./sprint-2026-05-24-polymarket-us-readonly.md) - Polymarket US public read-only adapter research and guardrails.
+- [`sprint-2026-05-24-adversarial-data-tests.md`](./sprint-2026-05-24-adversarial-data-tests.md) - Must-reject adversarial data fixtures for gates and news context.
+- [`sprint-s2-ttl-filter-latest.md`](./sprint-s2-ttl-filter-latest.md) - Latest generated TTL shadow report from `npm run poly:ttl:report`.
+- [`finceptterminal-fit.md`](./finceptterminal-fit.md) - FinceptTerminal architecture fit assessment. Blueprint only; no code import due license and scope constraints.
 - [`sprint-weather-shadow.md`](./sprint-weather-shadow.md) - Weather Goat shadow-evaluator research and implementation notes.
 - [`atlas-self-improving-trading-agents.md`](./atlas-self-improving-trading-agents.md) - Atlas and self-improving trading-agent comparison; use as blueprint material only.
 - [`sprint-27-sonar-refusal-detection.md`](./sprint-27-sonar-refusal-detection.md) - News-sync skip-vs-fail handling for Sonar real-time refusals.

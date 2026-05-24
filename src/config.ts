@@ -63,6 +63,8 @@ const envConfig = readEnvFile([
   'PPLX_API_KEY',
   'PPLX_BASE_URL',
   'PPLX_NEWS_MODEL',
+  'EQUITY_LIVE_EXECUTION_ENABLED',
+  'POLYMARKET_US_LIVE_EXECUTION_ENABLED',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -214,6 +216,11 @@ export const REGIME_TRADER_PATH =
 export const REGIME_TRADER_INSTANCES = (
   process.env.REGIME_TRADER_INSTANCES || envConfig.REGIME_TRADER_INSTANCES || ''
 ).split(',').map(s => s.trim()).filter(Boolean);
+
+export const EQUITY_LIVE_EXECUTION_ENABLED =
+  (process.env.EQUITY_LIVE_EXECUTION_ENABLED || envConfig.EQUITY_LIVE_EXECUTION_ENABLED || 'false').toLowerCase() === 'true';
+export const POLYMARKET_US_LIVE_EXECUTION_ENABLED =
+  (process.env.POLYMARKET_US_LIVE_EXECUTION_ENABLED || envConfig.POLYMARKET_US_LIVE_EXECUTION_ENABLED || 'false').toLowerCase() === 'true';
 
 // ── Polymarket bot ───────────────────────────────────────────────────
 function num(key: string, def: number): number {

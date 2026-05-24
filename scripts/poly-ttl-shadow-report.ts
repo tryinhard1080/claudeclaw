@@ -15,6 +15,7 @@
  * flip from shadow to active is Sprint S4 (Tier-3, operator-only).
  */
 import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { STORE_DIR } from '../src/config.js';
@@ -22,10 +23,12 @@ import { summarizeTtlShadowWindow, type TtlShadowSummary } from '../src/poly/ttl
 
 interface Args {
   days: number;
+  outPath: string | null;
 }
 
 export function parseArgs(argv: string[]): Args {
   let days = 14;
+  let outPath: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--days' && i + 1 < argv.length) {
@@ -35,13 +38,18 @@ export function parseArgs(argv: string[]): Args {
       }
       days = n;
       i++;
+      continue;
+    }
+    if (a === '--out' && i + 1 < argv.length) {
+      outPath = argv[i + 1]!;
+      i++;
     }
   }
-  return { days };
+  return { days, outPath };
 }
 
 export function formatTtlShadowReport(summary: TtlShadowSummary | null, days: number): string {
-  const lines: string[] = ['', `=== TTL filter shadow report — last ${days} days ===`, ''];
+  const lines: string[] = ['', `=== TTL filter shadow report - last ${days} days ===`, ''];
   if (summary === null) {
     lines.push('  No shadow data in this window.');
     lines.push('  The first row lands at the next post-deploy scan tick.');
@@ -76,12 +84,12 @@ export function formatTtlShadowReport(summary: TtlShadowSummary | null, days: nu
   lines.push('');
 
   // Naive what-if approval-rate uplift estimate. Read with caution: assumes
-  // approval rate is uniform across TTL, which is an unverified premise — the
+  // approval rate is uniform across TTL, which is an unverified premise - the
   // very thing the day-14 active-mode test is meant to validate. Surfacing it
   // here as a directional signal, not a forecast.
   const wouldBeKeepShare = summary.passRate;
   const wouldBeDropShare = 1 - wouldBeKeepShare;
-  lines.push('  Naive what-if (assumes uniform approval rate across TTL — unverified):');
+  lines.push('  Naive what-if (assumes uniform approval rate across TTL - unverified):');
   lines.push(`    if filter were ACTIVE, ~${pct(wouldBeKeepShare)} of candidates would survive`);
   lines.push(`    ~${pct(wouldBeDropShare)} of long-dated/short-dated candidates would be excluded`);
   lines.push(`    expected days-to-50 lift: directionally proportional to mean-TTL drop`);
@@ -108,7 +116,14 @@ export function main(argv = process.argv.slice(2)): number {
     const nowSec = Math.floor(Date.now() / 1000);
     const startSec = nowSec - args.days * 86400;
     const summary = summarizeTtlShadowWindow(db, startSec, nowSec);
-    process.stdout.write(formatTtlShadowReport(summary, args.days));
+    const report = formatTtlShadowReport(summary, args.days);
+    process.stdout.write(report);
+    if (args.outPath) {
+      const outPath = path.resolve(args.outPath);
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, `${report.trimEnd()}\n`);
+      process.stdout.write(`\n  Wrote ${outPath}\n`);
+    }
   } finally {
     db.close();
   }

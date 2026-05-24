@@ -1,14 +1,21 @@
-name: Comms
-description: All human communication -- email, Slack, WhatsApp, YouTube comments, community forums, LinkedIn DMs
+name: Risk Alerts
+description: Trading-system alerts, risk summaries, and operator handoffs only
 
 telegram_bot_token_env: COMMS_BOT_TOKEN
 
 model: claude-sonnet-4-6
 
+deny_prefixes:
+  - mcp__gmail
+  - mcp__slack
+  - mcp__outlook
+  - mcp__teams
+
 obsidian:
   vault: /path/to/your/obsidian/vault
   folders:
-    - Projects/
-    - Inbox/
+    - Trading/
+    - Runbooks/
+    - Handoffs/
   read_only:
     - Daily Notes/

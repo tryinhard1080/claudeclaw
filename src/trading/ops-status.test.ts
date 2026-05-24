@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isUsEquityRegularSession,
   type SharpeRow,
   summarizeFinancialDatasetsMcp,
   summarizePm2Apps,
@@ -11,6 +12,8 @@ import {
 } from './ops-status.js';
 
 const NOW = Date.parse('2026-05-09T14:00:00.000Z');
+const SUNDAY = Date.parse('2026-05-24T16:00:00.000Z');
+const MONDAY_REGULAR_SESSION = Date.parse('2026-05-18T15:00:00.000Z');
 
 describe('summarizePm2Apps', () => {
   it('accepts online ClaudeClaw plus stopped Regime Trader apps before next open when paths point to C:\\Code', () => {
@@ -40,6 +43,49 @@ describe('summarizePm2Apps', () => {
 
     expect(result.status).toBe('pass');
     expect(result.state).toBe('healthy');
+  });
+
+  it('accepts stopped Regime Trader apps outside regular session when state is stale open-market state', () => {
+    const result = summarizePm2Apps(
+      [
+        {
+          name: 'claudeclaw-main',
+          pm2_env: { status: 'online', pm_cwd: 'C:\\Code\\claudeclaw', pm_exec_path: 'C:\\Code\\claudeclaw\\dist\\index.js' },
+        },
+        {
+          name: 'regime-trader-spy-agg',
+          pm2_env: { status: 'stopped', pm_cwd: 'C:\\Code\\regime-trader', pm_exec_path: 'C:\\Code\\regime-trader\\main.py' },
+        },
+        {
+          name: 'regime-trader-spy-cons',
+          pm2_env: { status: 'stopped', pm_cwd: 'C:\\Code\\regime-trader', pm_exec_path: 'C:\\Code\\regime-trader\\main.py' },
+        },
+      ],
+      {
+        nowMs: SUNDAY,
+        regimeStatesByApp: {
+          'regime-trader-spy-agg': { market_open: true, equity: 100000, cash: 100000, regime: {}, risk: {} },
+          'regime-trader-spy-cons': { market_open: true, equity: 100000, cash: 100000, regime: {}, risk: {} },
+        },
+        regimeStateMtimesByApp: {
+          'regime-trader-spy-agg': Date.parse('2026-05-22T19:35:00.000Z'),
+          'regime-trader-spy-cons': Date.parse('2026-05-22T19:35:00.000Z'),
+        },
+      },
+    );
+
+    expect(result.status).toBe('pass');
+    expect(result.detail).toMatch(/closed_stale_open_state/);
+  });
+});
+
+describe('isUsEquityRegularSession', () => {
+  it('returns true during regular weekday session', () => {
+    expect(isUsEquityRegularSession(MONDAY_REGULAR_SESSION)).toBe(true);
+  });
+
+  it('returns false on weekends', () => {
+    expect(isUsEquityRegularSession(SUNDAY)).toBe(false);
   });
 });
 
@@ -88,6 +134,28 @@ describe('summarizeRegimeState', () => {
 
     expect(result.status).toBe('fail');
     expect(result.state).toBe('missing');
+  });
+
+  it('treats stale open-market state outside regular session as safe closed-session state', () => {
+    const result = summarizeRegimeState(
+      { market_open: true, equity: 100000, cash: 100000, regime: {}, risk: {} },
+      SUNDAY,
+      { stateMtimeMs: Date.parse('2026-05-22T19:35:00.000Z') },
+    );
+
+    expect(result.status).toBe('pass');
+    expect(result.state).toBe('closed_stale_open_state');
+  });
+
+  it('fails stale open-market state during regular session', () => {
+    const result = summarizeRegimeState(
+      { market_open: true, equity: 100000, cash: 100000, regime: {}, risk: {} },
+      MONDAY_REGULAR_SESSION,
+      { stateMtimeMs: MONDAY_REGULAR_SESSION - 31 * 60 * 1000 },
+    );
+
+    expect(result.status).toBe('fail');
+    expect(result.state).toBe('open_stale_during_session');
   });
 });
 

@@ -36,9 +36,11 @@ export interface PolyScanRunLike {
 export interface Pm2SummaryOptions {
   nowMs?: number;
   regimeStatesByApp?: Record<string, MinimalRegimeState | null | undefined>;
+  regimeStateMtimesByApp?: Record<string, number | null | undefined>;
 }
 
 const REGIME_APP_NAMES = ['regime-trader-spy-agg', 'regime-trader-spy-cons'] as const;
+const REGIME_OPEN_STATE_STALE_MS = 30 * 60 * 1000;
 
 function normalizePath(value: string | undefined): string {
   return (value ?? '').replace(/\\/g, '/').toLowerCase();
@@ -90,8 +92,14 @@ export function summarizePm2Apps(apps: Pm2AppLike[], opts: Pm2SummaryOptions = {
       continue;
     }
 
-    const stateSummary = summarizeRegimeState(opts.regimeStatesByApp?.[appName] ?? null, nowMs);
-    if (stateSummary.state === 'closed_until_next_open' || stateSummary.state === 'opening_grace') {
+    const stateSummary = summarizeRegimeState(opts.regimeStatesByApp?.[appName] ?? null, nowMs, {
+      stateMtimeMs: opts.regimeStateMtimesByApp?.[appName] ?? undefined,
+    });
+    if (
+      stateSummary.state === 'closed_until_next_open' ||
+      stateSummary.state === 'opening_grace' ||
+      stateSummary.state === 'closed_stale_open_state'
+    ) {
       details.push(`${appName} ${app.pm2_env?.status ?? 'not online'} while ${stateSummary.state}`);
       continue;
     }
@@ -194,9 +202,10 @@ export function summarizeWeatherGoatDoctor(raw: string | Record<string, unknown>
 export function summarizeRegimeState(
   state: MinimalRegimeState | null | undefined,
   nowMs: number = Date.now(),
-  opts: { graceMs?: number } = {},
+  opts: { graceMs?: number; stateMtimeMs?: number; openStateStaleMs?: number } = {},
 ): OpsCheck {
   const graceMs = opts.graceMs ?? 10 * 60 * 1000;
+  const openStateStaleMs = opts.openStateStaleMs ?? REGIME_OPEN_STATE_STALE_MS;
   if (!state) {
     return {
       name: 'Regime Trader state',
@@ -216,6 +225,27 @@ export function summarizeRegimeState(
   }
 
   if (state.market_open) {
+    if (
+      opts.stateMtimeMs !== undefined &&
+      nowMs - opts.stateMtimeMs > openStateStaleMs
+    ) {
+      const lastWrite = new Date(opts.stateMtimeMs).toISOString();
+      if (!isUsEquityRegularSession(nowMs)) {
+        return {
+          name: 'Regime Trader state',
+          status: 'pass',
+          state: 'closed_stale_open_state',
+          detail: `outside regular session; last open state wrote ${lastWrite}`,
+        };
+      }
+      return {
+        name: 'Regime Trader state',
+        status: 'fail',
+        state: 'open_stale_during_session',
+        detail: `open-market state stale since ${lastWrite}`,
+      };
+    }
+
     if (state.regime && state.risk) {
       return {
         name: 'Regime Trader state',
@@ -266,6 +296,26 @@ export function summarizeRegimeState(
     state: 'stale_after_next_open',
     detail: `next_open passed at ${new Date(nextOpenMs).toISOString()}`,
   };
+}
+
+export function isUsEquityRegularSession(nowMs: number = Date.now()): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(nowMs));
+
+  const weekday = parts.find(part => part.type === 'weekday')?.value ?? '';
+  if (weekday === 'Sat' || weekday === 'Sun') return false;
+
+  const hour = Number(parts.find(part => part.type === 'hour')?.value ?? NaN);
+  const minute = Number(parts.find(part => part.type === 'minute')?.value ?? NaN);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
+
+  const minutes = hour * 60 + minute;
+  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
 
 export interface SharpeRow {

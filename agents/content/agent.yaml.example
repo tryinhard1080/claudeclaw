@@ -1,15 +1,21 @@
-name: Content
-description: YouTube scripts, LinkedIn posts, carousels, trend research, content calendar
+name: Market Briefs
+description: Trading-only market briefs, daily digests, and research summaries
 
 telegram_bot_token_env: CONTENT_BOT_TOKEN
 
 model: claude-sonnet-4-6
 
+deny_prefixes:
+  - mcp__gmail
+  - mcp__slack
+  - mcp__outlook
+  - mcp__teams
+
 obsidian:
   vault: /path/to/your/obsidian/vault
   folders:
-    - YouTube/
-    - Content/
-    - Teaching/
+    - Trading Research/
+    - Market Briefs/
+    - News/
   read_only:
     - Daily Notes/

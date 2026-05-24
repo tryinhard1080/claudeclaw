@@ -74,6 +74,13 @@ When tasked with research:
 3. Persist findings in `docs/research/<topic>.md` so we don't pay twice for the same answer.
 4. End every research note with a one-paragraph "How this changes our code/strategy" — no actionable conclusion = wasted research.
 
+## Shared Claude/Codex Surface
+
+Read `docs/agent-shared/README.md` when working on agent setup, skills, MCP,
+full-capacity readiness, or cross-agent consistency. Run
+`npm run agent:surface:check` after edits to `.claude/`, `.agents/`, `.codex/`,
+`.mcp.json`, `CLAUDE.md`, `AGENTS.md`, or shared onboarding docs.
+
 ## Operational Conventions
 
 - **Tier 1 (just do)**: read code, run tests, query the DB read-only, run QA smoke scripts, commit feature-branch code.
