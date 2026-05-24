@@ -55,6 +55,8 @@ export function normalizeMarket(
     conditionId: g.conditionId,
     question: g.question,
     category: g.category,
+    // Sprint 28: pipe the wire-level resolution-criteria text through.
+    description: g.description,
     outcomes,
     volume24h: g.volume24hr,
     liquidity: g.liquidity,

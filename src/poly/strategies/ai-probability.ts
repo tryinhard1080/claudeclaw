@@ -5,7 +5,7 @@ import { GLM_API_KEY, GLM_BASE_URL, GLM_MODEL } from '../../config.js';
 import { ProbabilityEstimateSchema, type ProbabilityEstimate, type Market } from '../types.js';
 import { logger } from '../../logger.js';
 
-export const PROMPT_VERSION = 'v3';
+export const PROMPT_VERSION = 'v3-desc';
 
 const SYSTEM_PROMPT = `You are a prediction-market probability estimator.
 
@@ -15,6 +15,7 @@ READ THE QUESTION LITERALLY. These qualifiers reverse meaning and are the #1 sou
 - "Before DATE" / "by DATE" is time-bounded — happening after resolution = NO.
 - "Will X NOT happen" has inverted polarity vs "Will X happen" — read twice.
 - If the question concerns a specific person/entity, check whether the market resolves YES only for that exact entity or for any member of a category.
+- If a "Resolution criteria" block is provided below, read it BEFORE the question. It is the contract's literal resolution language. When the criteria specify a cutoff date, a resolution source (UMA, official tally, specific publication), a tie-breaker, or a scope limit, those bind your probability. If the criteria contradict the question's surface reading, the criteria win.
 
 Before committing to a probability, re-state the question in your own words in one clause and verify your answer matches that restatement.
 
@@ -29,7 +30,51 @@ Given a market question and context, return a JSON object:
 {"probability": 0.0-1.0, "confidence": "low"|"medium"|"high", "reasoning": "1-3 sentences that restate the resolution condition", "contrarian": "1-2 sentences on why the current market price might actually be correct"}
 Output ONLY the JSON object. No prose, no markdown fences, no commentary.`;
 
-const USER_PROMPT_SKELETON = `{question, category, end_date, ask, spread, depth, volume}`;
+const USER_PROMPT_SKELETON = `{question, category, end_date, ask, spread, depth, volume, [description?]}`;
+
+/**
+ * Sprint 28 — composeUserPrompt is the single source of truth for the user
+ * message sent to the model. Extracted from evaluateMarket so tests can
+ * assert the exact text without standing up a fake OpenAI client.
+ *
+ * When `description` is a non-empty string, a "Resolution criteria" block
+ * is prepended above the standard question/category/odds block. The
+ * SYSTEM_PROMPT tells the analyst the criteria block, if present, binds
+ * the answer and overrides surface readings of the question.
+ *
+ * When description is undefined or empty, the criteria block is omitted
+ * entirely — current pre-Sprint-28 behavior preserved as the null case.
+ */
+export interface ComposeUserPromptArgs {
+  question: string;
+  category: string | null;
+  endDateSec: number;
+  outcomeLabel: string;
+  bestAsk: number;
+  spreadPct: number | null;
+  askDepthUsd: number;
+  volume24h: number;
+  description?: string;
+}
+
+export function composeUserPrompt(args: ComposeUserPromptArgs): string {
+  const lines: string[] = [];
+  if (args.description && args.description.length > 0) {
+    lines.push('Resolution criteria (verbatim from Polymarket):');
+    lines.push(args.description);
+    lines.push('');
+  }
+  lines.push(
+    `Question: ${args.question}`,
+    `Category: ${args.category ?? 'unknown'}`,
+    `End date: ${new Date(args.endDateSec * 1000).toISOString()}`,
+    `Current ${args.outcomeLabel} ask: $${args.bestAsk.toFixed(3)}`,
+    `Spread: ${args.spreadPct === null ? 'n/a' : args.spreadPct.toFixed(1) + '%'}`,
+    `Ask depth: $${args.askDepthUsd.toFixed(0)}`,
+    `24h volume: $${args.volume24h.toFixed(0)}`,
+  );
+  return lines.join('\n');
+}
 
 // Lazy client init — keeps module importable without a real API key (tests, dry runs).
 // Targets Z.ai's OpenAI-compatible GLM endpoint (subscription-billed) after the
@@ -81,6 +126,10 @@ export function computeCacheKey(
   params: {
     ask: number; volume: number; spreadPct: number | null; askDepthUsd: number;
     question: string; category: string | null; endDateSec: number;
+    // Sprint 28: hash the description text so a Polymarket clarification edit
+    // invalidates this market's cached estimate. Treat null and empty string
+    // identically — both mean "no criteria block was shown to the analyst."
+    description: string | null;
   }
 ): string {
   // Quantize: ask 1%, volume $1k, spread 1% (null→-1), ask depth $100,
@@ -92,10 +141,11 @@ export function computeCacheKey(
   const depth = Math.round(params.askDepthUsd / 100);
   const endDay = Math.floor(params.endDateSec / 86400);
   const cat = params.category ?? '';
+  const desc = params.description ?? '';
   return crypto
     .createHash('sha256')
     .update(
-      `${PROMPT_TEMPLATE_HASH}|${slug}|${tokenId}|${ask}|${vol}|${spread}|${depth}|${endDay}|${cat}|${params.question}`,
+      `${PROMPT_TEMPLATE_HASH}|${slug}|${tokenId}|${ask}|${vol}|${spread}|${depth}|${endDay}|${cat}|${params.question}|${desc}`,
     )
     .digest('hex');
 }
@@ -119,6 +169,7 @@ export async function evaluateMarket(args: EvaluateArgs): Promise<ProbabilityEst
     question: args.market.question,
     category: args.market.category ?? null,
     endDateSec: args.market.endDate,
+    description: args.market.description ?? null,
   });
   const cached = args.db
     .prepare(
@@ -143,15 +194,17 @@ export async function evaluateMarket(args: EvaluateArgs): Promise<ProbabilityEst
     };
   }
 
-  const user = [
-    `Question: ${args.market.question}`,
-    `Category: ${args.market.category ?? 'unknown'}`,
-    `End date: ${new Date(args.market.endDate * 1000).toISOString()}`,
-    `Current ${args.outcome.label} ask: $${args.bestAsk.toFixed(3)}`,
-    `Spread: ${args.spreadPct === null ? 'n/a' : args.spreadPct.toFixed(1) + '%'}`,
-    `Ask depth: $${args.askDepthUsd.toFixed(0)}`,
-    `24h volume: $${args.market.volume24h.toFixed(0)}`,
-  ].join('\n');
+  const user = composeUserPrompt({
+    question: args.market.question,
+    category: args.market.category ?? null,
+    endDateSec: args.market.endDate,
+    outcomeLabel: args.outcome.label,
+    bestAsk: args.bestAsk,
+    spreadPct: args.spreadPct,
+    askDepthUsd: args.askDepthUsd,
+    volume24h: args.market.volume24h,
+    description: args.market.description,
+  });
 
   try {
     // `thinking.type='disabled'` is a GLM-specific extra_body param that

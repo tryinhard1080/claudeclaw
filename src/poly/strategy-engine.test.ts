@@ -10,6 +10,7 @@ import {
   selectPriceCaptureCandidates,
 } from './strategy-engine.js';
 import { WEATHER_SHADOW_PROMPT_VERSION } from './weather-shadow.js';
+import { PROMPT_VERSION as AI_PROBABILITY_PROMPT_VERSION } from './strategies/ai-probability.js';
 
 function bootDb(): Database.Database {
   const db = new Database(':memory:');
@@ -256,7 +257,7 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(row.edge_pct).toBeCloseTo(20, 1);
     expect(row.paper_trade_id).not.toBeNull();
     // Sprint 2 versioning: every new signal carries its prompt version + model.
-    expect(row.prompt_version).toBe('v3');
+    expect(row.prompt_version).toBe(AI_PROBABILITY_PROMPT_VERSION);
     expect(row.model).toBeTruthy();
 
     const trade = db.prepare(`SELECT status, size_usd FROM poly_paper_trades WHERE id = ?`).get(row.paper_trade_id) as { status: string; size_usd: number };
@@ -475,7 +476,7 @@ describe('StrategyEngine.onScanComplete', () => {
     }>;
     expect(rows).toHaveLength(2);
     // Primary row
-    expect(rows[0]!.prompt_version).toBe('v3');
+    expect(rows[0]!.prompt_version).toBe(AI_PROBABILITY_PROMPT_VERSION);
     expect(rows[0]!.estimated_prob).toBe(0.6);
     expect(rows[0]!.approved).toBe(1);
     expect(rows[0]!.paper_trade_id).not.toBeNull();
@@ -599,7 +600,7 @@ describe('StrategyEngine.onScanComplete', () => {
       rejection_reasons: string | null; paper_trade_id: number | null; provider: string | null;
     }>;
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.prompt_version).toBe('v3');
+    expect(rows[0]!.prompt_version).toBe(AI_PROBABILITY_PROMPT_VERSION);
     expect(rows[1]!.prompt_version).toBe(WEATHER_SHADOW_PROMPT_VERSION);
     expect(rows[1]!.estimated_prob).toBe(0.72);
     expect(rows[1]!.approved).toBe(0);
@@ -629,7 +630,7 @@ describe('StrategyEngine.onScanComplete', () => {
     });
 
     const rows = db.prepare(`SELECT prompt_version FROM poly_signals ORDER BY id`).all() as Array<{ prompt_version: string }>;
-    expect(rows.map(r => r.prompt_version)).toEqual(['v3']);
+    expect(rows.map(r => r.prompt_version)).toEqual([AI_PROBABILITY_PROMPT_VERSION]);
     expect(weatherCalls).toBe(0);
   });
 });

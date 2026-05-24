@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeCacheKey, computeEdgePct, extractJson } from './ai-probability.js';
+import { computeCacheKey, computeEdgePct, extractJson, composeUserPrompt, PROMPT_VERSION } from './ai-probability.js';
 
 describe('ai-probability helpers', () => {
   describe('computeEdgePct', () => {
@@ -13,6 +13,7 @@ describe('ai-probability helpers', () => {
       ask: 0.5, volume: 10000, spreadPct: 2, askDepthUsd: 500,
       question: 'Will X happen by Y?', category: 'politics',
       endDateSec: 1_700_000_000,
+      description: null as string | null,
     };
 
     it('is stable for inputs that round to the same quantization bucket', () => {
@@ -67,6 +68,65 @@ describe('ai-probability helpers', () => {
       const k1 = computeCacheKey('slug', 'tok', { ...base, endDateSec: 1_700_000_000 });
       const k2 = computeCacheKey('slug', 'tok', { ...base, endDateSec: 1_700_000_000 + 2 * 86400 });
       expect(k1).not.toBe(k2);
+    });
+
+    it('differs when description text changes (Sprint 28 — Polymarket clarification edit invalidates cache)', () => {
+      const k1 = computeCacheKey('slug', 'tok', { ...base, description: 'Resolves YES if X by Dec 31, per UMA.' });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, description: 'Resolves YES if X by Nov 30, per UMA.' });
+      expect(k1).not.toBe(k2);
+    });
+
+    it('treats null and empty-string description identically (Sprint 28)', () => {
+      const k1 = computeCacheKey('slug', 'tok', { ...base, description: null });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, description: '' });
+      expect(k1).toBe(k2);
+    });
+
+    it('same description text → same key (Sprint 28)', () => {
+      const text = 'Resolves YES if X by Dec 31, per UMA.';
+      const k1 = computeCacheKey('slug', 'tok', { ...base, description: text });
+      const k2 = computeCacheKey('slug', 'tok', { ...base, description: text });
+      expect(k1).toBe(k2);
+    });
+  });
+
+  describe('composeUserPrompt (Sprint 28)', () => {
+    const baseArgs = {
+      question: 'Will X happen?',
+      category: 'politics' as string | null,
+      endDateSec: 1_700_000_000,
+      outcomeLabel: 'Yes',
+      bestAsk: 0.42,
+      spreadPct: 2 as number | null,
+      askDepthUsd: 500,
+      volume24h: 10000,
+    };
+
+    it('includes a Resolution criteria block when description is provided', () => {
+      const out = composeUserPrompt({
+        ...baseArgs,
+        description: 'Resolves YES if X happens before Dec 31, per UMA.',
+      });
+      expect(out).toContain('Resolution criteria (verbatim from Polymarket):');
+      expect(out).toContain('Resolves YES if X happens before Dec 31, per UMA.');
+    });
+
+    it('omits the Resolution criteria block entirely when description is absent', () => {
+      const out = composeUserPrompt({ ...baseArgs, description: undefined });
+      expect(out).not.toContain('Resolution criteria');
+    });
+
+    it('omits the Resolution criteria block when description is empty string', () => {
+      const out = composeUserPrompt({ ...baseArgs, description: '' });
+      expect(out).not.toContain('Resolution criteria');
+    });
+  });
+
+  describe('PROMPT_VERSION sentinel (Sprint 28)', () => {
+    it('has bumped past v3 to invalidate the cache when this prompt change ships', () => {
+      // Sentinel: if PROMPT_VERSION ever equals 'v3' again, the description-aware
+      // prompt would serve stale v3 estimates from the cache. Don't regress.
+      expect(PROMPT_VERSION).not.toBe('v3');
     });
   });
 

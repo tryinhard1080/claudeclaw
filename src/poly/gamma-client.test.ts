@@ -52,6 +52,33 @@ describe('normalizeMarket', () => {
     expect(normalizeMarket(raw)).toBeNull();
   });
 
+  it('propagates description through to the normalized Market (Sprint 28)', () => {
+    const raw = {
+      conditionId: '0xabc', slug: 'x', question: 'Will X?',
+      description: 'Resolves YES if X happens before 2026-12-31 23:59 UTC, per UMA.',
+      outcomes: '["Yes","No"]', outcomePrices: '["0.42","0.58"]',
+      clobTokenIds: '["t1","t2"]',
+      volume24hr: 100, liquidity: 50,
+      endDate: '2026-12-31T23:59:59Z', closed: false,
+    };
+    const m = normalizeMarket(raw);
+    expect(m).not.toBeNull();
+    expect(m!.description).toBe('Resolves YES if X happens before 2026-12-31 23:59 UTC, per UMA.');
+  });
+
+  it('leaves description undefined when Gamma omits it (Sprint 28)', () => {
+    const raw = {
+      conditionId: '0xabc', slug: 'x', question: 'Will X?',
+      outcomes: '["Yes","No"]', outcomePrices: '["0.42","0.58"]',
+      clobTokenIds: '["t1","t2"]',
+      volume24hr: 100, liquidity: 50,
+      endDate: '2026-12-31T23:59:59Z', closed: false,
+    };
+    const m = normalizeMarket(raw);
+    expect(m).not.toBeNull();
+    expect(m!.description).toBeUndefined();
+  });
+
   it('parses successfully with requireEndDate=false even when endDate missing (resolution path)', () => {
     // PnlTracker uses this path. Returning null here would conflate
     // "Gamma omitted endDate" with "market delisted", causing every

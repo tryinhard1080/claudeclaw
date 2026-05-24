@@ -74,6 +74,11 @@ export interface Market {
   conditionId: string;
   question: string;
   category?: string;
+  // Sprint 28: Polymarket's verbatim resolution-criteria clarification.
+  // Gamma returns it on the wire; normalizeMarket now copies it through so
+  // ai-probability can read the literal contract language instead of
+  // guessing resolution semantics from the question slug.
+  description?: string;
   outcomes: Array<{ label: string; tokenId: string; price: number }>;
   volume24h: number;
   liquidity: number;
