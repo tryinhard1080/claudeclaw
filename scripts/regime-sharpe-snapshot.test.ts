@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 
 import { runAt as applyV15Migration } from '../migrations/v1.15.0/v1.15.0-regime-sharpe-snapshots.js';
-import { runRegimeSharpeSnapshot } from './regime-sharpe-snapshot.js';
+import { runRegimeSharpeSnapshot, snapshotRunExitCode } from './regime-sharpe-snapshot.js';
 
 interface SnapshotDbRow {
   instance: string;
@@ -232,6 +232,7 @@ describe('regime-sharpe-snapshot script', () => {
     expect(result.written).toHaveLength(0);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].error).toMatch(/state.json parse/);
+    expect(snapshotRunExitCode(result)).toBe(1);
 
     const persisted = readAllSnapshots(dbPath, 'spy-aggressive');
     expect(persisted).toHaveLength(0);

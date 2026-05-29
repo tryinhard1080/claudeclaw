@@ -4,7 +4,9 @@ export interface RegimeTraderPm2App {
   script: string;
   interpreter: string;
   args: string;
-  autorestart: false;
+  autorestart: true;
+  stop_exit_codes: number[];
+  restart_delay: number;
   cron_restart: string;
   out_file: string;
   error_file: string;
@@ -24,7 +26,11 @@ export function buildRegimeTraderPm2Config(
     cwd: root,
     script,
     interpreter: python,
-    autorestart: false as const,
+    autorestart: true as const,
+    // main.py returns 0 for planned closed-market shutdowns. Abnormal Windows
+    // console terminations, crashes, and API failures should recover under PM2.
+    stop_exit_codes: [0],
+    restart_delay: 30_000,
     // 08:30 CT = 09:30 ET = NYSE open. PM2 evaluates this in system local time
     // (US Central); both CT and ET observe DST in lockstep so the 1-hour offset
     // is constant year-round.

@@ -408,6 +408,7 @@ describe('runShellTask (v1.11.0 dispatch)', () => {
     // find the file, producing a non-zero exit + useful stderr.
     const result = await runShellTask(mkShellTask('scripts/definitely-not-a-real-script.ts'), ac);
     expect(result.aborted).toBeFalsy();
+    expect(result.failed).toBe(true);
     expect(result.text).toBeTruthy();
     // Text should contain either the exit code or a stderr-ish marker.
     expect(result.text!.length).toBeGreaterThan(0);

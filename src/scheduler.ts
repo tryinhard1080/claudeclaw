@@ -40,6 +40,7 @@ import { emitChatEvent } from './state.js';
 export interface TaskRunResult {
   text: string | null;
   aborted?: boolean;
+  failed?: boolean;
 }
 
 /**
@@ -50,7 +51,7 @@ export interface TaskRunResult {
  */
 export function runShellTask(task: ScheduledTask, abortController: AbortController): Promise<TaskRunResult> {
   if (!task.script_path) {
-    return Promise.resolve({ text: `shell task ${task.id} has null script_path`, aborted: false });
+    return Promise.resolve({ text: `shell task ${task.id} has null script_path`, aborted: false, failed: true });
   }
   // script_path can include args (e.g. "scripts/foo.ts --all-tiers").
   const [scriptRel, ...args] = task.script_path.split(/\s+/);
@@ -78,10 +79,11 @@ export function runShellTask(task: ScheduledTask, abortController: AbortControll
         return;
       }
       const combined = stdout + (stderr ? `\n---stderr---\n${stderr}` : '');
-      const text = code === 0
+      const failed = code !== 0;
+      const text = !failed
         ? combined.trim() || `${scriptRel} completed (exit 0, no output)`
         : `${scriptRel} exit ${code}\n${combined}`;
-      resolve({ text: text.slice(0, 3500), aborted: false });
+      resolve({ text: text.slice(0, 3500), aborted: false, failed });
     });
   });
 }
@@ -228,9 +230,14 @@ async function runDueTasks(): Promise<void> {
           logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
         }
 
-        updateTaskAfterRun(task.id, nextRun, text, 'success');
+        const lastStatus = result.failed ? 'failed' : 'success';
+        updateTaskAfterRun(task.id, nextRun, text, lastStatus);
 
-        logger.info({ taskId: task.id, nextRun }, 'Task complete, next run scheduled');
+        if (result.failed) {
+          logger.error({ taskId: task.id, nextRun }, 'Scheduled shell task failed');
+        } else {
+          logger.info({ taskId: task.id, nextRun }, 'Task complete, next run scheduled');
+        }
       } catch (err) {
         clearTimeout(timeout);
         const errMsg = err instanceof Error ? err.message : String(err);

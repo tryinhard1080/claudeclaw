@@ -7,8 +7,8 @@
  * Cron: 0 17 * * 1-5 (17:00 CT, weekdays).
  *
  * Exit codes:
- *   0 = success OR partial failure (some instance unreadable; logged to stderr)
- *   1 = DB unreachable (catastrophic)
+ *   0 = at least one snapshot written; partial failures are logged to stderr
+ *   1 = DB unreachable OR every instance failed
  *
  * Usage:
  *   npx tsx scripts/regime-sharpe-snapshot.ts
@@ -220,14 +220,18 @@ export function runRegimeSharpeSnapshot(options: SnapshotOptions = {}): Snapshot
   return { written, errors };
 }
 
+export function snapshotRunExitCode(result: SnapshotRunResult): 0 | 1 {
+  return result.written.length === 0 && result.errors.length > 0 ? 1 : 0;
+}
+
 async function main(): Promise<void> {
   try {
     const result = runRegimeSharpeSnapshot();
-    if (result.errors.length > 0 && result.written.length === 0) {
-      // All instances failed but DB was reachable; still exit 0 per spec
-      // (partial failure is tolerated). Stderr already has the details.
+    const exitCode = snapshotRunExitCode(result);
+    if (exitCode !== 0) {
+      process.stderr.write('regime-sharpe-snapshot: ERROR no snapshots written\n');
     }
-    process.exit(0);
+    process.exit(exitCode);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`regime-sharpe-snapshot: FATAL db-unreachable: ${msg}\n`);
