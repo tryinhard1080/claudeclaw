@@ -15,6 +15,7 @@ import {
   type OpsStatus,
   type Pm2AppLike,
   type PolyScanRunLike,
+  summarizeFinancialDatasetsMcp,
   summarizePm2Apps,
   summarizePolyScanRuns,
   summarizeRegimeState,
@@ -92,6 +93,48 @@ function runCommand(command: string, timeoutMs = 20_000): { ok: true; output: st
   }
 }
 
+type CommandRunner = typeof runCommand;
+
+const MCP_CACHE_TTL_MS = 15 * 60 * 1000;
+let dashboardMcpCache: { checkedAtMs: number; check: OpsCheck } | null = null;
+
+export interface DashboardMcpOptions {
+  nowMs?: number;
+  cacheTtlMs?: number;
+  commandRunner?: CommandRunner;
+  forceRefresh?: boolean;
+}
+
+export function resetDashboardMcpCacheForTest(): void {
+  dashboardMcpCache = null;
+}
+
+export function summarizeDashboardMcp(options: DashboardMcpOptions = {}): OpsCheck {
+  const nowMs = options.nowMs ?? Date.now();
+  const cacheTtlMs = options.cacheTtlMs ?? MCP_CACHE_TTL_MS;
+  if (
+    !options.forceRefresh &&
+    dashboardMcpCache &&
+    nowMs - dashboardMcpCache.checkedAtMs <= cacheTtlMs
+  ) {
+    return dashboardMcpCache.check;
+  }
+
+  const commandRunner = options.commandRunner ?? runCommand;
+  const result = commandRunner('claude mcp list', 30_000);
+  const check: OpsCheck = result.ok
+    ? summarizeFinancialDatasetsMcp(result.output)
+    : {
+        name: 'Financial Datasets MCP',
+        status: 'warn',
+        state: 'command_failed',
+        detail: result.output.slice(0, 220),
+      };
+
+  dashboardMcpCache = { checkedAtMs: nowMs, check };
+  return check;
+}
+
 function readJsonFile<T>(filePath: string): T | null {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
@@ -165,12 +208,7 @@ function summarizeWeatherGoat(): OpsCheck {
 }
 
 function summarizeMcp(): OpsCheck {
-  return {
-    name: 'Financial Datasets MCP',
-    status: 'warn',
-    state: 'manual_check_required',
-    detail: 'Run `claude mcp list` manually; dashboard auto-refresh does not spawn Claude CLI.',
-  };
+  return summarizeDashboardMcp();
 }
 
 function summarizePolyDb(db: Database.Database): OpsCheck {
