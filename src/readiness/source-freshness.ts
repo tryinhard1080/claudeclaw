@@ -29,6 +29,21 @@ export interface SourceFreshnessCheck {
   detail: string;
 }
 
+export interface SignalSourceContextItem extends SourceFreshnessCheck {
+  usedBySignal: boolean;
+  lastFetchAt: number | null;
+  lastSuccessAt: number | null;
+  staleAfterSec: number | null;
+  ageSec: number | null;
+  lastError: string | null;
+}
+
+export interface SignalSourceContext {
+  generatedAt: number;
+  allRequiredFresh: boolean;
+  sources: SignalSourceContextItem[];
+}
+
 export function ensureSourceFreshnessTable(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS source_freshness (
@@ -100,12 +115,83 @@ export function classifySourceFreshness(row: SourceFreshnessRow, nowSec: number)
   };
 }
 
-export function readSourceFreshnessChecks(db: Database.Database, nowSec: number): SourceFreshnessCheck[] {
+function sourceFreshnessTableExists(db: Database.Database): boolean {
   const table = db.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='source_freshness'",
   ).get() as { name?: string } | undefined;
+  return table?.name === 'source_freshness';
+}
 
-  if (table?.name !== 'source_freshness') {
+export function readSourceFreshnessRows(db: Database.Database): SourceFreshnessRow[] | null {
+  if (!sourceFreshnessTableExists(db)) return null;
+  return db.prepare(`
+    SELECT source_name, last_fetch_at, last_success_at, stale_after_sec,
+           last_error, used_by_signal, updated_at
+      FROM source_freshness
+     ORDER BY source_name ASC
+  `).all() as SourceFreshnessRow[];
+}
+
+function contextItemFromCheck(
+  check: SourceFreshnessCheck,
+  nowSec: number,
+  row?: SourceFreshnessRow,
+): SignalSourceContextItem {
+  return {
+    ...check,
+    usedBySignal: row ? row.used_by_signal === 1 : true,
+    lastFetchAt: row?.last_fetch_at ?? null,
+    lastSuccessAt: row?.last_success_at ?? null,
+    staleAfterSec: row?.stale_after_sec ?? null,
+    ageSec: row?.last_success_at === null || row?.last_success_at === undefined
+      ? null
+      : Math.max(0, nowSec - row.last_success_at),
+    lastError: row?.last_error ?? null,
+  };
+}
+
+export function buildSignalSourceContext(db: Database.Database, nowSec: number): SignalSourceContext {
+  const missing = (state: string, detail: string): SignalSourceContext => ({
+    generatedAt: nowSec,
+    allRequiredFresh: false,
+    sources: [contextItemFromCheck({
+      name: 'source_freshness',
+      status: 'warn',
+      state,
+      detail,
+    }, nowSec)],
+  });
+
+  const rows = readSourceFreshnessRows(db);
+  if (rows === null) {
+    return missing('table_missing', 'run migrations to create source_freshness');
+  }
+  if (rows.length === 0) {
+    return missing('empty', 'no source freshness rows yet');
+  }
+
+  const signalRows = rows.filter(row => row.used_by_signal === 1);
+  if (signalRows.length === 0) {
+    return missing('no_signal_sources', 'no source_freshness rows marked used_by_signal');
+  }
+
+  const sources = signalRows.map(row => contextItemFromCheck(
+    classifySourceFreshness(row, nowSec),
+    nowSec,
+    row,
+  ));
+
+  return {
+    generatedAt: nowSec,
+    allRequiredFresh: sources.every(source => source.status === 'pass'),
+    sources,
+  };
+}
+
+export function readSourceFreshnessChecks(db: Database.Database, nowSec: number): SourceFreshnessCheck[] {
+  const rows = readSourceFreshnessRows(db);
+
+  if (rows === null) {
     return [{
       name: 'source_freshness',
       status: 'warn',
@@ -113,13 +199,6 @@ export function readSourceFreshnessChecks(db: Database.Database, nowSec: number)
       detail: 'run migrations to create source_freshness',
     }];
   }
-
-  const rows = db.prepare(`
-    SELECT source_name, last_fetch_at, last_success_at, stale_after_sec,
-           last_error, used_by_signal, updated_at
-      FROM source_freshness
-     ORDER BY source_name ASC
-  `).all() as SourceFreshnessRow[];
 
   if (rows.length === 0) {
     return [{
@@ -132,4 +211,3 @@ export function readSourceFreshnessChecks(db: Database.Database, nowSec: number)
 
   return rows.map(row => classifySourceFreshness(row, nowSec));
 }
-

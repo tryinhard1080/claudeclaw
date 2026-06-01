@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   hashPrompt, extractSummary, isRefusalResponse, insertNewsItem, writeHeartbeat, readHeartbeat,
-  runNewsSync, NEWS_SYNC_PROMPT, makePwmCliFetcher,
+  runNewsSync, NEWS_SYNC_PROMPT, makePwmCliFetcher, parseRssItems, formatRssFallbackSummary,
   type PerplexityResponse, type PerplexityFetcher, type PwmRunner,
 } from './news-sync.js';
 
@@ -66,6 +66,7 @@ describe('isRefusalResponse', () => {
   it('detects sonar real-time refusals', () => {
     expect(isRefusalResponse("I don't have real-time feeds in this moment")).toBe(true);
     expect(isRefusalResponse("I don't have access to real-time data")).toBe(true);
+    expect(isRefusalResponse("I don\u2019t have live trading-news access in this chat")).toBe(true);
     expect(isRefusalResponse("I can't pull the last 2 hours of headlines directly")).toBe(true);
     expect(isRefusalResponse("My training data only goes up to...")).toBe(true);
     expect(isRefusalResponse("I cannot provide real-time market updates")).toBe(true);
@@ -77,6 +78,40 @@ describe('isRefusalResponse', () => {
   });
   it('is case-insensitive', () => {
     expect(isRefusalResponse("I DON'T HAVE REAL-TIME FEEDS")).toBe(true);
+  });
+});
+
+describe('RSS fallback helpers', () => {
+  it('parses RSS items into normalized headlines', () => {
+    const items = parseRssItems(`
+      <rss><channel><item>
+        <title><![CDATA[Fed keeps rates steady &amp; stocks rise]]></title>
+        <link>https://example.com/fed</link>
+        <pubDate>Mon, 01 Jun 2026 13:30:00 GMT</pubDate>
+        <description><![CDATA[Policy-sensitive stocks moved.]]></description>
+      </item></channel></rss>
+    `, 'Example');
+
+    expect(items).toHaveLength(1);
+    expect(items[0]!.title).toBe('Fed keeps rates steady & stocks rise');
+    expect(items[0]!.source).toBe('Example');
+    expect(items[0]!.pubDate).toBe(Math.floor(Date.parse('2026-06-01T13:30:00.000Z') / 1000));
+  });
+
+  it('formats RSS fallback without claiming model-sourced live search', () => {
+    const summary = formatRssFallbackSummary([
+      {
+        title: 'SPY rises after macro data',
+        link: 'https://example.com/spy',
+        source: 'Example',
+        pubDate: 1_800_000_000,
+        description: 'A compact market summary.',
+      },
+    ], 1_800_003_600);
+
+    expect(summary).toContain('RSS fallback latest available headlines');
+    expect(summary).toContain('SPY rises after macro data');
+    expect(summary).toContain('1h old');
   });
 });
 
@@ -203,6 +238,29 @@ describe('runNewsSync', () => {
     const count = db.prepare(`SELECT COUNT(*) AS c FROM news_items`).get() as { c: number };
     expect(count.c).toBe(0);
     expect(readHeartbeat(db)).toBeNull();
+  });
+
+  it('uses RSS fallback when the default live-search fetcher returns a refusal', async () => {
+    const refusal = "I don't have live trading-news access right now.";
+    const fetcher: PerplexityFetcher = async () => mockResponse(refusal, { model: 'sonar' });
+    const fallbackFetcher: PerplexityFetcher = async () => mockResponse(
+      'RSS fallback latest available headlines:\n- Fed headline (CNBC, 1h old)',
+      { model: 'rss-fallback' },
+    );
+
+    const r = await runNewsSync(db, {
+      apiKey: 'k',
+      baseUrl: 'http://x',
+      model: 'sonar',
+      fetcher,
+      fallbackFetcher,
+      nowSec: 2_000_000,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(r.inserted!.model).toBe('rss-fallback');
+    expect(r.inserted!.summary).toContain('RSS fallback');
+    expect(readHeartbeat(db)).toBe(2_000_000);
   });
 
   it('uses default prompt when no prompt override provided', async () => {

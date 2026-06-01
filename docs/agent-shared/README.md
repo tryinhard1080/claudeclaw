@@ -43,7 +43,7 @@ Codex reads `.codex/config.toml`.
 Both must point to:
 
 ```text
-https://mcp.financialdatasets.ai/
+https://mcp.financialdatasets.ai/api
 ```
 
 Authentication still happens inside Claude Code with `/mcp`. Do not put a
@@ -79,4 +79,3 @@ npm test
 
 If a check fails, report the exact failing line and fix the root cause. Do not
 silence a trading alarm just to get a green screen.
-

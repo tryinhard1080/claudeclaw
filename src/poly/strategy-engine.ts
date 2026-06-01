@@ -24,6 +24,7 @@ import {
 import { execute, type SignalWithId } from './paper-broker.js';
 import { getDailyRealizedPnl } from './pnl-tracker.js';
 import { latestRegimeSnapshot, UNKNOWN_REGIME_TAG } from './regime.js';
+import { buildSignalSourceContext } from '../readiness/source-freshness.js';
 import {
   evaluateWeatherShadow,
   WEATHER_SHADOW_MODEL,
@@ -494,18 +495,20 @@ export class StrategyEngine extends EventEmitter {
     // strategy variants on the overlap set using Sprint 1's Brier metric.
     // provider ('glm' | 'anthropic') added 2026-04-19 post-GLM migration for
     // coarser-grained vendor partitioning in Brier reports; see v1.9.0 migration.
+    const sourceContextJson = JSON.stringify(buildSignalSourceContext(this.db, nowSec));
     const info = this.db.prepare(`
       INSERT INTO poly_signals
         (created_at, market_slug, outcome_token_id, outcome_label, market_price,
          estimated_prob, edge_pct, confidence, reasoning, contrarian, approved,
-         rejection_reasons, prompt_version, model, regime_label, provider)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'glm')
+         rejection_reasons, prompt_version, model, regime_label, source_context_json, provider)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'glm')
     `).run(
       nowSec, signal.marketSlug, signal.outcomeTokenId, signal.outcomeLabel,
       signal.marketPrice, signal.estimatedProb, signal.edgePct,
       signal.confidence, signal.reasoning, signal.contrarian ?? null,
       approved ? 1 : 0, rejections.length > 0 ? JSON.stringify(rejections) : null,
       PROMPT_VERSION, GLM_MODEL, regime?.regimeLabel ?? UNKNOWN_REGIME_TAG,
+      sourceContextJson,
     );
     return Number(info.lastInsertRowid);
   }

@@ -96,6 +96,17 @@ describe('summarizeFinancialDatasetsMcp', () => {
     expect(result.status).toBe('warn');
     expect(result.state).toBe('needs_auth');
   });
+
+  it('returns connected from targeted Claude MCP get output', () => {
+    const result = summarizeFinancialDatasetsMcp(`financial-datasets:
+  Scope: Local config
+  Status: ✓ Connected
+  Type: http
+  URL: https://mcp.financialdatasets.ai/api`);
+
+    expect(result.status).toBe('pass');
+    expect(result.state).toBe('connected');
+  });
 });
 
 describe('summarizeWeatherGoatDoctor', () => {
@@ -209,6 +220,32 @@ describe('summarizeSharpeFreshness', () => {
     expect(result.state).toBe('fresh');
     expect(result.detail).toMatch(/spy-aggressive/);
     expect(result.detail).toMatch(/spy-conservative/);
+  });
+
+  it('accepts Friday Sharpe snapshots on Monday morning before the next scheduled snapshot', () => {
+    const mondayMorningCt = Date.parse('2026-06-01T14:00:00.000Z');
+    const fridaySnapshotMs = Date.parse('2026-05-29T22:00:00.000Z');
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-29', n_days: 8, created_at: fridaySnapshotMs },
+      { instance: 'spy-conservative', snapshot_date: '2026-05-29', n_days: 8, created_at: fridaySnapshotMs },
+    ];
+    const result = summarizeSharpeFreshness(rows, { nowMs: mondayMorningCt });
+
+    expect(result.status).toBe('pass');
+    expect(result.state).toBe('fresh');
+  });
+
+  it('fails Friday Sharpe snapshots after the Monday scheduled snapshot is missed', () => {
+    const mondayEveningCt = Date.parse('2026-06-01T23:05:00.000Z');
+    const fridaySnapshotMs = Date.parse('2026-05-29T22:00:00.000Z');
+    const rows: SharpeRow[] = [
+      { instance: 'spy-aggressive', snapshot_date: '2026-05-29', n_days: 8, created_at: fridaySnapshotMs },
+      { instance: 'spy-conservative', snapshot_date: '2026-05-29', n_days: 8, created_at: fridaySnapshotMs },
+    ];
+    const result = summarizeSharpeFreshness(rows, { nowMs: mondayEveningCt });
+
+    expect(result.status).toBe('fail');
+    expect(result.state).toBe('stale');
   });
 
   it('returns warn when latest row is 1-3 days stale', () => {

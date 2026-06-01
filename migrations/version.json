@@ -17,6 +17,7 @@
     "v1.16.0": ["v1.16.0-ttl-shadow-ticks"],
     "v1.17.0": ["v1.17.0-source-freshness"],
     "v1.18.0": ["v1.18.0-equity-benchmark-snapshots"],
-    "v1.19.0": ["v1.19.0-equity-benchmark-reference-price"]
+    "v1.19.0": ["v1.19.0-equity-benchmark-reference-price"],
+    "v1.20.0": ["v1.20.0-signal-source-context"]
   }
 }

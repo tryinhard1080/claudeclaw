@@ -15,11 +15,18 @@ Use this when rebuilding the Regime Trader PM2 manifest, checking the weekday ma
 Regime Trader can be stopped on weekends or after a clean market-closed exit. That is expected. The process is scheduled by PM2 with:
 
 ```powershell
-cron_restart = 30 9 * * 1-5
-autorestart = false
+cron_restart = 30 8 * * 1-5
+autorestart = true
+stop_exit_codes = 0
+interpreter = C:\Code\regime-trader\.venv\Scripts\pythonw.exe
+windowsHide = true
 ```
 
-`autorestart=false` is intentional. If the Python process exits because the market is closed, PM2 should not keep relaunching it. If it exits during market hours, diagnose the Python logs and state files before changing restart policy.
+The cron is evaluated in system local time. On this host, `30 8 * * 1-5` is 08:30 CT, which is 09:30 ET market open.
+
+`pythonw.exe` is intentional on Windows. It uses the same virtual environment as `python.exe`, but does not allocate a visible Windows Terminal or conhost window when PM2 starts the paper workers.
+
+`stop_exit_codes = 0` keeps clean closed-market exits quiet while allowing PM2 to recover crashes, API failures, or console terminations.
 
 ## Regenerate Config
 
@@ -52,7 +59,7 @@ Expected paths:
 ```text
 cwd         C:\Code\regime-trader
 script      C:\Code\regime-trader\main.py
-interpreter C:\Code\regime-trader\.venv\Scripts\python.exe
+interpreter C:\Code\regime-trader\.venv\Scripts\pythonw.exe
 ```
 
 Expected args:

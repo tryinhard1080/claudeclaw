@@ -3,6 +3,7 @@ export interface RegimeTraderPm2App {
   cwd: string;
   script: string;
   interpreter: string;
+  windowsHide: true;
   args: string;
   autorestart: true;
   stop_exit_codes: number[];
@@ -20,12 +21,15 @@ export function buildRegimeTraderPm2Config(
   root = 'C:/Code/regime-trader',
   logRoot = 'C:/Users/Richard/.pm2/logs',
 ): RegimeTraderPm2Config {
-  const python = `${root}/.venv/Scripts/python.exe`;
+  const python = `${root}/.venv/Scripts/pythonw.exe`;
   const script = `${root}/main.py`;
   const base = {
     cwd: root,
     script,
     interpreter: python,
+    // python.exe can allocate a visible Windows Terminal/conhost when PM2 starts
+    // the venv launcher. pythonw.exe keeps the same venv but stays headless.
+    windowsHide: true as const,
     autorestart: true as const,
     // main.py returns 0 for planned closed-market shutdowns. Abnormal Windows
     // console terminations, crashes, and API failures should recover under PM2.

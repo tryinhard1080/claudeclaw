@@ -8,8 +8,8 @@ import {
   summarizeRegimeSharpeGate,
 } from './gate-progress.js';
 import {
+  buildSignalSourceContext,
   classifySourceFreshness,
-  ensureSourceFreshnessTable,
   readSourceFreshnessChecks,
   recordSourceFreshness,
 } from './source-freshness.js';
@@ -161,5 +161,47 @@ describe('source freshness', () => {
     expect(readSourceFreshnessChecks(mem, NOW)[0]!.state).toBe('table_missing');
     mem.close();
   });
-});
 
+  it('builds signal source context from required fresh sources only', () => {
+    const mem = db();
+    recordSourceFreshness(mem, {
+      sourceName: 'polymarket-gamma-scan',
+      fetchedAt: NOW - 60,
+      success: true,
+      staleAfterSec: 900,
+      usedBySignal: true,
+    });
+    recordSourceFreshness(mem, {
+      sourceName: 'operator-newsletter',
+      fetchedAt: NOW - 7200,
+      success: true,
+      staleAfterSec: 60,
+      usedBySignal: false,
+    });
+
+    const context = buildSignalSourceContext(mem, NOW);
+
+    expect(context.allRequiredFresh).toBe(true);
+    expect(context.sources).toHaveLength(1);
+    expect(context.sources[0]!.name).toBe('polymarket-gamma-scan');
+    expect(context.sources[0]!.ageSec).toBe(60);
+    mem.close();
+  });
+
+  it('marks signal source context incomplete when a required source is stale', () => {
+    const mem = db();
+    recordSourceFreshness(mem, {
+      sourceName: 'polymarket-gamma-scan',
+      fetchedAt: NOW - 7200,
+      success: true,
+      staleAfterSec: 900,
+      usedBySignal: true,
+    });
+
+    const context = buildSignalSourceContext(mem, NOW);
+
+    expect(context.allRequiredFresh).toBe(false);
+    expect(context.sources[0]!.state).toBe('stale_signal_source');
+    mem.close();
+  });
+});

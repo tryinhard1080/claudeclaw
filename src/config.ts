@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 import { readEnvFile } from './env.js';
 
-const envConfig = readEnvFile([
+export const CONFIG_ENV_KEYS = [
   'TELEGRAM_BOT_TOKEN',
   'ALLOWED_CHAT_ID',
   'GROQ_API_KEY',
@@ -36,6 +36,9 @@ const envConfig = readEnvFile([
   'POLY_DAILY_LOSS_PCT',
   'POLY_HALT_DD_PCT',
   'POLY_KELLY_FRACTION',
+  'POLY_KELLY_LOW_MULT',
+  'POLY_KELLY_MED_MULT',
+  'POLY_KELLY_HIGH_MULT',
   'POLY_MODEL',
   'POLY_SCAN_INTERVAL_MIN',
   'POLY_SCAN_DEBUG',
@@ -54,6 +57,11 @@ const envConfig = readEnvFile([
   'POLY_MAX_MARKET_TTL_DAYS',
   'POLY_RESEARCH_NOTEBOOK_ID',
   'POLY_WEATHER_SHADOW_ENABLED',
+  'POLY_REFLECTION_ENABLED',
+  'POLY_EXIT_ENABLED',
+  'POLY_TAKE_PROFIT_PCT',
+  'POLY_STOP_LOSS_PCT',
+  'POLY_EXPOSURE_AWARE_SIZING',
   'ANTHROPIC_API_KEY',
   'MEMORY_ENABLED',
   'VOICE_ENABLED',
@@ -65,7 +73,9 @@ const envConfig = readEnvFile([
   'PPLX_NEWS_MODEL',
   'EQUITY_LIVE_EXECUTION_ENABLED',
   'POLYMARKET_US_LIVE_EXECUTION_ENABLED',
-]);
+] as const;
+
+const envConfig = readEnvFile([...CONFIG_ENV_KEYS]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
 // These are mutable and overridden by index.ts when --agent is passed.

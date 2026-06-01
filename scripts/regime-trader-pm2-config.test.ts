@@ -14,7 +14,8 @@ describe('buildRegimeTraderPm2Config', () => {
     for (const app of config.apps) {
       expect(app.cwd).toBe('C:/Code/regime-trader');
       expect(app.script).toBe('C:/Code/regime-trader/main.py');
-      expect(app.interpreter).toBe('C:/Code/regime-trader/.venv/Scripts/python.exe');
+      expect(app.interpreter).toBe('C:/Code/regime-trader/.venv/Scripts/pythonw.exe');
+      expect(app.windowsHide).toBe(true);
       expect(app.autorestart).toBe(true);
       expect(app.stop_exit_codes).toEqual([0]);
       expect(app.restart_delay).toBe(30_000);

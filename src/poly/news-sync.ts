@@ -13,6 +13,14 @@ export interface PerplexityResponse {
   citations?: string[];
 }
 
+export interface RssNewsItem {
+  title: string;
+  link: string;
+  source: string;
+  pubDate: number | null;
+  description: string;
+}
+
 export interface InsertedNewsItem {
   id: number;
   fetched_at: number;
@@ -48,12 +56,16 @@ export function extractSummary(resp: PerplexityResponse): string {
  * the DB with garbage rows or fire false alarms.
  */
 export function isRefusalResponse(text: string): boolean {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().replace(/\u2018|\u2019/g, "'");
   const patterns = [
     "don't have real-time",
     "do not have real-time",
     "don't have access to real-time",
+    "don't have live",
+    "do not have live",
+    "don't have access to live",
     "no access to real-time",
+    "no live trading-news access",
     "can't pull the last",
     "cannot pull the last",
     "can't provide real-time",
@@ -66,6 +78,104 @@ export function isRefusalResponse(text: string): boolean {
   ];
   return patterns.some((p) => lower.includes(p));
 }
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_m, code: string) => String.fromCharCode(Number(code)));
+}
+
+function stripTags(value: string): string {
+  return decodeXmlEntities(value)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tagValue(xml: string, tag: string): string {
+  const match = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i'));
+  return match ? stripTags(match[1] ?? '') : '';
+}
+
+export function parseRssItems(xml: string, source: string): RssNewsItem[] {
+  return [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)]
+    .map((match) => {
+      const itemXml = match[0];
+      const title = tagValue(itemXml, 'title');
+      const link = tagValue(itemXml, 'link');
+      const description = tagValue(itemXml, 'description');
+      const pubRaw = tagValue(itemXml, 'pubDate');
+      const pubMs = pubRaw ? Date.parse(pubRaw) : NaN;
+      return {
+        title,
+        link,
+        source,
+        pubDate: Number.isFinite(pubMs) ? Math.floor(pubMs / 1000) : null,
+        description,
+      };
+    })
+    .filter(item => item.title.length > 0);
+}
+
+const RSS_FALLBACK_FEEDS = [
+  { source: 'CNBC', url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html' },
+  { source: 'MarketWatch', url: 'https://feeds.marketwatch.com/marketwatch/topstories/' },
+  { source: 'Yahoo Finance SPY', url: 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY&region=US&lang=en-US' },
+] as const;
+
+async function fetchTextWithTimeout(url: string, timeoutMs = 15_000): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function formatRssFallbackSummary(items: RssNewsItem[], nowSec: number = Math.floor(Date.now() / 1000)): string {
+  const latest = [...items]
+    .sort((a, b) => (b.pubDate ?? 0) - (a.pubDate ?? 0))
+    .slice(0, 12);
+  if (latest.length === 0) throw new Error('RSS fallback found no items');
+
+  return [
+    'RSS fallback latest available headlines:',
+    ...latest.map((item) => {
+      const age = item.pubDate ? `${Math.max(0, Math.round((nowSec - item.pubDate) / 3600))}h old` : 'age unknown';
+      const desc = item.description ? ` — ${item.description.slice(0, 140)}` : '';
+      return `- ${item.title} (${item.source}, ${age})${desc}`;
+    }),
+  ].join('\n');
+}
+
+export const rssFallbackFetcher: PerplexityFetcher = async () => {
+  const settled = await Promise.allSettled(
+    RSS_FALLBACK_FEEDS.map(async feed => ({
+      feed,
+      xml: await fetchTextWithTimeout(feed.url),
+    })),
+  );
+  const items = settled.flatMap((result) => (
+    result.status === 'fulfilled'
+      ? parseRssItems(result.value.xml, result.value.feed.source)
+      : []
+  ));
+  const summary = formatRssFallbackSummary(items);
+  const citations = [...new Set(items.map(item => item.link).filter(Boolean))].slice(0, 12);
+  return {
+    model: 'rss-fallback',
+    choices: [{ message: { role: 'assistant', content: summary }, finish_reason: 'stop' }],
+    citations,
+  };
+};
 
 /**
  * Insert a news item, deduping against any row written within the last
@@ -268,6 +378,7 @@ export async function runNewsSync(
     model: string;
     prompt?: string;
     fetcher?: PerplexityFetcher;
+    fallbackFetcher?: PerplexityFetcher | null;
     nowSec?: number;
   },
 ): Promise<RunNewsSyncResult> {
@@ -292,7 +403,22 @@ export async function runNewsSync(
   }
 
   if (isRefusalResponse(summary)) {
-    return { ok: false, reason: `sonar-refusal: model declined real-time search (not inserted)` };
+    const fallbackFetcher = config.fallbackFetcher === undefined
+      ? (config.fetcher ? null : rssFallbackFetcher)
+      : config.fallbackFetcher;
+    if (!fallbackFetcher) {
+      return { ok: false, reason: `sonar-refusal: model declined real-time search (not inserted)` };
+    }
+
+    try {
+      raw = await fallbackFetcher({ prompt, apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model });
+      summary = extractSummary(raw);
+      if (isRefusalResponse(summary)) {
+        return { ok: false, reason: `sonar-refusal: fallback also declined real-time search (not inserted)` };
+      }
+    } catch (err) {
+      return { ok: false, reason: `sonar-refusal: RSS fallback failed: ${String(err).slice(0, 160)}` };
+    }
   }
 
   const inserted = insertNewsItem(db, {

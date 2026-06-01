@@ -231,6 +231,24 @@ export function getDashboardHtml(token: string, chatId: string): string {
   </div>
 
   <div class="card">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Live Readiness</h3>
+      <span id="live-readiness-status" class="pill">-</span>
+    </div>
+    <div id="live-readiness-detail" class="text-xs text-gray-500 mb-3">Loading...</div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+      <div>
+        <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Gate blockers</div>
+        <div id="live-gates-list" class="text-gray-400">Loading...</div>
+      </div>
+      <div>
+        <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Signal sources</div>
+        <div id="live-sources-list" class="text-gray-400">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="flex items-center justify-between mb-2">
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Open positions</h3>
       <span id="poly-unrealized-agg" class="text-xs text-gray-500">-</span>
@@ -2054,6 +2072,68 @@ async function loadTradingOps() {
     }
   }
 }
+async function loadLiveReadiness() {
+  try {
+    const payload = await fetch('/api/readiness/live?token=' + encodeURIComponent(TOKEN)).then(r => r.json());
+    const status = payload.liveStartup && payload.liveStartup.status ? payload.liveStartup.status : 'fail';
+    const statusEl = document.getElementById('live-readiness-status');
+    if (statusEl) {
+      statusEl.textContent = status.toUpperCase();
+      statusEl.style.background = status === 'pass' ? '#064e3b' : (status === 'warn' ? '#422006' : '#3b0f0f');
+      statusEl.style.color = opsColor(status);
+    }
+
+    const checks = (payload.liveStartup && payload.liveStartup.checks) || [];
+    const detailEl = document.getElementById('live-readiness-detail');
+    if (detailEl) {
+      const flagSummary = checks
+        .filter(c => c.name && c.name.indexOf('flag') >= 0)
+        .map(c => c.name.replace(' live flag', '') + ': ' + c.state)
+        .join(' / ');
+      detailEl.textContent = flagSummary || 'No live flag data';
+      detailEl.style.color = status === 'fail' ? '#f87171' : '#9ca3af';
+    }
+
+    const gateEl = document.getElementById('live-gates-list');
+    if (gateEl) {
+      const gates = (payload.gates || []).filter(g => g.status !== 'pass');
+      if (gates.length === 0) {
+        gateEl.innerHTML = '<div style="color:#6ee7b7">All gate boxes pass</div>';
+      } else {
+        gateEl.innerHTML = gates.slice(0, 5).map(g =>
+          '<div class="flex items-start gap-2 py-0.5">' +
+            '<span style="color:' + opsColor(g.status) + ';min-width:38px">' + escapeHtml(String(g.status || '').toUpperCase()) + '</span>' +
+            '<span class="text-gray-500" style="min-width:44px">Box ' + escapeHtml(String(g.box)) + '</span>' +
+            '<span class="text-gray-300" style="flex:1">' + escapeHtml(g.name) + '</span>' +
+          '</div>'
+        ).join('');
+      }
+    }
+
+    const sourceEl = document.getElementById('live-sources-list');
+    if (sourceEl) {
+      const sources = payload.sources || [];
+      if (sources.length === 0) {
+        sourceEl.innerHTML = '<div class="text-gray-500">No source rows</div>';
+      } else {
+        sourceEl.innerHTML = sources.slice(0, 5).map(s =>
+          '<div class="flex items-start gap-2 py-0.5">' +
+            '<span style="color:' + opsColor(s.status) + ';min-width:38px">' + escapeHtml(String(s.status || '').toUpperCase()) + '</span>' +
+            '<span class="text-gray-300" style="flex:1">' + escapeHtml(s.name) + '</span>' +
+            '<span class="text-gray-500" style="text-align:right">' + escapeHtml(s.state || '') + '</span>' +
+          '</div>'
+        ).join('');
+      }
+    }
+  } catch (err) {
+    console.error('loadLiveReadiness failed', err);
+    const detailEl = document.getElementById('live-readiness-detail');
+    if (detailEl) {
+      detailEl.textContent = 'Live readiness unavailable';
+      detailEl.style.color = '#f87171';
+    }
+  }
+}
 async function loadPoly() {
   try {
     const [overview, live, signals, regime, pnlChart, calibration, drift] = await Promise.all([
@@ -2286,7 +2366,7 @@ async function loadPoly() {
         const edge = Number(s.edge_pct).toFixed(1);
         const edgeColor = Number(s.edge_pct) >= 5 ? '#6ee7b7' : '#f87171';
         const ageSec = Math.floor(Date.now() / 1000) - s.created_at;
-        const hasDetail = (s.reasoning && s.reasoning.length > 0) || (s.contrarian && s.contrarian.length > 0) || (s.rejection_reasons && s.rejection_reasons.length > 0);
+        const hasDetail = (s.reasoning && s.reasoning.length > 0) || (s.contrarian && s.contrarian.length > 0) || (s.rejection_reasons && s.rejection_reasons.length > 0) || (s.source_context_json && s.source_context_json.length > 0);
         const caret = hasDetail ? '<span class="text-gray-600 text-xs" style="min-width:10px">▸</span>' : '<span style="min-width:10px"></span>';
         const rowCursor = hasDetail ? 'cursor:pointer' : '';
 
@@ -2301,6 +2381,18 @@ async function loadPoly() {
           }
           if (s.rejection_reasons) {
             parts.push('<div class="text-xs mt-2" style="color:#f87171"><span class="text-gray-500 uppercase tracking-wider text-[10px]">Rejection</span><div class="whitespace-pre-wrap mt-0.5">' + escapeHtml(s.rejection_reasons) + '</div></div>');
+          }
+          if (s.source_context_json) {
+            try {
+              const sourceContext = JSON.parse(s.source_context_json);
+              const sources = sourceContext.sources || [];
+              const sourceLine = sources.length === 0
+                ? 'sources: none'
+                : sources.map(src => src.name + '=' + src.status + '/' + src.state).join(' · ');
+              parts.push('<div class="text-xs mt-2" style="color:' + (sourceContext.allRequiredFresh ? '#6ee7b7' : '#fbbf24') + '"><span class="text-gray-500 uppercase tracking-wider text-[10px]">Sources</span><div class="mt-0.5">' + escapeHtml(sourceLine) + '</div></div>');
+            } catch(e) {
+              parts.push('<div class="text-xs mt-2" style="color:#fbbf24"><span class="text-gray-500 uppercase tracking-wider text-[10px]">Sources</span><div class="mt-0.5">unreadable source context</div></div>');
+            }
           }
           const meta = '<div class="text-gray-600 text-[10px] mt-2">' +
             escapeHtml(s.model ?? '-') + ' · ' + escapeHtml(s.prompt_version ?? '-') +
@@ -2349,13 +2441,14 @@ async function loadPoly() {
 async function refreshAll() {
   const btn = document.getElementById('refresh-btn').querySelector('svg');
   btn.classList.add('refresh-spin');
-  await Promise.all([loadInfo(), loadTasks(), loadMemories(), loadHealth(), loadTokens(), loadAgents(), loadHiveMind(), loadSummary(), loadMissionControl(), loadPoly(), loadTradingOps()]);
+  await Promise.all([loadInfo(), loadTasks(), loadMemories(), loadHealth(), loadTokens(), loadAgents(), loadHiveMind(), loadSummary(), loadMissionControl(), loadPoly(), loadTradingOps(), loadLiveReadiness()]);
   btn.classList.remove('refresh-spin');
   document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 }
 
 // Trading data refreshes independently every 30s for responsiveness
 setInterval(loadPoly, 30000);
+setInterval(loadLiveReadiness, 30000);
 
 // Live countdown tickers
 setInterval(() => {

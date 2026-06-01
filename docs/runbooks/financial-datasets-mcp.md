@@ -8,13 +8,13 @@ This connector is advisory only. It can inform research notes, comparison work, 
 
 ## Current State
 
-As of 2026-05-09, `claude mcp list` reports:
+As of 2026-06-01, the shared Claude/Codex endpoint is:
 
 ```text
-financial-datasets: https://mcp.financialdatasets.ai/ (HTTP) - ! Needs authentication
+https://mcp.financialdatasets.ai/api
 ```
 
-The server is installed, but the OAuth step still needs to be completed inside Claude Code.
+The working private Claude Code entry is local-scoped and should report connected.
 
 ## Install
 
@@ -23,7 +23,7 @@ Official MCP docs: <https://docs.financialdatasets.ai/mcp-server>
 Install the remote MCP server:
 
 ```powershell
-claude mcp add --transport http financial-datasets https://mcp.financialdatasets.ai/
+claude mcp add --transport http financial-datasets https://mcp.financialdatasets.ai/api
 ```
 
 ## Authenticate
@@ -44,12 +44,15 @@ Run:
 
 ```powershell
 claude mcp list
+claude mcp get financial-datasets
 ```
 
 Expected connected state:
 
 ```text
-financial-datasets: https://mcp.financialdatasets.ai/ (HTTP) - Connected
+financial-datasets:
+  Status: ✓ Connected
+  URL: https://mcp.financialdatasets.ai/api
 ```
 
 Then run the operational status check:

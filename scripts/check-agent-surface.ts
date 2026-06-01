@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = path.resolve(path.dirname(__filename), '..');
-const FINANCIAL_DATASETS_URL = 'https://mcp.financialdatasets.ai/';
+const FINANCIAL_DATASETS_URL = 'https://mcp.financialdatasets.ai/api';
 
 interface CheckResult {
   name: string;
@@ -131,4 +131,3 @@ const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
 if (invokedPath === fileURLToPath(import.meta.url)) {
   process.exitCode = main();
 }
-

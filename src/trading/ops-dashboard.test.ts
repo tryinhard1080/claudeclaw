@@ -45,10 +45,39 @@ describe('summarizeDashboardMcp', () => {
   it('returns connected status from a live Claude MCP listing', () => {
     resetDashboardMcpCacheForTest();
     let timeoutMs = 0;
+    let command = '';
 
     const check = summarizeDashboardMcp({
-      commandRunner: (_command, timeout) => {
+      commandRunner: (actualCommand, timeout) => {
+        command = actualCommand;
         timeoutMs = timeout ?? 0;
+        return {
+          ok: true,
+          output: `financial-datasets:
+  Scope: Local config
+  Status: ✓ Connected
+  Type: http`,
+        };
+      },
+      nowMs: 1_800_000_000_000,
+    });
+
+    expect(check.status).toBe('pass');
+    expect(check.state).toBe('connected');
+    expect(command).toContain('mcp get financial-datasets');
+    expect(timeoutMs).toBe(10_000);
+  });
+
+  it('falls back to the global MCP list when targeted get output is not useful', () => {
+    resetDashboardMcpCacheForTest();
+    const commands: string[] = [];
+
+    const check = summarizeDashboardMcp({
+      commandRunner: (command) => {
+        commands.push(command);
+        if (command.includes('mcp get financial-datasets')) {
+          return { ok: true, output: 'financial-datasets:' };
+        }
         return {
           ok: true,
           output: 'financial-datasets: https://mcp.financialdatasets.ai/api (HTTP) - ✓ Connected',
@@ -58,8 +87,8 @@ describe('summarizeDashboardMcp', () => {
     });
 
     expect(check.status).toBe('pass');
-    expect(check.state).toBe('connected');
-    expect(timeoutMs).toBe(30_000);
+    expect(commands[0]).toContain('mcp get financial-datasets');
+    expect(commands[1]).toContain('mcp list');
   });
 
   it('reuses a fresh dashboard MCP cache instead of spawning every refresh', () => {

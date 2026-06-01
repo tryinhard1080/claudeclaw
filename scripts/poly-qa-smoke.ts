@@ -38,7 +38,7 @@ async function main() {
       outcome_label TEXT NOT NULL, market_price REAL NOT NULL, estimated_prob REAL NOT NULL,
       edge_pct REAL NOT NULL, confidence TEXT NOT NULL, reasoning TEXT NOT NULL,
       contrarian TEXT, approved INTEGER NOT NULL, rejection_reasons TEXT, paper_trade_id INTEGER,
-      prompt_version TEXT, model TEXT, regime_label TEXT, provider TEXT);
+      prompt_version TEXT, model TEXT, regime_label TEXT, source_context_json TEXT, provider TEXT);
     CREATE TABLE IF NOT EXISTS poly_paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT,
       created_at INTEGER NOT NULL, market_slug TEXT NOT NULL, outcome_token_id TEXT NOT NULL,
       outcome_label TEXT NOT NULL, side TEXT NOT NULL, entry_price REAL NOT NULL,

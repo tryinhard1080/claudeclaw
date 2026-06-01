@@ -67,6 +67,9 @@ import { buildPnlBars, type DailyPnlPoint } from './dashboard-charts.js';
 import { latestSnapshot as latestCalibrationSnapshot, fetchResolvedSamples, calibrationCurve } from './poly/calibration.js';
 import { composeDriftReport } from './poly/drift.js';
 import { collectTradingOpsPayload } from './trading/ops-dashboard.js';
+import { collectGateProgress } from './readiness/gate-progress.js';
+import { collectLiveStartupChecks } from './readiness/live-startup.js';
+import { readSourceFreshnessChecks } from './readiness/source-freshness.js';
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -461,7 +464,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
         id, created_at, market_slug, outcome_label, market_price,
         estimated_prob, edge_pct, confidence, approved, rejection_reasons,
         prompt_version, model, provider, regime_label,
-        reasoning, contrarian
+        source_context_json, reasoning, contrarian
       FROM poly_signals ORDER BY id DESC LIMIT ?`).all(limit);
     return c.json({ signals: rows });
   });
@@ -541,6 +544,17 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   app.get('/api/trading/ops', (c) => {
     const db = getDb();
     return c.json(collectTradingOpsPayload(db));
+  });
+
+  app.get('/api/readiness/live', (c) => {
+    const db = getDb();
+    const nowSec = Math.floor(Date.now() / 1000);
+    return c.json({
+      generatedAt: nowSec,
+      gates: collectGateProgress(db),
+      sources: readSourceFreshnessChecks(db, nowSec),
+      liveStartup: collectLiveStartupChecks(db, nowSec),
+    });
   });
 
   app.get('/api/poly/pnl/chart', (c) => {

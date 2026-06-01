@@ -43,6 +43,17 @@ function runCommand(command: string): { ok: true; output: string } | { ok: false
   }
 }
 
+function shellQuote(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function claudeCliCommand(args: string): string {
+  const appData = process.env.APPDATA;
+  const npmClaude = appData ? path.join(appData, 'npm', 'claude.cmd') : '';
+  const cli = npmClaude && fs.existsSync(npmClaude) ? shellQuote(npmClaude) : 'claude';
+  return `${cli} ${args}`;
+}
+
 function readJsonFile<T>(filePath: string): T | null {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
@@ -116,16 +127,24 @@ function summarizeWeatherGoat(): OpsCheck {
 }
 
 function summarizeMcp(): OpsCheck {
-  const result = runCommand('claude mcp list');
-  if (!result.ok) {
+  const getResult = runCommand(claudeCliCommand('mcp get financial-datasets'));
+  if (getResult.ok) {
+    const getCheck = summarizeFinancialDatasetsMcp(getResult.output);
+    if (getCheck.state !== 'missing' && getCheck.state !== 'unknown') {
+      return getCheck;
+    }
+  }
+
+  const listResult = runCommand(claudeCliCommand('mcp list'));
+  if (!listResult.ok) {
     return {
       name: 'Financial Datasets MCP',
       status: 'warn',
       state: 'mcp_list_failed',
-      detail: result.output.slice(0, 220),
+      detail: `${getResult.output.slice(0, 100)}; ${listResult.output.slice(0, 120)}`,
     };
   }
-  return summarizeFinancialDatasetsMcp(result.output);
+  return summarizeFinancialDatasetsMcp(listResult.output);
 }
 
 function summarizePolyDb(): OpsCheck {

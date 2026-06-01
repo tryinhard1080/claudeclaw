@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 
 import { STORE_DIR } from '../src/config.js';
 import { collectGateProgress, type GateProgressCheck, type ReadinessStatus } from '../src/readiness/gate-progress.js';
+import { collectLiveStartupChecks, type LiveStartupCheck } from '../src/readiness/live-startup.js';
 import { readSourceFreshnessChecks, type SourceFreshnessCheck } from '../src/readiness/source-freshness.js';
 
 function fmt(status: ReadinessStatus): string {
@@ -31,13 +32,26 @@ function printSourceChecks(checks: SourceFreshnessCheck[]): void {
   }
 }
 
+function printLiveStartupChecks(status: ReadinessStatus, checks: LiveStartupCheck[]): void {
+  console.log();
+  console.log('Live Startup Interlocks');
+  console.log('-----------------------');
+  console.log(`${fmt(status)}  Overall live readiness`);
+  for (const check of checks) {
+    console.log(`${fmt(check.status)}  ${check.name.padEnd(31)} ${check.state.padEnd(24)} ${check.detail}`);
+  }
+}
+
 export function main(): number {
   const dbPath = path.join(STORE_DIR, 'claudeclaw.db');
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     db.pragma('busy_timeout = 5000');
+    const nowSec = Math.floor(Date.now() / 1000);
     printGateChecks(collectGateProgress(db));
-    printSourceChecks(readSourceFreshnessChecks(db, Math.floor(Date.now() / 1000)));
+    printSourceChecks(readSourceFreshnessChecks(db, nowSec));
+    const liveStartup = collectLiveStartupChecks(db, nowSec);
+    printLiveStartupChecks(liveStartup.status, liveStartup.checks);
     return 0;
   } finally {
     db.close();
@@ -53,4 +67,3 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
     process.exitCode = 1;
   }
 }
-

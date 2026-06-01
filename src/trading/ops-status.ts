@@ -124,11 +124,10 @@ export function summarizePm2Apps(apps: Pm2AppLike[], opts: Pm2SummaryOptions = {
 }
 
 export function summarizeFinancialDatasetsMcp(output: string): OpsCheck {
-  const line = output
-    .split(/\r?\n/)
-    .find(item => item.toLowerCase().includes('financial-datasets'));
+  const lines = output.split(/\r?\n/);
+  const lineIndex = lines.findIndex(item => item.toLowerCase().includes('financial-datasets'));
 
-  if (!line) {
+  if (lineIndex < 0) {
     return {
       name: 'Financial Datasets MCP',
       status: 'warn',
@@ -137,21 +136,28 @@ export function summarizeFinancialDatasetsMcp(output: string): OpsCheck {
     };
   }
 
-  if (/needs authentication/i.test(line)) {
+  const line = lines[lineIndex] ?? '';
+  const nearbyStatusLine = lines
+    .slice(lineIndex, lineIndex + 8)
+    .map(item => item.trim())
+    .find(item => /^Status:/i.test(item));
+  const detail = nearbyStatusLine ? `${line.trim()} ${nearbyStatusLine}` : line.trim();
+
+  if (/needs authentication/i.test(detail)) {
     return {
       name: 'Financial Datasets MCP',
       status: 'warn',
       state: 'needs_auth',
-      detail: line.trim(),
+      detail,
     };
   }
 
-  if (/connected|✓|check/i.test(line)) {
+  if (/connected|✓|check/i.test(detail)) {
     return {
       name: 'Financial Datasets MCP',
       status: 'pass',
       state: 'connected',
-      detail: line.trim(),
+      detail,
     };
   }
 
@@ -159,7 +165,7 @@ export function summarizeFinancialDatasetsMcp(output: string): OpsCheck {
     name: 'Financial Datasets MCP',
     status: 'warn',
     state: 'unknown',
-    detail: line.trim(),
+    detail,
   };
 }
 
@@ -330,12 +336,58 @@ export interface SharpeFreshnessOptions {
   expectedInstances?: ReadonlyArray<string>;
   tradingDaysSinceStart?: number;
   tableMissing?: boolean;
+  expectedSnapshotDate?: string | null;
 }
 
 const SHARPE_EXPECTED_INSTANCES: ReadonlyArray<string> = ['spy-aggressive', 'spy-conservative'];
 const SHARPE_FRESH_MS = 24 * 60 * 60 * 1000;
 const SHARPE_WARN_MS = 3 * 24 * 60 * 60 * 1000;
 const SHARPE_MIN_TRADING_DAYS_FOR_FAIL = 5;
+const SHARPE_SNAPSHOT_TIME_ZONE = 'America/Chicago';
+const SHARPE_SNAPSHOT_MINUTES = 17 * 60;
+
+function localDateParts(nowMs: number, timeZone: string): { date: string; weekday: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(nowMs));
+  const value = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find(part => part.type === type)?.value ?? '';
+  const year = value('year');
+  const month = value('month');
+  const day = value('day');
+  const hour = Number(value('hour'));
+  const minute = Number(value('minute'));
+  return {
+    date: `${year}-${month}-${day}`,
+    weekday: value('weekday'),
+    minutes: Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : 0,
+  };
+}
+
+function isWeekdayName(weekday: string): boolean {
+  return weekday !== 'Sat' && weekday !== 'Sun';
+}
+
+function expectedSharpeSnapshotDate(nowMs: number): string | null {
+  const current = localDateParts(nowMs, SHARPE_SNAPSHOT_TIME_ZONE);
+  if (isWeekdayName(current.weekday) && current.minutes >= SHARPE_SNAPSHOT_MINUTES) {
+    return current.date;
+  }
+
+  const dayMs = 24 * 60 * 60 * 1000;
+  for (let offsetDays = 1; offsetDays <= 7; offsetDays += 1) {
+    const candidate = localDateParts(nowMs - offsetDays * dayMs, SHARPE_SNAPSHOT_TIME_ZONE);
+    if (isWeekdayName(candidate.weekday)) return candidate.date;
+  }
+  return null;
+}
 
 export function summarizeSharpeFreshness(
   rows: ReadonlyArray<SharpeRow>,
@@ -353,6 +405,9 @@ export function summarizeSharpeFreshness(
   const nowMs = opts.nowMs ?? Date.now();
   const expected = opts.expectedInstances ?? SHARPE_EXPECTED_INSTANCES;
   const tradingDays = opts.tradingDaysSinceStart ?? 0;
+  const expectedDate = opts.expectedSnapshotDate === undefined
+    ? expectedSharpeSnapshotDate(nowMs)
+    : opts.expectedSnapshotDate;
 
   if (rows.length === 0) {
     if (tradingDays >= SHARPE_MIN_TRADING_DAYS_FOR_FAIL) {
@@ -397,14 +452,16 @@ export function summarizeSharpeFreshness(
     const ageMs = nowMs - row.created_at;
     const ageDays = Math.max(0, Math.round(ageMs / (24 * 60 * 60 * 1000)));
 
-    if (ageMs > SHARPE_WARN_MS) {
-      failures.push(`${instance} ${ageDays}d stale`);
-      continue;
-    }
+    if (expectedDate && row.snapshot_date < expectedDate) {
+      if (ageMs > SHARPE_WARN_MS) {
+        failures.push(`${instance} ${ageDays}d stale`);
+        continue;
+      }
 
-    if (ageMs > SHARPE_FRESH_MS) {
-      warnings.push(`${instance} ${ageDays}d stale`);
-      continue;
+      if (ageMs > SHARPE_FRESH_MS) {
+        warnings.push(`${instance} ${ageDays}d stale`);
+        continue;
+      }
     }
 
     if (row.n_days < 1) {

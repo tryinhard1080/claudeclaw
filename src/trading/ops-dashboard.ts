@@ -96,7 +96,20 @@ function runCommand(command: string, timeoutMs = 20_000): { ok: true; output: st
 type CommandRunner = typeof runCommand;
 
 const MCP_CACHE_TTL_MS = 15 * 60 * 1000;
+const MCP_GET_TIMEOUT_MS = 10_000;
+const MCP_LIST_TIMEOUT_MS = 30_000;
 let dashboardMcpCache: { checkedAtMs: number; check: OpsCheck } | null = null;
+
+function shellQuote(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function claudeCliCommand(args: string): string {
+  const appData = process.env.APPDATA;
+  const npmClaude = appData ? path.join(appData, 'npm', 'claude.cmd') : '';
+  const cli = npmClaude && fs.existsSync(npmClaude) ? shellQuote(npmClaude) : 'claude';
+  return `${cli} ${args}`;
+}
 
 export interface DashboardMcpOptions {
   nowMs?: number;
@@ -121,15 +134,27 @@ export function summarizeDashboardMcp(options: DashboardMcpOptions = {}): OpsChe
   }
 
   const commandRunner = options.commandRunner ?? runCommand;
-  const result = commandRunner('claude mcp list', 30_000);
-  const check: OpsCheck = result.ok
-    ? summarizeFinancialDatasetsMcp(result.output)
-    : {
-        name: 'Financial Datasets MCP',
-        status: 'warn',
-        state: 'command_failed',
-        detail: result.output.slice(0, 220),
-      };
+  const getResult = commandRunner(claudeCliCommand('mcp get financial-datasets'), MCP_GET_TIMEOUT_MS);
+  let check: OpsCheck | null = null;
+
+  if (getResult.ok) {
+    const getCheck = summarizeFinancialDatasetsMcp(getResult.output);
+    if (getCheck.state !== 'missing' && getCheck.state !== 'unknown') {
+      check = getCheck;
+    }
+  }
+
+  if (!check) {
+    const listResult = commandRunner(claudeCliCommand('mcp list'), MCP_LIST_TIMEOUT_MS);
+    check = listResult.ok
+      ? summarizeFinancialDatasetsMcp(listResult.output)
+      : {
+          name: 'Financial Datasets MCP',
+          status: 'warn',
+          state: 'command_failed',
+          detail: `${getResult.output.slice(0, 100)}; ${listResult.output.slice(0, 120)}`,
+        };
+  }
 
   dashboardMcpCache = { checkedAtMs: nowMs, check };
   return check;

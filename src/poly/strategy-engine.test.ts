@@ -11,6 +11,7 @@ import {
 } from './strategy-engine.js';
 import { WEATHER_SHADOW_PROMPT_VERSION } from './weather-shadow.js';
 import { PROMPT_VERSION as AI_PROBABILITY_PROMPT_VERSION } from './strategies/ai-probability.js';
+import { recordSourceFreshness } from '../readiness/source-freshness.js';
 
 function bootDb(): Database.Database {
   const db = new Database(':memory:');
@@ -24,7 +25,8 @@ function bootDb(): Database.Database {
       market_price REAL, estimated_prob REAL, edge_pct REAL, confidence TEXT,
       reasoning TEXT, contrarian TEXT, approved INTEGER NOT NULL,
       rejection_reasons TEXT, paper_trade_id INTEGER,
-      prompt_version TEXT, model TEXT, regime_label TEXT, provider TEXT);
+      prompt_version TEXT, model TEXT, regime_label TEXT,
+      source_context_json TEXT, provider TEXT);
     CREATE TABLE poly_regime_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
       vix REAL, btc_dominance REAL, yield_10y REAL, regime_label TEXT NOT NULL);
@@ -263,6 +265,45 @@ describe('StrategyEngine.onScanComplete', () => {
     const trade = db.prepare(`SELECT status, size_usd FROM poly_paper_trades WHERE id = ?`).get(row.paper_trade_id) as { status: string; size_usd: number };
     expect(trade.status).toBe('open');
     expect(trade.size_usd).toBe(50);
+  });
+
+  it('persists required source freshness context with primary signals', async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    recordSourceFreshness(db, {
+      sourceName: 'polymarket-gamma-scan',
+      fetchedAt: nowSec - 60,
+      success: true,
+      staleAfterSec: 900,
+      usedBySignal: true,
+    });
+    recordSourceFreshness(db, {
+      sourceName: 'operator-newsletter',
+      fetchedAt: nowSec - 7200,
+      success: true,
+      staleAfterSec: 60,
+      usedBySignal: false,
+    });
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 10_000, minTtrHours: 24,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.6),
+      fetchBook: async () => mkBook(0.4, 1000),
+    });
+
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    const row = db.prepare(`SELECT source_context_json FROM poly_signals`).get() as {
+      source_context_json: string | null;
+    };
+    expect(row.source_context_json).toBeTruthy();
+    const context = JSON.parse(row.source_context_json!) as {
+      allRequiredFresh: boolean;
+      sources: Array<{ name: string; status: string }>;
+    };
+    expect(context.allRequiredFresh).toBe(true);
+    expect(context.sources).toEqual([
+      expect.objectContaining({ name: 'polymarket-gamma-scan', status: 'pass' }),
+    ]);
   });
 
   it('Sprint 9: flag-off ignores open exposure (parity with pre-Sprint-9)', async () => {
