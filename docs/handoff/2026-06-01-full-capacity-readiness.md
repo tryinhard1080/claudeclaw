@@ -240,6 +240,13 @@ Real money remains disabled. This is correct.
   10/10 PASS after adding the read-only resolution queue.
 - `npm run readiness:evidence` - PASS/WARN as expected and prints the live
   `11`-row resolution queue ordered by next end date.
+- `npm run readiness:evidence` after open P&L attribution - PASS/WARN as
+  expected and now prints `Open win/loss/flat 3/17/0`, gross open win/loss
+  `$122.48 / -$123.46`, and worst open trade `#28 -$46.03` on the Alphabet
+  June 30 market. This is read-only strategy-quality evidence, not a live-money
+  gate bypass.
+- Browser dashboard verification after rebuild/restart - Evidence Path rendered
+  `open w/l/f 3/17/0`, `worst open #28`, and the 10-row resolution queue.
 - `npm run capacity:status` after rebuild/restart - operational systems PASS;
   live startup remains FAIL by design because Boxes 1/2/3/7 remain blocked.
 - Dashboard DOM verification - Evidence Path rendered the `10`-row resolution

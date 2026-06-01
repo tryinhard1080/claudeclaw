@@ -33,6 +33,14 @@ function fmtUsd(value: number): string {
   return `${sign}$${Math.abs(value).toFixed(2)}`;
 }
 
+function fmtWorstOpenTrade(attribution: OperationalEvidencePayload['polymarket']['openPnlAttribution']): string {
+  if (attribution.worstOpenTradeId === null || attribution.worstOpenTradePnlUsd === null) return '-';
+  const slug = attribution.worstOpenTradeSlug ?? '-';
+  const shortSlug = slug.length > 88 ? `${slug.slice(0, 85)}...` : slug;
+  return `#${attribution.worstOpenTradeId} ${fmtUsd(attribution.worstOpenTradePnlUsd)} ` +
+    `(${fmtPct(attribution.worstOpenTradePnlPct)}) ${shortSlug}`;
+}
+
 function fmtAge(nowSec: number, at: number | null): string {
   if (!at) return '-';
   const ageSec = Math.max(0, nowSec - at);
@@ -143,6 +151,15 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log(`30d near-term target      ${polymarket.dailyNearTermTradeTarget30d.toFixed(1)}/day`);
   console.log(`Near-term fill ETA        ${fmtEta(payload.generatedAt, polymarket.nearTermPipelineFillEtaAt)}`);
   console.log(`Open exposure             ${fmtUsd(polymarket.openExposureUsd)} (${fmtPct(polymarket.openPnlPct)} open P&L)`);
+  console.log(
+    `Open win/loss/flat        ${polymarket.openPnlAttribution.openWinningTrades}/` +
+    `${polymarket.openPnlAttribution.openLosingTrades}/${polymarket.openPnlAttribution.openFlatTrades}`,
+  );
+  console.log(
+    `Gross open win/loss       ${fmtUsd(polymarket.openPnlAttribution.grossOpenProfitUsd)} / ` +
+    `${fmtUsd(polymarket.openPnlAttribution.grossOpenLossUsd)}`,
+  );
+  console.log(`Worst open trade          ${fmtWorstOpenTrade(polymarket.openPnlAttribution)}`);
   console.log(`Due next 7d / 30d         ${polymarket.dueNext7Days}/${polymarket.dueNext30Days}`);
   console.log(`Overdue open              ${polymarket.overdueOpenTrades}`);
   console.log(`Nearest open end date     ${fmtDate(polymarket.nearestOpenEndAt)}`);

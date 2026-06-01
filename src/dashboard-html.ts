@@ -2301,6 +2301,7 @@ function renderEvidencePath(evidence) {
   const discovery = evidence.marketDiscovery || {};
   const bookQuality = poly.openBookQuality || {};
   const signalQuality = poly.approvedSignalQuality || {};
+  const pnlAttribution = poly.openPnlAttribution || {};
 
   const settledEl = document.getElementById('evidence-poly-settled');
   if (settledEl) settledEl.textContent = (poly.settledTrades ?? 0) + '/' + (poly.targetSettledTrades ?? 50);
@@ -2395,6 +2396,22 @@ function renderEvidencePath(evidence) {
       (signalQuality.sourceFreshSignals24h ?? 0) + '/' + (signalQuality.approvedSignals24h ?? 0) +
       ' ' + (signalQuality.state || 'unknown') +
       ' avg edge ' + (Number.isFinite(signalQuality.avgEdgePct) ? signalQuality.avgEdgePct.toFixed(1) + 'pp' : '-');
+    const openPnlText = ' / open w/l/f ' +
+      (pnlAttribution.openWinningTrades ?? 0) + '/' +
+      (pnlAttribution.openLosingTrades ?? 0) + '/' +
+      (pnlAttribution.openFlatTrades ?? 0) +
+      ' gross ' + fmtUsd(pnlAttribution.grossOpenProfitUsd ?? 0) + '/' +
+      fmtUsd(pnlAttribution.grossOpenLossUsd ?? 0);
+    const worstOpenText = pnlAttribution.worstOpenTradeId === null || pnlAttribution.worstOpenTradeId === undefined
+      ? ''
+      : (() => {
+          const slug = pnlAttribution.worstOpenTradeSlug || '';
+          const shortSlug = slug.length > 72 ? slug.slice(0, 69) + '...' : slug;
+          return ' / worst open #' + pnlAttribution.worstOpenTradeId +
+            ' ' + fmtUsd(pnlAttribution.worstOpenTradePnlUsd) +
+            ' ' + fmtPct(pnlAttribution.worstOpenTradePnlPct, 1) +
+            ' ' + shortSlug;
+        })();
     const history = evidence.history || [];
     let historyText = 'history no snapshots';
     if (history.length > 0) {
@@ -2430,6 +2447,8 @@ function renderEvidencePath(evidence) {
       ' / paper P&L ' + fmtUsd(poly.totalPnlUsd ?? 0) +
       ' / equity ' + fmtUsd(poly.paperEquityUsd ?? 0) +
       ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
+      openPnlText +
+      worstOpenText +
       ' / nearest end ' + nearest +
       box2Text +
       box2VelocityText +

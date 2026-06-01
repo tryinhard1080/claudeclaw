@@ -88,6 +88,15 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("sourceFreshSignals24h");
   });
 
+  it('renders Polymarket open P&L attribution in the evidence path', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("poly.openPnlAttribution");
+    expect(html).toContain("open w/l/f");
+    expect(html).toContain("worst open #");
+    expect(html).toContain("grossOpenLossUsd");
+  });
+
   it('renders live equity sync evidence separately from daily Sharpe', () => {
     const html = getDashboardHtml('token', 'chat');
 

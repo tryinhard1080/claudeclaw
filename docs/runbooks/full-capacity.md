@@ -96,8 +96,9 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   Box 2 pipeline capacity, near-term Box 2 capacity, Box 2 learning velocity,
   market-discovery depth, open-book quality against current paper-learning
   filters, approved signal quality against source freshness and edge sanity,
-  mark-to-market paper P&L, near-term resolution pipeline, the open-trade
-  resolution queue, equity live-sync freshness, equity
+  mark-to-market paper P&L, open-book P&L attribution with winners, losers,
+  gross win/loss, and worst open trade, near-term resolution pipeline, the
+  open-trade resolution queue, equity live-sync freshness, equity
   benchmark edge, TTL filter evidence, and regime Sharpe sample depth. Box 2
   pipeline capacity should make the current settled-trade deficit explicit,
   including how many additional resolved trades are needed after the current
@@ -113,7 +114,8 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   also show Box 2 pipeline capacity, near-term Box 2 capacity, Box 2 learning
   velocity, open-book quality as the count of open trades that still pass the
   current paper-learning filters, approved signal quality as recent approvals
-  with fresh source context, market discovery as the latest
+  with fresh source context, open-book P&L attribution so the worst current
+  paper drag is visible, market discovery as the latest
   markets-discovered count against target, equity sync as fresh instance count,
   and equity edge as percent excess return, separate from regime days.
 - `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
@@ -163,6 +165,10 @@ Full capacity does not mean real money. It means:
   missing source context, unlinked approved signals, invalid edge/probability
   data, and low-confidence high-edge watches before considering any live-money
   review.
+- Strategy mark-to-market WARNs should be diagnosed with open-book P&L
+  attribution before strategy changes. Review the winners/losers/flat split,
+  gross open win/loss, and worst open trade in `npm run readiness:evidence` and
+  the dashboard Evidence Path before changing strategy parameters.
 - Active Polymarket TTL filtering is enabled locally after Richard's 2026-06-01 approval. Keep the TTL shadow report running as the comparison and rollback evidence path.
 - Regime-trader Sharpe has only a small sample until the 60-day clock completes.
 - Equity benchmark snapshot can skip cleanly when the closed-market

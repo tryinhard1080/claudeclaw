@@ -75,6 +75,17 @@ describe('operational evidence', () => {
     expect(evidence.totalPnlUsd).toBe(12);
     expect(evidence.paperEquityUsd).toBe(5012);
     expect(evidence.openPnlPct).toBeCloseTo(4 / 65, 6);
+    expect(evidence.openPnlAttribution).toMatchObject({
+      openWinningTrades: 2,
+      openLosingTrades: 1,
+      openFlatTrades: 0,
+      grossOpenProfitUsd: 6,
+      grossOpenLossUsd: -2,
+      worstOpenTradeId: 4,
+      worstOpenTradeSlug: 'open-month',
+      worstOpenTradePnlUsd: -2,
+    });
+    expect(evidence.openPnlAttribution.worstOpenTradePnlPct).toBeCloseTo(-2 / 30, 6);
     expect(evidence.openTrades).toBe(3);
     expect(evidence.voidedTrades).toBe(1);
     expect(evidence.openExposureUsd).toBe(65);

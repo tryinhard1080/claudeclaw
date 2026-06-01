@@ -58,6 +58,7 @@ export interface PolymarketEvidence {
   voidedTrades: number;
   openExposureUsd: number;
   openPnlPct: number | null;
+  openPnlAttribution: PolymarketOpenPnlAttributionEvidence;
   potentialSettledTrades: number;
   remainingSettledTrades: number;
   additionalSettledTradesNeeded: number;
@@ -87,6 +88,20 @@ export interface PolymarketEvidence {
   openBookQuality: PolymarketOpenBookQualityEvidence;
   approvedSignalQuality: PolymarketApprovedSignalQualityEvidence;
   resolutionQueue: PolymarketResolutionQueueItem[];
+}
+
+export interface PolymarketOpenPnlAttributionEvidence {
+  openWinningTrades: number;
+  openLosingTrades: number;
+  openFlatTrades: number;
+  grossOpenProfitUsd: number;
+  grossOpenLossUsd: number;
+  worstOpenTradeId: number | null;
+  worstOpenTradeSlug: string | null;
+  worstOpenTradeQuestion: string | null;
+  worstOpenTradePnlUsd: number | null;
+  worstOpenTradePnlPct: number | null;
+  worstOpenTradeEndAt: number | null;
 }
 
 export type PolymarketResolutionQueueState = 'overdue' | 'due_7d' | 'due_30d' | 'later' | 'unknown';
@@ -1026,6 +1041,89 @@ function collectResolutionQueue(
   });
 }
 
+function emptyOpenPnlAttribution(): PolymarketOpenPnlAttributionEvidence {
+  return {
+    openWinningTrades: 0,
+    openLosingTrades: 0,
+    openFlatTrades: 0,
+    grossOpenProfitUsd: 0,
+    grossOpenLossUsd: 0,
+    worstOpenTradeId: null,
+    worstOpenTradeSlug: null,
+    worstOpenTradeQuestion: null,
+    worstOpenTradePnlUsd: null,
+    worstOpenTradePnlPct: null,
+    worstOpenTradeEndAt: null,
+  };
+}
+
+function collectOpenPnlAttribution(
+  db: Database.Database,
+  hasTrades: boolean,
+  hasMarkets: boolean,
+  hasPositions: boolean,
+): PolymarketOpenPnlAttributionEvidence {
+  if (!hasTrades) return emptyOpenPnlAttribution();
+
+  const marketCols = hasMarkets ? tableColumns(db, 'poly_markets') : new Set<string>();
+  const positionCols = hasPositions ? tableColumns(db, 'poly_positions') : new Set<string>();
+  const marketJoin = hasMarkets
+    ? 'LEFT JOIN poly_markets m ON m.slug = t.market_slug'
+    : '';
+  const positionJoin = hasPositions
+    ? 'LEFT JOIN poly_positions p ON p.paper_trade_id = t.rowid'
+    : '';
+  const endExpr = hasMarkets && marketCols.has('end_date') ? 'm.end_date' : 'NULL';
+
+  const rows = db.prepare(`
+    SELECT
+      t.rowid AS trade_id,
+      t.market_slug AS market_slug,
+      COALESCE(t.size_usd, 0) AS size_usd,
+      ${optionalColumn('p', positionCols, 'unrealized_pnl', '0', 'unrealized_pnl')},
+      ${endExpr} AS end_at,
+      ${optionalColumn('m', marketCols, 'question', 'NULL', 'question')}
+    FROM poly_paper_trades t
+    ${marketJoin}
+    ${positionJoin}
+    WHERE t.status='open'
+  `).all() as Array<{
+    trade_id: number;
+    market_slug: string;
+    size_usd: number | null;
+    unrealized_pnl: number | null;
+    end_at: number | null;
+    question: string | null;
+  }>;
+
+  const attribution = emptyOpenPnlAttribution();
+
+  for (const row of rows) {
+    const sizeUsd = row.size_usd ?? 0;
+    const pnlUsd = row.unrealized_pnl ?? 0;
+    if (pnlUsd > 0) {
+      attribution.openWinningTrades += 1;
+      attribution.grossOpenProfitUsd += pnlUsd;
+    } else if (pnlUsd < 0) {
+      attribution.openLosingTrades += 1;
+      attribution.grossOpenLossUsd += pnlUsd;
+    } else {
+      attribution.openFlatTrades += 1;
+    }
+
+    if (attribution.worstOpenTradePnlUsd === null || pnlUsd < attribution.worstOpenTradePnlUsd) {
+      attribution.worstOpenTradeId = row.trade_id;
+      attribution.worstOpenTradeSlug = row.market_slug;
+      attribution.worstOpenTradeQuestion = row.question;
+      attribution.worstOpenTradePnlUsd = pnlUsd;
+      attribution.worstOpenTradePnlPct = sizeUsd > 0 ? pnlUsd / sizeUsd : null;
+      attribution.worstOpenTradeEndAt = row.end_at && row.end_at > 0 ? row.end_at : null;
+    }
+  }
+
+  return attribution;
+}
+
 export function collectPolymarketEvidence(db: Database.Database, nowSec: number): PolymarketEvidence {
   const hasTrades = tableExists(db, 'poly_paper_trades');
   const hasMarkets = tableExists(db, 'poly_markets');
@@ -1050,6 +1148,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
       voidedTrades: 0,
       openExposureUsd: 0,
       openPnlPct: null,
+      openPnlAttribution: emptyOpenPnlAttribution(),
       potentialSettledTrades: 0,
       remainingSettledTrades: SETTLED_TARGET,
       additionalSettledTradesNeeded: SETTLED_TARGET,
@@ -1174,6 +1273,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     ? epoch(db, 'SELECT MAX(created_at) AS value FROM poly_signals WHERE approved=1')
     : null;
   const resolutionQueue = collectResolutionQueue(db, nowSec, hasTrades, hasMarkets, hasPositions);
+  const openPnlAttribution = collectOpenPnlAttribution(db, hasTrades, hasMarkets, hasPositions);
 
   return {
     settledTrades,
@@ -1189,6 +1289,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     voidedTrades,
     openExposureUsd,
     openPnlPct: openExposureUsd > 0 ? unrealizedPnlUsd / openExposureUsd : null,
+    openPnlAttribution,
     potentialSettledTrades,
     remainingSettledTrades,
     additionalSettledTradesNeeded,
@@ -1657,6 +1758,10 @@ function buildMetrics(
         : polymarket.openTrades > 0
           ? 'long_dated_open'
           : 'awaiting_new_trades';
+  const openPnl = polymarket.openPnlAttribution;
+  const worstOpenTrade = openPnl.worstOpenTradeId === null || openPnl.worstOpenTradePnlUsd === null
+    ? 'worst open n/a'
+    : `worst open #${openPnl.worstOpenTradeId} ${openPnl.worstOpenTradePnlUsd.toFixed(2)} (${compactPct(openPnl.worstOpenTradePnlPct)}) ${openPnl.worstOpenTradeSlug ?? ''}`.trim();
 
   const metrics: ReadinessEvidenceMetric[] = [
     {
@@ -1724,7 +1829,7 @@ function buildMetrics(
       state: polymarket.openTrades > 0
         ? (polymarket.totalPnlUsd >= 0 ? 'positive_paper_equity' : 'negative_paper_equity')
         : 'no_open_positions',
-      detail: `total P&L ${polymarket.totalPnlUsd.toFixed(2)}; unrealized ${polymarket.unrealizedPnlUsd.toFixed(2)}; equity ${polymarket.paperEquityUsd.toFixed(2)}; approval ${polymarket.approvalRate24h === null ? 'n/a' : `${(polymarket.approvalRate24h * 100).toFixed(2)}%`}`,
+      detail: `total P&L ${polymarket.totalPnlUsd.toFixed(2)}; unrealized ${polymarket.unrealizedPnlUsd.toFixed(2)}; equity ${polymarket.paperEquityUsd.toFixed(2)}; winners/losers/flat ${openPnl.openWinningTrades}/${openPnl.openLosingTrades}/${openPnl.openFlatTrades}; gross win/loss ${openPnl.grossOpenProfitUsd.toFixed(2)}/${openPnl.grossOpenLossUsd.toFixed(2)}; ${worstOpenTrade}; approval ${polymarket.approvalRate24h === null ? 'n/a' : `${(polymarket.approvalRate24h * 100).toFixed(2)}%`}`,
       current: polymarket.totalPnlUsd,
       progressPct: polymarket.paperReturnPct,
     },
