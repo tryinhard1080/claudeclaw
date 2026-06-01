@@ -3316,8 +3316,10 @@ async function abortProcessing() {
     <span class="session-model" id="sess-model">-</span>
   </div>
   <div class="chat-quick-actions">
-    <button class="chat-quick-btn" onclick="sendQuickAction('/todo')">Todo</button>
-    <button class="chat-quick-btn" onclick="sendQuickAction('/gmail')">Gmail</button>
+    <button class="chat-quick-btn" onclick="sendQuickAction('/poly status')">Poly Status</button>
+    <button class="chat-quick-btn" onclick="sendQuickAction('/poly pnl')">Poly P&amp;L</button>
+    <button class="chat-quick-btn" onclick="sendQuickAction('/trade status')">Trade Status</button>
+    <button class="chat-quick-btn" onclick="sendQuickAction('/trade sharpe')">Trade Sharpe</button>
     <button class="chat-quick-btn" onclick="sendQuickAction('/model opus')">Opus</button>
     <button class="chat-quick-btn" onclick="sendQuickAction('/model sonnet')">Sonnet</button>
     <button class="chat-quick-btn" onclick="sendQuickAction('/respin')">Respin</button>

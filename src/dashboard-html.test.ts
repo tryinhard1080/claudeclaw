@@ -44,4 +44,15 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("function renderResolutionQueue");
     expect(html).toContain("poly.resolutionQueue");
   });
+
+  it('keeps chat quick actions trading scoped', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("sendQuickAction('/poly status')");
+    expect(html).toContain("sendQuickAction('/poly pnl')");
+    expect(html).toContain("sendQuickAction('/trade status')");
+    expect(html).toContain("sendQuickAction('/trade sharpe')");
+    expect(html).not.toContain("sendQuickAction('/todo')");
+    expect(html).not.toContain("sendQuickAction('/gmail')");
+  });
 });

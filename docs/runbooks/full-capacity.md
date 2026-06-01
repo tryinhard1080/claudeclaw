@@ -86,6 +86,8 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   and current / target progress when those numbers exist.
 - The dashboard Live Readiness card should show the Gate audit counts and the
   next action for each open non-complete gate.
+- The dashboard chat quick actions should stay trading-scoped and must not
+  include personal-assistant shortcuts such as Todo or Gmail.
 - `npm run readiness:evidence` reports Polymarket settlement progress,
   mark-to-market paper P&L, near-term resolution pipeline, the open-trade
   resolution queue, TTL filter evidence, and regime Sharpe sample depth.

@@ -14,16 +14,18 @@ ClaudeClaw is operational in paper mode for both configured markets:
   target progress for each open real-money gate. The Evidence Path card now
   also shows the live Polymarket resolution queue for open paper trades. The
   Live Readiness card now includes the real-money gate audit summary and next
-  actions.
+  actions. Dashboard chat quick actions are trading-scoped: `Poly Status`,
+  `Poly P&L`, `Trade Status`, and `Trade Sharpe`. Personal-assistant shortcuts
+  such as Todo and Gmail are not present.
 
 Real money remains disabled. This is correct.
 
 ## Latest Evidence
 
 - Polymarket Box 2: `0/50` settled trades, `11` open, `23` voided.
-- Polymarket mark-to-market: `$26.35` total paper P&L, all unrealized, on
-  `$529.35` open exposure. Paper equity is `$5,026.35`.
-- Polymarket signal flow: `539` signals and `2` approvals in the last 24 hours,
+- Polymarket mark-to-market: `$26.19` total paper P&L, all unrealized, on
+  `$529.35` open exposure. Paper equity is `$5,026.19`.
+- Polymarket signal flow: `538` signals and `2` approvals in the last 24 hours,
   approval rate `0.37%`.
 - Resolution pipeline: `2` open positions due within 7 days, `5` due within 30
   days, `0` overdue.
@@ -75,6 +77,20 @@ Real money remains disabled. This is correct.
   blockers are Box 2 settlement count/P&L and Box 3 60-day Sharpe sample.
 - `npx vitest run src/dashboard-html.test.ts src/readiness/gate-audit.test.ts`
   - 7/7 PASS after adding the dashboard gate-audit rendering guard.
+- `npx vitest run src/dashboard-html.test.ts` - 5/5 PASS after replacing
+  non-trading chat quick actions with trading commands and regression coverage.
+- `npm test` - 75 files, 913 tests PASS after rebuild and sequential rerun.
+- `npm run build` - PASS.
+- `pm2 restart claudeclaw-main --update-env` - PASS; `claudeclaw-main` online.
+- `Invoke-RestMethod http://127.0.0.1:3141/health` - healthy, database `ok`,
+  Telegram `connected`, agent `main`.
+- Served dashboard HTML verification - contains `/poly status`, `/poly pnl`,
+  `/trade status`, and `/trade sharpe`; does not contain `/todo` or `/gmail`
+  quick actions.
+- Post-restart `npm run capacity:status` - operational systems PASS; Financial
+  Datasets MCP connected; Polymarket scans fresh at `0m`; both regime-trader
+  instances `open_full`; `0` system blockers; live startup remains blocked by
+  Boxes 1/2/3/7 by design.
 - Authenticated `/api/readiness/live` after rebuild/restart - returned
   `gateAudit.status=warn`, `3/7` complete, `2` operator actions, `2`
   sample/time blockers, `0` system blockers, and `liveMoneyReady=false`.
