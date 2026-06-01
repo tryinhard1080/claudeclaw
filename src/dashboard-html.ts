@@ -22,6 +22,17 @@ export function getDashboardHtml(token: string, chatId: string): string {
   .pill-disconnected { background: #3b0f0f; color: #f87171; }
   .stat-val { font-size: 24px; font-weight: 700; color: #fff; }
   .stat-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+  .compact-stat { background:#141414; border:1px solid #252525; border-radius:8px; padding:10px; min-width:0; }
+  .compact-stat .stat-val { font-size:19px; line-height:1.1; overflow-wrap:anywhere; }
+  .table-wrap { width:100%; overflow-x:auto; }
+  .data-table { width:100%; border-collapse:collapse; }
+  .data-table th { text-align:left; padding:6px 8px; font-size:10px; color:#6b7280; text-transform:uppercase; font-weight:600; white-space:nowrap; border-bottom:1px solid #2a2a2a; }
+  .data-table td { padding:7px 8px; font-size:12px; border-bottom:1px solid #222; white-space:nowrap; vertical-align:middle; }
+  .meter { height:7px; background:#262626; border-radius:999px; overflow:hidden; }
+  .meter-fill { height:100%; border-radius:999px; background:#6ee7b7; transition:width 0.2s ease; }
+  .status-chip { display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; border:1px solid #2a2a2a; }
+  .status-dot { width:6px; height:6px; border-radius:50%; display:inline-block; }
+  @media (max-width: 640px) { .compact-stat .stat-val { font-size:16px; } .data-table td, .data-table th { padding:6px; } }
   .model-picker { position: relative; cursor: pointer; margin-top: 2px; }
   .model-current { font-size: 11px; color: #8b5cf6; }
   .model-current:hover { color: #a78bfa; }
@@ -211,6 +222,62 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <span id="poly-regime">regime: -</span>
       <span id="poly-backup-age">backup: -</span>
       <span id="poly-news-age">news: -</span>
+    </div>
+  </div>
+
+  <div class="flex items-center justify-between mb-2 mt-5">
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Equity / Alpaca paper</h2>
+    <span id="equity-status" class="pill">-</span>
+  </div>
+  <div class="card">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div>
+        <div class="text-white font-semibold text-sm" id="equity-strategy-name">Loading equity strategy...</div>
+        <div class="text-xs text-gray-500" id="equity-strategy-detail">-</div>
+      </div>
+      <div class="text-xs text-gray-500" id="equity-last-updated">-</div>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+      <div class="compact-stat"><div class="stat-val" id="equity-account">-</div><div class="stat-label">Account equity</div></div>
+      <div class="compact-stat"><div class="stat-val" id="equity-cash">-</div><div class="stat-label">Cash</div></div>
+      <div class="compact-stat"><div class="stat-val" id="equity-exposure">-</div><div class="stat-label">SPY exposure</div></div>
+      <div class="compact-stat"><div class="stat-val" id="equity-unrealized">-</div><div class="stat-label">Unrealized P&amp;L</div></div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      <div style="min-width:0">
+        <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Allocation</div>
+        <div class="flex items-center justify-between text-xs mb-1">
+          <span class="text-gray-400">Current <span id="equity-current-allocation">-</span></span>
+          <span class="text-gray-400">Target <span id="equity-target-allocation">-</span></span>
+        </div>
+        <div class="meter mb-2"><div id="equity-allocation-meter" class="meter-fill" style="width:0%"></div></div>
+        <div id="equity-drift" class="text-xs text-gray-500">-</div>
+      </div>
+      <div>
+        <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Active signal</div>
+        <div id="equity-active-signal" class="text-xs text-gray-300 leading-relaxed">Loading...</div>
+      </div>
+      <div>
+        <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Risk</div>
+        <div id="equity-risk" class="text-xs text-gray-300 leading-relaxed">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+    <div class="card">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Equity instances</h3>
+        <span id="equity-instance-summary" class="text-xs text-gray-500">-</span>
+      </div>
+      <div id="equity-instances" class="table-wrap"><div class="text-gray-500 text-xs">Loading...</div></div>
+    </div>
+    <div class="card">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Recent Alpaca orders</h3>
+        <span id="equity-order-summary" class="text-xs text-gray-500">-</span>
+      </div>
+      <div id="equity-orders" class="table-wrap"><div class="text-gray-500 text-xs">Loading...</div></div>
     </div>
   </div>
 
@@ -783,9 +850,12 @@ function closeDrawer() {
   document.body.style.overflow = '';
 }
 
-function api(path) {
+function authedUrl(path) {
   const sep = path.includes('?') ? '&' : '?';
-  return fetch(BASE + path + sep + 'token=' + TOKEN).then(r => r.json());
+  return BASE + path + sep + 'token=' + TOKEN;
+}
+function api(path) {
+  return fetch(authedUrl(path)).then(r => r.json());
 }
 
 let salienceChart, memTimelineChart, costChart;
@@ -2018,15 +2088,184 @@ function opsText(check) {
   if (!check) return '-';
   return (check.status || '-').toUpperCase() + ' ' + (check.state || '');
 }
+function fmtPct(n, digits = 1) {
+  if (n === null || n === undefined || !isFinite(Number(n))) return '-';
+  return (Number(n) * 100).toFixed(digits) + '%';
+}
+function fmtSignedPct(n, digits = 1) {
+  if (n === null || n === undefined || !isFinite(Number(n))) return '-';
+  const v = Number(n) * 100;
+  return (v >= 0 ? '+' : '') + v.toFixed(digits) + '%';
+}
+function fmtQty(n) {
+  if (n === null || n === undefined || !isFinite(Number(n))) return '-';
+  const v = Number(n);
+  return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2).replace(/\\.00$/, '');
+}
+function pnlColor(n) {
+  const v = Number(n || 0);
+  return v > 0 ? '#6ee7b7' : (v < 0 ? '#f87171' : '#9ca3af');
+}
+function formatShortTime(value) {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '-';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function renderStatusChip(status, label) {
+  const color = opsColor(status);
+  return '<span class="status-chip" style="color:' + color + '">' +
+    '<span class="status-dot" style="background:' + color + '"></span>' +
+    escapeHtml(label || String(status || '-').toUpperCase()) +
+    '</span>';
+}
 function setOpsText(id, check) {
   const el = document.getElementById(id);
   if (!el) return;
   el.textContent = opsText(check);
   el.style.color = opsColor(check && check.status);
 }
+async function loadEquity() {
+  try {
+    const payload = await api('/api/equity/overview');
+    const statusEl = document.getElementById('equity-status');
+    if (statusEl) {
+      statusEl.textContent = String(payload.status || 'unknown').toUpperCase();
+      statusEl.style.background = payload.status === 'pass' ? '#064e3b' : (payload.status === 'warn' ? '#422006' : '#3b0f0f');
+      statusEl.style.color = opsColor(payload.status);
+    }
+
+    const strategy = payload.strategy || {};
+    const active = payload.activeInstance || {};
+    const aggregate = payload.aggregate || {};
+    const broker = payload.broker || null;
+
+    document.getElementById('equity-strategy-name').textContent = strategy.name || 'HMM volatility-regime SPY allocation';
+    document.getElementById('equity-strategy-detail').textContent = strategy.description || '-';
+    document.getElementById('equity-last-updated').textContent =
+      'state ' + (active.ageSec === null || active.ageSec === undefined ? '-' : fmtAgo(active.ageSec)) +
+      (broker ? ' / broker ' + (broker.status || '-') : ' / broker unavailable');
+
+    document.getElementById('equity-account').textContent = fmtUsd(aggregate.equity);
+    document.getElementById('equity-cash').textContent = fmtUsd(aggregate.cash);
+    document.getElementById('equity-exposure').textContent = fmtUsd(aggregate.exposureUsd);
+    const unrealizedEl = document.getElementById('equity-unrealized');
+    unrealizedEl.textContent = fmtUsd(aggregate.unrealizedPnl);
+    unrealizedEl.style.color = pnlColor(aggregate.unrealizedPnl);
+
+    document.getElementById('equity-current-allocation').textContent = fmtPct(aggregate.currentAllocation);
+    document.getElementById('equity-target-allocation').textContent = fmtPct(aggregate.targetAllocation);
+    const meter = document.getElementById('equity-allocation-meter');
+    if (meter) {
+      const current = Math.max(0, Math.min(100, Number(aggregate.currentAllocation || 0) * 100));
+      meter.style.width = current.toFixed(1) + '%';
+      meter.style.background = Math.abs(Number(aggregate.allocationDrift || 0)) > 0.025 ? '#fbbf24' : '#6ee7b7';
+    }
+    const driftEl = document.getElementById('equity-drift');
+    if (driftEl) {
+      const drift = Number(aggregate.allocationDrift || 0);
+      driftEl.textContent = 'allocation drift ' + fmtSignedPct(aggregate.allocationDrift) +
+        ' / exposure ' + fmtUsd(aggregate.exposureUsd) +
+        ' / buying power ' + fmtUsd(aggregate.buyingPower);
+      driftEl.style.color = Math.abs(drift) > 0.025 ? '#fbbf24' : '#9ca3af';
+    }
+
+    const signalEl = document.getElementById('equity-active-signal');
+    if (signalEl) {
+      signalEl.innerHTML =
+        '<div class="flex flex-wrap items-center gap-2 mb-1">' +
+          renderStatusChip(active.executionEnabled ? 'pass' : 'warn', active.executionEnabled ? 'EXECUTING' : 'SHADOW') +
+          '<span class="text-gray-400">' + escapeHtml(active.id || '-') + '</span>' +
+        '</div>' +
+        '<div>Regime <span class="text-white">' + escapeHtml(active.regimeLabel || '-') + '</span>' +
+        ' / strategy <span class="text-white">' + escapeHtml(active.strategy || '-') + '</span></div>' +
+        '<div>confidence <span class="text-white">' + fmtPct(active.confidence, 0) + '</span>' +
+        ' / vol rank <span class="text-white">' + fmtPct(active.volRank, 0) + '</span></div>' +
+        '<div>action <span class="text-white">' + escapeHtml(active.action || '-') + '</span>' +
+        ' / rebalance <span class="text-white">' + (active.shouldRebalance === null || active.shouldRebalance === undefined ? '-' : String(active.shouldRebalance)) + '</span></div>';
+    }
+
+    const riskEl = document.getElementById('equity-risk');
+    if (riskEl) {
+      const breakers = Object.entries(active.circuitBreakers || {}).filter(([, on]) => on).map(([name]) => name);
+      riskEl.innerHTML =
+        '<div>daily DD <span class="text-white">' + fmtPct(active.dailyDrawdownPct, 2) + '</span>' +
+        ' / peak DD <span class="text-white">' + fmtPct(active.peakDrawdownPct, 2) + '</span></div>' +
+        '<div>position <span class="text-white">' + (active.position ? fmtQty(active.position.qty) + ' ' + escapeHtml(active.position.symbol) : 'none') + '</span></div>' +
+        '<div>breakers <span style="color:' + (breakers.length ? '#f87171' : '#6ee7b7') + '">' +
+          (breakers.length ? escapeHtml(breakers.join(', ')) : 'clear') +
+        '</span></div>';
+    }
+
+    const instances = payload.instances || [];
+    document.getElementById('equity-instance-summary').textContent =
+      instances.filter(i => i.executionEnabled).length + ' active / ' +
+      instances.filter(i => !i.executionEnabled).length + ' shadow';
+    const instanceEl = document.getElementById('equity-instances');
+    if (instanceEl) {
+      if (instances.length === 0) {
+        instanceEl.innerHTML = '<div class="text-gray-500 text-xs">No instance state found</div>';
+      } else {
+        const rows = instances.map(i => {
+          const role = i.executionEnabled ? renderStatusChip('pass', 'ACTIVE') : renderStatusChip('warn', 'SHADOW');
+          const pos = i.position ? fmtQty(i.position.qty) + ' ' + escapeHtml(i.position.symbol) : 'none';
+          const action = i.action || '-';
+          return '<tr>' +
+            '<td>' + role + '</td>' +
+            '<td class="text-gray-200">' + escapeHtml(i.label || i.id) + '</td>' +
+            '<td class="text-gray-300">' + escapeHtml(i.regimeLabel || '-') + '</td>' +
+            '<td class="text-right text-gray-300">' + fmtPct(i.currentAllocation) + '</td>' +
+            '<td class="text-right text-gray-300">' + fmtPct(i.approvedAllocation ?? i.targetAllocation) + '</td>' +
+            '<td class="text-right" style="color:' + (Math.abs(Number(i.allocationDrift || 0)) > 0.025 ? '#fbbf24' : '#9ca3af') + '">' + fmtSignedPct(i.allocationDrift) + '</td>' +
+            '<td class="text-gray-300">' + pos + '</td>' +
+            '<td class="text-gray-500">' + escapeHtml(action) + '</td>' +
+          '</tr>';
+        }).join('');
+        instanceEl.innerHTML =
+          '<table class="data-table"><thead><tr>' +
+          '<th>Role</th><th>Instance</th><th>Regime</th><th class="text-right">Current</th><th class="text-right">Target</th><th class="text-right">Drift</th><th>Position</th><th>Action</th>' +
+          '</tr></thead><tbody>' + rows + '</tbody></table>';
+      }
+    }
+
+    const orders = broker && broker.recentOrders ? broker.recentOrders : [];
+    document.getElementById('equity-order-summary').textContent = orders.length ? orders.length + ' recent' : 'none';
+    const ordersEl = document.getElementById('equity-orders');
+    if (ordersEl) {
+      if (orders.length === 0) {
+        ordersEl.innerHTML = '<div class="text-gray-500 text-xs">No broker orders available</div>';
+      } else {
+        const rows = orders.slice(0, 8).map(o => {
+          const sideColor = o.side === 'buy' ? '#6ee7b7' : (o.side === 'sell' ? '#fbbf24' : '#9ca3af');
+          const filled = o.filledAvgPrice === null || o.filledAvgPrice === undefined ? '-' : '$' + Number(o.filledAvgPrice).toFixed(2);
+          return '<tr>' +
+            '<td class="text-gray-500">' + escapeHtml(formatShortTime(o.filledAt || o.submittedAt)) + '</td>' +
+            '<td style="color:' + sideColor + ';font-weight:700;text-transform:uppercase">' + escapeHtml(o.side || '-') + '</td>' +
+            '<td class="text-gray-200">' + escapeHtml(o.symbol || '-') + '</td>' +
+            '<td class="text-right text-gray-300">' + fmtQty(o.filledQty || o.qty) + '</td>' +
+            '<td class="text-right text-gray-300">' + filled + '</td>' +
+            '<td class="text-gray-400">' + escapeHtml(o.status || '-') + '</td>' +
+          '</tr>';
+        }).join('');
+        ordersEl.innerHTML =
+          '<table class="data-table"><thead><tr>' +
+          '<th>Time</th><th>Side</th><th>Symbol</th><th class="text-right">Qty</th><th class="text-right">Fill</th><th>Status</th>' +
+          '</tr></thead><tbody>' + rows + '</tbody></table>';
+      }
+    }
+  } catch (err) {
+    console.error('loadEquity failed', err);
+    const statusEl = document.getElementById('equity-status');
+    if (statusEl) {
+      statusEl.textContent = 'FAIL';
+      statusEl.style.background = '#3b0f0f';
+      statusEl.style.color = '#f87171';
+    }
+  }
+}
 async function loadTradingOps() {
   try {
-    const payload = await fetch('/api/trading/ops?token=' + encodeURIComponent(TOKEN)).then(r => r.json());
+    const payload = await api('/api/trading/ops');
     const statusEl = document.getElementById('trading-ops-status');
     if (statusEl) {
       statusEl.textContent = (payload.status || 'unknown').toUpperCase();
@@ -2074,7 +2313,7 @@ async function loadTradingOps() {
 }
 async function loadLiveReadiness() {
   try {
-    const payload = await fetch('/api/readiness/live?token=' + encodeURIComponent(TOKEN)).then(r => r.json());
+    const payload = await api('/api/readiness/live');
     const status = payload.liveStartup && payload.liveStartup.status ? payload.liveStartup.status : 'fail';
     const statusEl = document.getElementById('live-readiness-status');
     if (statusEl) {
@@ -2137,13 +2376,13 @@ async function loadLiveReadiness() {
 async function loadPoly() {
   try {
     const [overview, live, signals, regime, pnlChart, calibration, drift] = await Promise.all([
-      fetch('/api/poly/overview?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
-      fetch('/api/poly/positions/live?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
-      fetch('/api/poly/signals/recent?limit=15&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
-      fetch('/api/poly/regime?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
-      fetch('/api/poly/pnl/chart?width=360&height=72&token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
-      fetch('/api/poly/calibration?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
-      fetch('/api/poly/drift?token=' + encodeURIComponent(TOKEN)).then(r => r.json()),
+      api('/api/poly/overview'),
+      api('/api/poly/positions/live'),
+      api('/api/poly/signals/recent?limit=15'),
+      api('/api/poly/regime'),
+      api('/api/poly/pnl/chart?width=360&height=72'),
+      api('/api/poly/calibration'),
+      api('/api/poly/drift'),
     ]);
 
     // Overview pills
@@ -2441,13 +2680,14 @@ async function loadPoly() {
 async function refreshAll() {
   const btn = document.getElementById('refresh-btn').querySelector('svg');
   btn.classList.add('refresh-spin');
-  await Promise.all([loadInfo(), loadTasks(), loadMemories(), loadHealth(), loadTokens(), loadAgents(), loadHiveMind(), loadSummary(), loadMissionControl(), loadPoly(), loadTradingOps(), loadLiveReadiness()]);
+  await Promise.all([loadInfo(), loadTasks(), loadMemories(), loadHealth(), loadTokens(), loadAgents(), loadHiveMind(), loadSummary(), loadMissionControl(), loadPoly(), loadEquity(), loadTradingOps(), loadLiveReadiness()]);
   btn.classList.remove('refresh-spin');
   document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 }
 
 // Trading data refreshes independently every 30s for responsiveness
 setInterval(loadPoly, 30000);
+setInterval(loadEquity, 30000);
 setInterval(loadLiveReadiness, 30000);
 
 // Live countdown tickers

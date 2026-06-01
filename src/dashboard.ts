@@ -66,6 +66,7 @@ import { buildPositionsLivePayload } from './poly/positions-view.js';
 import { buildPnlBars, type DailyPnlPoint } from './dashboard-charts.js';
 import { latestSnapshot as latestCalibrationSnapshot, fetchResolvedSamples, calibrationCurve } from './poly/calibration.js';
 import { composeDriftReport } from './poly/drift.js';
+import { collectEquityDashboardPayload } from './trading/equity-dashboard.js';
 import { collectTradingOpsPayload } from './trading/ops-dashboard.js';
 import { collectGateProgress } from './readiness/gate-progress.js';
 import { collectLiveStartupChecks } from './readiness/live-startup.js';
@@ -544,6 +545,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   app.get('/api/trading/ops', (c) => {
     const db = getDb();
     return c.json(collectTradingOpsPayload(db));
+  });
+
+  app.get('/api/equity/overview', async (c) => {
+    return c.json(await collectEquityDashboardPayload());
   });
 
   app.get('/api/readiness/live', (c) => {
