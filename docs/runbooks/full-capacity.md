@@ -58,6 +58,7 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
    const Database = require('better-sqlite3');
    const db = new Database('C:/claudeclaw-store/claudeclaw.db', { readonly: true, fileMustExist: true });
    console.log(db.prepare("SELECT status, COUNT(*) AS count, ROUND(COALESCE(SUM(realized_pnl),0), 4) AS realized_pnl FROM poly_paper_trades GROUP BY status ORDER BY status").all());
+   console.log(db.prepare("SELECT COUNT(*) AS open_positions, ROUND(COALESCE(SUM(unrealized_pnl),0), 4) AS unrealized_pnl FROM poly_positions").get());
    console.log(db.prepare("SELECT value FROM poly_kv WHERE key='poly.halt'").get());
    console.log(db.prepare("SELECT instance, snapshot_date, rolling_sharpe_60d, n_days FROM regime_sharpe_snapshots ORDER BY created_at DESC LIMIT 4").all());
    '@ | node -
@@ -70,7 +71,7 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
 - `npm run trading:status` has no FAIL rows. A stopped regime-trader instance is acceptable only when the script reports `closed_until_next_open`, `opening_grace`, or `closed_stale_open_state` outside regular session.
 - `npm run trading:benchmark` reports a benchmark row for each regime-trader instance.
 - `npm run gate:status` reports real-money gate progress and source freshness rows.
-- `npm run readiness:evidence` reports Polymarket settlement progress, near-term resolution pipeline, TTL filter evidence, and regime Sharpe sample depth.
+- `npm run readiness:evidence` reports Polymarket settlement progress, mark-to-market paper P&L, near-term resolution pipeline, TTL filter evidence, and regime Sharpe sample depth.
 - `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
 - `npm run readiness:evidence:cron` reports `already registered` or creates one active daily shell task for `scripts/readiness-evidence.ts --record --history 14`.
 - `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled.

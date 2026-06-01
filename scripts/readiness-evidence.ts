@@ -60,6 +60,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
     console.log(
       `${row.snapshotYmd}  status=${row.status.toUpperCase()}  ` +
       `poly=${row.polySettledTrades}/${row.polyTargetSettledTrades}  ` +
+      `pnl=${fmtUsd(row.polyTotalPnlUsd)}  ` +
       `due30=${row.polyDueNext30Days}/${row.polyOpenTrades}  ` +
       `regime=${row.regimeMinDays}/${row.regimeTargetDays}d  ` +
       `ttl=${fmtPct(row.ttlPassRate)}`,
@@ -90,13 +91,16 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log('-------------------');
   console.log(`Settled / target          ${polymarket.settledTrades}/${polymarket.targetSettledTrades}`);
   console.log(`Realized P&L              ${fmtUsd(polymarket.realizedPnlUsd)}`);
+  console.log(`Unrealized P&L            ${fmtUsd(polymarket.unrealizedPnlUsd)}`);
+  console.log(`Total paper P&L           ${fmtUsd(polymarket.totalPnlUsd)} (${fmtPct(polymarket.paperReturnPct)})`);
+  console.log(`Paper equity              ${fmtUsd(polymarket.paperEquityUsd)}`);
   console.log(`Open / voided             ${polymarket.openTrades}/${polymarket.voidedTrades}`);
-  console.log(`Open exposure             ${fmtUsd(polymarket.openExposureUsd)}`);
+  console.log(`Open exposure             ${fmtUsd(polymarket.openExposureUsd)} (${fmtPct(polymarket.openPnlPct)} open P&L)`);
   console.log(`Due next 7d / 30d         ${polymarket.dueNext7Days}/${polymarket.dueNext30Days}`);
   console.log(`Overdue open              ${polymarket.overdueOpenTrades}`);
   console.log(`Nearest open end date     ${fmtDate(polymarket.nearestOpenEndAt)}`);
   console.log(`Latest paper trade        ${fmtAge(payload.generatedAt, polymarket.latestPaperTradeAt)}`);
-  console.log(`Signals / approvals 24h   ${polymarket.signals24h}/${polymarket.approvedSignals24h}`);
+  console.log(`Signals / approvals 24h   ${polymarket.signals24h}/${polymarket.approvedSignals24h} (${fmtPct(polymarket.approvalRate24h)})`);
 
   console.log();
   console.log('Equity Regime Evidence');

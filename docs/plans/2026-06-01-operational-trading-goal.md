@@ -71,3 +71,4 @@ Final report:
 | 2026-06-01 12:05 CT | Box 5 review ledger and Box 6 kill-switch evidence moved from manual WARN to machine-checked status. | Re-run full capacity status and commit. |
 | 2026-06-01 12:15 CT | Added an enhanced-loop evidence target: prove Polymarket settlement pipeline, signal flow, TTL filter freshness, and regime Sharpe sample depth in one CLI/dashboard surface. | Verify `npm run readiness:evidence`, tests, build, dashboard API, then commit. |
 | 2026-06-01 12:25 CT | Added persistent daily readiness evidence snapshots so dashboard evidence can trend instead of only showing the current tick. | Apply migration, record first snapshot, register daily snapshot task, verify. |
+| 2026-06-01 12:35 CT | Mark-to-market Polymarket strategy evidence identified as the next missing proof surface. Settlement count is still time-blocked, but current open paper P&L can be tracked now. | Add realized + unrealized + equity evidence to CLI/dashboard snapshots. |

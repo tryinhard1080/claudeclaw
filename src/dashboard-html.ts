@@ -2181,9 +2181,12 @@ function renderEvidencePath(evidence) {
       const last = history[history.length - 1] || first;
       const polyDelta = (last.polySettledTrades ?? 0) - (first.polySettledTrades ?? 0);
       const regimeDelta = (last.regimeMinDays ?? 0) - (first.regimeMinDays ?? 0);
+      const pnlDelta = (last.polyTotalPnlUsd ?? 0) - (first.polyTotalPnlUsd ?? 0);
       historyText = 'history ' + history.length + 'd' +
         ' / poly ' + (last.polySettledTrades ?? 0) + '/' + (last.polyTargetSettledTrades ?? 50) +
         (polyDelta !== 0 ? ' (' + (polyDelta > 0 ? '+' : '') + polyDelta + ')' : '') +
+        ' / pnl ' + fmtUsd(last.polyTotalPnlUsd ?? 0) +
+        (pnlDelta !== 0 ? ' (' + (pnlDelta > 0 ? '+' : '') + fmtUsd(Math.abs(pnlDelta)) + ')' : '') +
         ' / regime ' + (last.regimeMinDays ?? 0) + '/' + (last.regimeTargetDays ?? 60) + 'd' +
         (regimeDelta !== 0 ? ' (' + (regimeDelta > 0 ? '+' : '') + regimeDelta + ')' : '');
     }
@@ -2194,6 +2197,9 @@ function renderEvidencePath(evidence) {
     detailEl.textContent =
       'signals 24h ' + (poly.signals24h ?? 0) +
       ' / approved ' + (poly.approvedSignals24h ?? 0) +
+      ' (' + fmtPct(poly.approvalRate24h ?? null, 1) + ')' +
+      ' / paper P&L ' + fmtUsd(poly.totalPnlUsd ?? 0) +
+      ' / equity ' + fmtUsd(poly.paperEquityUsd ?? 0) +
       ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
       ' / nearest end ' + nearest +
       ' / ttl tick ' + ttlAge +

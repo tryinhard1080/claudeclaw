@@ -19,6 +19,7 @@
     "v1.18.0": ["v1.18.0-equity-benchmark-snapshots"],
     "v1.19.0": ["v1.19.0-equity-benchmark-reference-price"],
     "v1.20.0": ["v1.20.0-signal-source-context"],
-    "v1.21.0": ["v1.21.0-readiness-evidence-snapshots"]
+    "v1.21.0": ["v1.21.0-readiness-evidence-snapshots"],
+    "v1.22.0": ["v1.22.0-readiness-mark-to-market"]
   }
 }

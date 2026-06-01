@@ -36,6 +36,10 @@ describe('operational evidence', () => {
         created_at INTEGER NOT NULL,
         approved INTEGER NOT NULL
       );
+      CREATE TABLE poly_positions (
+        paper_trade_id INTEGER NOT NULL,
+        unrealized_pnl REAL NOT NULL
+      );
       INSERT INTO poly_paper_trades(id, created_at, market_slug, status, size_usd, realized_pnl) VALUES
         (1, ${NOW - 900}, 'settled-win', 'won', 50, 12),
         (2, ${NOW - 800}, 'settled-loss', 'lost', 50, -4),
@@ -50,12 +54,20 @@ describe('operational evidence', () => {
       INSERT INTO poly_signals(created_at, approved) VALUES
         (${NOW - 60}, 1),
         (${NOW - 120}, 0);
+      INSERT INTO poly_positions(paper_trade_id, unrealized_pnl) VALUES
+        (3, 5),
+        (4, -2),
+        (5, 1);
     `);
 
     const evidence = collectPolymarketEvidence(mem, NOW);
 
     expect(evidence.settledTrades).toBe(2);
     expect(evidence.realizedPnlUsd).toBe(8);
+    expect(evidence.unrealizedPnlUsd).toBe(4);
+    expect(evidence.totalPnlUsd).toBe(12);
+    expect(evidence.paperEquityUsd).toBe(5012);
+    expect(evidence.openPnlPct).toBeCloseTo(4 / 65, 6);
     expect(evidence.openTrades).toBe(3);
     expect(evidence.voidedTrades).toBe(1);
     expect(evidence.openExposureUsd).toBe(65);
@@ -63,6 +75,7 @@ describe('operational evidence', () => {
     expect(evidence.dueNext30Days).toBe(2);
     expect(evidence.overdueOpenTrades).toBe(1);
     expect(evidence.approvedSignals24h).toBe(1);
+    expect(evidence.approvalRate24h).toBe(0.5);
     mem.close();
   });
 
@@ -176,6 +189,7 @@ describe('operational evidence', () => {
 
     expect(payload.status).toBe('warn');
     expect(payload.metrics.map(metric => metric.key)).toContain('polymarket_resolution_pipeline');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_mark_to_market')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'regime_sharpe_track')?.current).toBe(8);
     mem.close();
@@ -242,6 +256,9 @@ describe('operational evidence', () => {
     expect(history[0]!.snapshotYmd).toBe(firstYmd);
     expect(history[0]!.capturedAt).toBe(NOW + 60);
     expect(history[0]!.polyOpenTrades).toBe(1);
+    expect(history[0]!.polyTotalPnlUsd).toBe(0);
+    expect(history[0]!.polyPaperEquityUsd).toBe(5000);
+    expect(history[0]!.polyApprovalRate24h).toBe(1);
     expect(history[0]!.regimeMinDays).toBe(8);
     expect(history[1]!.snapshotYmd).not.toBe(firstYmd);
     mem.close();

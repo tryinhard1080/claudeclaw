@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 
+import { POLY_PAPER_CAPITAL } from '../config.js';
 import type { ReadinessStatus } from './gate-progress.js';
 
 export interface ReadinessEvidenceMetric {
@@ -18,9 +19,15 @@ export interface PolymarketEvidence {
   targetSettledTrades: number;
   realizedPnlUsd: number;
   realizedPnlPositive: boolean;
+  unrealizedPnlUsd: number;
+  totalPnlUsd: number;
+  paperCapitalUsd: number;
+  paperEquityUsd: number;
+  paperReturnPct: number | null;
   openTrades: number;
   voidedTrades: number;
   openExposureUsd: number;
+  openPnlPct: number | null;
   overdueOpenTrades: number;
   dueNext7Days: number;
   dueNext30Days: number;
@@ -28,6 +35,7 @@ export interface PolymarketEvidence {
   latestPaperTradeAt: number | null;
   signals24h: number;
   approvedSignals24h: number;
+  approvalRate24h: number | null;
   latestApprovedSignalAt: number | null;
   progressPct: number;
   hasMarketMaturityData: boolean;
@@ -77,6 +85,10 @@ export interface OperationalEvidenceHistoryPoint {
   polySettledTrades: number;
   polyTargetSettledTrades: number;
   polyRealizedPnlUsd: number;
+  polyUnrealizedPnlUsd: number;
+  polyTotalPnlUsd: number;
+  polyPaperEquityUsd: number;
+  polyApprovalRate24h: number | null;
   polyOpenTrades: number;
   polyVoidedTrades: number;
   polyDueNext7Days: number;
@@ -118,6 +130,23 @@ function tableExists(db: Database.Database, name: string): boolean {
   return row?.name === name;
 }
 
+function tableColumns(db: Database.Database, name: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info("${name}")`).all() as Array<{ name: string }>;
+  return new Set(rows.map(row => row.name));
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  columns: Set<string>,
+  column: string,
+  ddl: string,
+): void {
+  if (columns.has(column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl};`);
+  columns.add(column);
+}
+
 function scalar(db: Database.Database, sql: string, params: unknown[] = []): number {
   const row = db.prepare(sql).get(...params) as { value: number | null } | undefined;
   return row?.value ?? 0;
@@ -155,6 +184,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
   const hasTrades = tableExists(db, 'poly_paper_trades');
   const hasMarkets = tableExists(db, 'poly_markets');
   const hasSignals = tableExists(db, 'poly_signals');
+  const hasPositions = tableExists(db, 'poly_positions');
   const dayAgo = nowSec - DAY_SEC;
 
   if (!hasTrades) {
@@ -163,9 +193,15 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
       targetSettledTrades: SETTLED_TARGET,
       realizedPnlUsd: 0,
       realizedPnlPositive: false,
+      unrealizedPnlUsd: 0,
+      totalPnlUsd: 0,
+      paperCapitalUsd: POLY_PAPER_CAPITAL,
+      paperEquityUsd: POLY_PAPER_CAPITAL,
+      paperReturnPct: 0,
       openTrades: 0,
       voidedTrades: 0,
       openExposureUsd: 0,
+      openPnlPct: null,
       overdueOpenTrades: 0,
       dueNext7Days: 0,
       dueNext30Days: 0,
@@ -173,6 +209,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
       latestPaperTradeAt: null,
       signals24h: 0,
       approvedSignals24h: 0,
+      approvalRate24h: null,
       latestApprovedSignalAt: null,
       progressPct: 0,
       hasMarketMaturityData: hasMarkets,
@@ -184,6 +221,17 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
   const openTrades = scalar(db, "SELECT COUNT(*) AS value FROM poly_paper_trades WHERE status='open'");
   const voidedTrades = scalar(db, "SELECT COUNT(*) AS value FROM poly_paper_trades WHERE status='voided'");
   const openExposureUsd = scalar(db, "SELECT COALESCE(SUM(size_usd), 0) AS value FROM poly_paper_trades WHERE status='open'");
+  const unrealizedPnlUsd = hasPositions
+    ? scalar(db, `
+        SELECT COALESCE(SUM(p.unrealized_pnl), 0) AS value
+          FROM poly_positions p
+          INNER JOIN poly_paper_trades t ON t.id = p.paper_trade_id
+         WHERE t.status='open'
+      `)
+    : 0;
+  const totalPnlUsd = realizedPnlUsd + unrealizedPnlUsd;
+  const paperCapitalUsd = POLY_PAPER_CAPITAL;
+  const paperEquityUsd = paperCapitalUsd + totalPnlUsd;
   const latestPaperTradeAt = epoch(db, 'SELECT MAX(created_at) AS value FROM poly_paper_trades');
 
   let overdueOpenTrades = 0;
@@ -208,6 +256,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
   const approvedSignals24h = hasSignals
     ? scalar(db, 'SELECT COUNT(*) AS value FROM poly_signals WHERE approved=1 AND created_at >= ?', [dayAgo])
     : 0;
+  const approvalRate24h = signals24h > 0 ? approvedSignals24h / signals24h : null;
   const latestApprovedSignalAt = hasSignals
     ? epoch(db, 'SELECT MAX(created_at) AS value FROM poly_signals WHERE approved=1')
     : null;
@@ -217,9 +266,15 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     targetSettledTrades: SETTLED_TARGET,
     realizedPnlUsd,
     realizedPnlPositive: realizedPnlUsd > 0,
+    unrealizedPnlUsd,
+    totalPnlUsd,
+    paperCapitalUsd,
+    paperEquityUsd,
+    paperReturnPct: paperCapitalUsd > 0 ? totalPnlUsd / paperCapitalUsd : null,
     openTrades,
     voidedTrades,
     openExposureUsd,
+    openPnlPct: openExposureUsd > 0 ? unrealizedPnlUsd / openExposureUsd : null,
     overdueOpenTrades,
     dueNext7Days,
     dueNext30Days,
@@ -227,6 +282,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     latestPaperTradeAt,
     signals24h,
     approvedSignals24h,
+    approvalRate24h,
     latestApprovedSignalAt,
     progressPct: progress(settledTrades, SETTLED_TARGET),
     hasMarketMaturityData: hasMarkets,
@@ -364,6 +420,17 @@ function buildMetrics(
       progressPct: polymarket.openTrades > 0 ? progress(polymarket.dueNext30Days, polymarket.openTrades) : null,
     },
     {
+      key: 'polymarket_mark_to_market',
+      name: 'Strategy mark-to-market',
+      status: polymarket.totalPnlUsd >= 0 ? 'pass' : 'warn',
+      state: polymarket.openTrades > 0
+        ? (polymarket.totalPnlUsd >= 0 ? 'positive_paper_equity' : 'negative_paper_equity')
+        : 'no_open_positions',
+      detail: `total P&L ${polymarket.totalPnlUsd.toFixed(2)}; unrealized ${polymarket.unrealizedPnlUsd.toFixed(2)}; equity ${polymarket.paperEquityUsd.toFixed(2)}; approval ${polymarket.approvalRate24h === null ? 'n/a' : `${(polymarket.approvalRate24h * 100).toFixed(2)}%`}`,
+      current: polymarket.totalPnlUsd,
+      progressPct: polymarket.paperReturnPct,
+    },
+    {
       key: 'polymarket_signal_flow',
       name: 'Polymarket signal flow',
       status: polymarket.approvedSignals24h > 0 ? 'pass' : (polymarket.signals24h > 0 ? 'warn' : 'fail'),
@@ -428,6 +495,10 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
       poly_settled_trades           INTEGER NOT NULL,
       poly_target_settled_trades    INTEGER NOT NULL,
       poly_realized_pnl_usd         REAL NOT NULL,
+      poly_unrealized_pnl_usd       REAL NOT NULL DEFAULT 0,
+      poly_total_pnl_usd            REAL NOT NULL DEFAULT 0,
+      poly_paper_equity_usd         REAL NOT NULL DEFAULT 0,
+      poly_approval_rate_24h        REAL,
       poly_open_trades              INTEGER NOT NULL,
       poly_voided_trades            INTEGER NOT NULL,
       poly_due_next_7d              INTEGER NOT NULL,
@@ -444,6 +515,11 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
     CREATE INDEX IF NOT EXISTS idx_readiness_evidence_captured_at
       ON readiness_evidence_snapshots(captured_at DESC);
   `);
+  const cols = tableColumns(db, 'readiness_evidence_snapshots');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_unrealized_pnl_usd', 'poly_unrealized_pnl_usd REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_total_pnl_usd', 'poly_total_pnl_usd REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_paper_equity_usd', 'poly_paper_equity_usd REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_approval_rate_24h', 'poly_approval_rate_24h REAL');
 }
 
 export function recordOperationalEvidenceSnapshot(
@@ -456,18 +532,24 @@ export function recordOperationalEvidenceSnapshot(
     INSERT INTO readiness_evidence_snapshots (
       snapshot_ymd, captured_at, status,
       poly_settled_trades, poly_target_settled_trades, poly_realized_pnl_usd,
+      poly_unrealized_pnl_usd, poly_total_pnl_usd, poly_paper_equity_usd,
+      poly_approval_rate_24h,
       poly_open_trades, poly_voided_trades, poly_due_next_7d,
       poly_due_next_30d, poly_overdue_open_trades,
       regime_min_days, regime_target_days, regime_all_instances_positive,
       ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
       payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(snapshot_ymd) DO UPDATE SET
       captured_at = excluded.captured_at,
       status = excluded.status,
       poly_settled_trades = excluded.poly_settled_trades,
       poly_target_settled_trades = excluded.poly_target_settled_trades,
       poly_realized_pnl_usd = excluded.poly_realized_pnl_usd,
+      poly_unrealized_pnl_usd = excluded.poly_unrealized_pnl_usd,
+      poly_total_pnl_usd = excluded.poly_total_pnl_usd,
+      poly_paper_equity_usd = excluded.poly_paper_equity_usd,
+      poly_approval_rate_24h = excluded.poly_approval_rate_24h,
       poly_open_trades = excluded.poly_open_trades,
       poly_voided_trades = excluded.poly_voided_trades,
       poly_due_next_7d = excluded.poly_due_next_7d,
@@ -487,6 +569,10 @@ export function recordOperationalEvidenceSnapshot(
     payload.polymarket.settledTrades,
     payload.polymarket.targetSettledTrades,
     payload.polymarket.realizedPnlUsd,
+    payload.polymarket.unrealizedPnlUsd,
+    payload.polymarket.totalPnlUsd,
+    payload.polymarket.paperEquityUsd,
+    payload.polymarket.approvalRate24h,
     payload.polymarket.openTrades,
     payload.polymarket.voidedTrades,
     payload.polymarket.dueNext7Days,
@@ -509,10 +595,18 @@ export function readOperationalEvidenceHistory(
 ): OperationalEvidenceHistoryPoint[] {
   if (!tableExists(db, 'readiness_evidence_snapshots')) return [];
   const safeLimit = Math.max(1, Math.min(365, Math.floor(limit)));
+  const cols = tableColumns(db, 'readiness_evidence_snapshots');
+  const optional = (column: string, fallback: string) =>
+    cols.has(column) ? column : fallback;
   const rows = db.prepare(`
     SELECT snapshot_ymd, captured_at, status,
            poly_settled_trades, poly_target_settled_trades,
-           poly_realized_pnl_usd, poly_open_trades, poly_voided_trades,
+           poly_realized_pnl_usd,
+           ${optional('poly_unrealized_pnl_usd', '0')} AS poly_unrealized_pnl_usd,
+           ${optional('poly_total_pnl_usd', 'poly_realized_pnl_usd')} AS poly_total_pnl_usd,
+           ${optional('poly_paper_equity_usd', '0')} AS poly_paper_equity_usd,
+           ${optional('poly_approval_rate_24h', 'NULL')} AS poly_approval_rate_24h,
+           poly_open_trades, poly_voided_trades,
            poly_due_next_7d, poly_due_next_30d, poly_overdue_open_trades,
            regime_min_days, regime_target_days, regime_all_instances_positive,
            ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate
@@ -526,6 +620,10 @@ export function readOperationalEvidenceHistory(
     poly_settled_trades: number;
     poly_target_settled_trades: number;
     poly_realized_pnl_usd: number;
+    poly_unrealized_pnl_usd: number;
+    poly_total_pnl_usd: number;
+    poly_paper_equity_usd: number;
+    poly_approval_rate_24h: number | null;
     poly_open_trades: number;
     poly_voided_trades: number;
     poly_due_next_7d: number;
@@ -546,6 +644,10 @@ export function readOperationalEvidenceHistory(
     polySettledTrades: row.poly_settled_trades,
     polyTargetSettledTrades: row.poly_target_settled_trades,
     polyRealizedPnlUsd: row.poly_realized_pnl_usd,
+    polyUnrealizedPnlUsd: row.poly_unrealized_pnl_usd,
+    polyTotalPnlUsd: row.poly_total_pnl_usd,
+    polyPaperEquityUsd: row.poly_paper_equity_usd,
+    polyApprovalRate24h: row.poly_approval_rate_24h,
     polyOpenTrades: row.poly_open_trades,
     polyVoidedTrades: row.poly_voided_trades,
     polyDueNext7Days: row.poly_due_next_7d,
