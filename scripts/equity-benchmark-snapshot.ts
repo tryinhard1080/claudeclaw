@@ -18,6 +18,28 @@ interface RegimeState {
   updated_at?: string;
 }
 
+export interface BenchmarkSnapshotRow {
+  benchmark: string;
+  snapshotDate: string;
+  referencePrice: number;
+  equity: number;
+  dailyReturn: number | null;
+}
+
+export interface BenchmarkSnapshotResult {
+  written: BenchmarkSnapshotRow[];
+  skipped: string | null;
+  errors: string[];
+}
+
+export interface BenchmarkSnapshotOptions {
+  dbPath?: string;
+  benchmark?: string;
+  readStateJson?: () => unknown;
+  regimeTraderPath?: string;
+  logger?: (msg: string) => void;
+}
+
 interface PriorBenchmarkRow {
   snapshot_date: string;
   reference_price: number;
@@ -31,6 +53,11 @@ function regimeRoot(): string {
 
 function readState(): RegimeState {
   const statePath = path.join(regimeRoot(), 'instances', 'spy-aggressive', 'data', 'state.json');
+  return JSON.parse(fs.readFileSync(statePath, 'utf8')) as RegimeState;
+}
+
+function readStateFromRoot(root: string): RegimeState {
+  const statePath = path.join(root, 'instances', 'spy-aggressive', 'data', 'state.json');
   return JSON.parse(fs.readFileSync(statePath, 'utf8')) as RegimeState;
 }
 
@@ -66,12 +93,23 @@ function latestPrior(db: Database.Database, benchmark: string, snapshotDate: str
   };
 }
 
-export function main(): number {
-  const benchmark = 'spy-buy-hold';
-  const state = readState();
+export function runEquityBenchmarkSnapshot(options: BenchmarkSnapshotOptions = {}): BenchmarkSnapshotResult {
+  const benchmark = options.benchmark ?? 'spy-buy-hold';
+  const log = options.logger ?? ((msg: string) => process.stdout.write(`${msg}\n`));
+  const state = (options.readStateJson
+    ? options.readStateJson()
+    : readStateFromRoot(options.regimeTraderPath ?? regimeRoot())) as RegimeState;
   const snapshotDate = snapshotDateFromState(state);
-  const referencePrice = spyPriceFromState(state);
-  const db = new Database(path.join(STORE_DIR, 'claudeclaw.db'));
+  let referencePrice: number;
+  try {
+    referencePrice = spyPriceFromState(state);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    log(`equity-benchmark-snapshot: SKIP ${msg}`);
+    return { written: [], skipped: msg, errors: [] };
+  }
+
+  const db = new Database(options.dbPath ?? path.join(STORE_DIR, 'claudeclaw.db'));
   try {
     db.pragma('busy_timeout = 5000');
     const prior = latestPrior(db, benchmark, snapshotDate);
@@ -95,20 +133,39 @@ export function main(): number {
       'regime_state_current_price',
       Math.floor(Date.now() / 1000),
     );
-    console.log(`Benchmark snapshot ${benchmark} ${point.snapshotDate}: price=${point.referencePrice.toFixed(2)} equity=${point.equity.toFixed(2)}`);
-    return 0;
+    log(`Benchmark snapshot ${benchmark} ${point.snapshotDate}: price=${point.referencePrice.toFixed(2)} equity=${point.equity.toFixed(2)}`);
+    return {
+      written: [{
+        benchmark,
+        snapshotDate: point.snapshotDate,
+        referencePrice: point.referencePrice,
+        equity: point.equity,
+        dailyReturn: point.dailyReturn,
+      }],
+      skipped: null,
+      errors: [],
+    };
   } finally {
     db.close();
   }
 }
 
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
-if (invokedPath === fileURLToPath(import.meta.url)) {
+export function benchmarkSnapshotExitCode(result: BenchmarkSnapshotResult): 0 | 1 {
+  return result.errors.length > 0 ? 1 : 0;
+}
+
+export function main(): number {
   try {
-    process.exitCode = main();
+    return benchmarkSnapshotExitCode(runEquityBenchmarkSnapshot({
+      readStateJson: () => readState(),
+    }));
   } catch (error) {
     console.error('Equity benchmark snapshot failed:', error);
-    process.exitCode = 1;
+    return 1;
   }
 }
 
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (invokedPath === fileURLToPath(import.meta.url)) {
+  process.exitCode = main();
+}

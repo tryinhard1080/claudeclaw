@@ -8,7 +8,10 @@ ClaudeClaw is operational in paper mode for both configured markets:
 - Polymarket: scanner, signal engine, paper positions, TTL filter tracking, and
   news/source freshness are live. Market discovery depth is now tracked as a
   first-class readiness signal so the Gamma first-page cap cannot silently
-  starve candidates again.
+  starve candidates again. The news-sync RSS fallback now filters for
+  trading-relevant headlines before refreshing the source heartbeat, and
+  position-intersection alerts require at least one distinctive matched token
+  instead of generic words alone.
 - Dashboard: health endpoint is healthy and the Evidence Path card now includes
   mark-to-market Polymarket paper P&L. Malformed or rate-limited readiness API
   payloads now render as red unavailable state instead of a false green gate
@@ -34,16 +37,16 @@ Real money remains disabled. This is correct.
 - Polymarket Box 2: `0/50` settled trades, `20` open, `23` voided. The
   current open book can cover at most `20/50` potential settled trades, so at
   least `30` additional resolved trades are needed after the current book.
-- Market discovery: latest scan discovered `990/500` target markets, state
-  `healthy`, duration about `266ms`. `poly:paper:status` now includes a
+- Market discovery: latest scan discovered `991/500` target markets, state
+  `healthy`, duration about `383ms`. `poly:paper:status` now includes a
   `Market discovery depth` check that warns if discovery falls back near the old
   first-page cap.
 - Open-book quality: `14/20` open paper trades pass today's active
   paper-learning filters. The `6` exceptions are long-dated legacy positions
   opened before the 2026-06-01 active TTL/quality filter window.
-- Polymarket mark-to-market: `$8.69` total paper P&L, all unrealized, on
-  `$944.21` open exposure. Paper equity is `$5,008.69`.
-- Polymarket signal flow: `579` signals and `11` approvals in the last 24 hours,
+- Polymarket mark-to-market: `$2.91` total paper P&L, all unrealized, on
+  `$944.21` open exposure. Paper equity is `$5,002.91`.
+- Polymarket signal flow: `596` signals and `11` approvals in the last 24 hours,
   approval rate about `1.9%`.
 - Approved signal quality: latest live check shows `11` approvals in the last
   24 hours, `11/11` linked to paper trades, `9/11` with fresh source context,
@@ -58,12 +61,21 @@ Real money remains disabled. This is correct.
   due-30d queue runs through 2026-07-01.
 - Real-money gate audit: `3/7` boxes complete, `2` operator actions, `2`
   sample/time blockers, `0` system blockers, and live-money ready `NO`.
-- Equity live sync: `2/2` regime-trader state files fresh and open-full during
-  the active session, latest checked at roughly `3m` max state age. This proves
+- News source freshness: latest live smoke inserted RSS fallback row `#129`
+  with trading-relevant Treasury/Iran, oil/Hormuz, stock-market, and IPO
+  headlines. Final `npm run capacity:status` reported `news-sync` PASS at
+  `6m` old.
+  The scheduled task row is active for the next 2-hour run; its prior
+  `last_status=failed` remains historical until the scheduler fires again.
+- Equity live sync: `2/2` regime-trader state files fresh during the
+  after-hours closed state, latest checked at roughly `12m` max state age. This proves
   the live bridge is synced now; it does not close the daily Sharpe sample gate.
 - Equity benchmark evidence: both regime-trader instances currently outperform
   the `spy-buy-hold` benchmark on paper, with latest excess return around
-  `+0.79%` for `spy-aggressive` and `+0.80%` for `spy-conservative`.
+  `+0.79%` for `spy-aggressive` and `+0.80%` for `spy-conservative`. The
+  benchmark snapshot writer now exits cleanly with a skip when closed-market
+  regime state omits `positions[].current_price`; benchmark status continues to
+  use the latest stored rows.
 - TTL evidence: latest active candidate set `4/9` inside the 1-30 day TTL band.
 - Box 1 paper clock: `elapsed_review_ready`, `41/30` days since 2026-04-21,
   target 2026-05-21, A1 ACK present, MISSION checkbox still open.
@@ -108,6 +120,37 @@ Real money remains disabled. This is correct.
   discovery `990/500`; approved signal quality WARN at `9/11` fresh source
   context; `0` system blockers; live startup remains blocked by Boxes 1/2/3/7
   by design.
+- `npx vitest run src/poly/news-sync.test.ts src/poly/news-intersection.test.ts`
+  - 57/57 PASS after RSS trading-relevance filtering, hex/apos entity
+  decoding, and distinctive-token intersection gating.
+- `npx tsx scripts/news-sync.ts` - PASS; inserted `rss-fallback` row `#129`
+  with trading-relevant fallback headlines, no personal-finance headline in the
+  preview, and emitted only geopolitical open-position intersections.
+- `npm run source:freshness:refresh` - PASS after the live news-sync smoke.
+- `npm run capacity:status` - operational systems PASS; `news-sync` source
+  freshness PASS at `1m`; Financial Datasets MCP connected; Polymarket scans
+  fresh; `0` system blockers; live startup remains blocked by Boxes 1/2/3/7 by
+  design.
+- `npx vitest run scripts/equity-benchmark-snapshot.test.ts src/trading/equity-benchmark.test.ts`
+  - 6/6 PASS after adding the clean skip for closed-market regime states without
+  a SPY `current_price`.
+- `npm run trading:benchmark:snapshot` - PASS exit 0 with
+  `equity-benchmark-snapshot: SKIP SPY current_price missing from regime state`
+  because the current after-hours state lacks a mark price.
+- `npm test` - 76 files, 937 tests PASS after the news fallback quality and
+  benchmark snapshot skip fixes.
+- `npm run build` - PASS after the final changes.
+- `pm2 restart claudeclaw-main --update-env` - PASS; `claudeclaw-main` online
+  with PID `58836` after restart.
+- `Invoke-RestMethod -Uri http://127.0.0.1:3141/health` - healthy, database
+  `ok`, Telegram `connected`, agent `main`.
+- Final `npm run capacity:status` - operational systems PASS; Financial
+  Datasets MCP connected; Polymarket scans fresh at `0m`; market discovery
+  `991/500`; news-sync fresh at `6m`; `0` system blockers; live startup remains
+  blocked only by Boxes 1/2/3/7 by design.
+- Final `npm run readiness:evidence:record` - refreshed the 2026-06-01 snapshot
+  with P&L `$2.91`, discovery `991/500`, equity sync `2/2`, and regime
+  `8/60d`.
 - `npx vitest run src/readiness/gate-progress.test.ts` - 15/15 PASS after Box
   1 parser coverage.
 - `npx vitest run src/readiness/gate-progress.test.ts src/dashboard-html.test.ts`

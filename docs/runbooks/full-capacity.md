@@ -74,6 +74,10 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   failure state is red unavailable text.
 - `npm run trading:status` has no FAIL rows. A stopped regime-trader instance is acceptable only when the script reports `closed_until_next_open`, `opening_grace`, or `closed_stale_open_state` outside regular session.
 - `npm run trading:benchmark` reports a benchmark row for each regime-trader instance.
+  `npm run trading:benchmark:snapshot` may skip after market close when the
+  regime state lacks `positions[].current_price`; that is a clean skip, not a
+  readiness failure, as long as `npm run trading:benchmark` still reports the
+  latest stored benchmark rows.
 - `npm run gate:status` reports real-money gate progress and source freshness rows.
   Box 1 should show either `clock_running`, `elapsed_review_ready`, or
   `mission_checked`; `elapsed_review_ready` is evidence for review, not live
@@ -137,7 +141,10 @@ Full capacity does not mean real money. It means:
 ## Current Known WARNs
 
 - Financial Datasets MCP may be missing from the active tool list. This blocks some research context, not trading execution.
-- News sync source freshness may be stale until the Perplexity or equivalent news feed is re-authorized.
+- News sync source freshness may be stale until the Perplexity or equivalent
+  news feed is re-authorized. RSS fallback freshness is valid only when it
+  inserts trading-relevant headlines; filler personal-finance headlines should
+  not refresh the source or trigger position intersections.
 - Box 1 can be `elapsed_review_ready` after the 30-day paper clock target. It
   still stays a live-money blocker until the `MISSION.md` checkbox is closed.
 - Polymarket Box 2 remains structurally constrained until resolved trade count
@@ -158,6 +165,10 @@ Full capacity does not mean real money. It means:
   review.
 - Active Polymarket TTL filtering is enabled locally after Richard's 2026-06-01 approval. Keep the TTL shadow report running as the comparison and rollback evidence path.
 - Regime-trader Sharpe has only a small sample until the 60-day clock completes.
+- Equity benchmark snapshot can skip cleanly when the closed-market
+  regime-trader state does not include a current SPY price. Treat that as
+  after-hours source unavailability, not a trading failure, if
+  `npm run trading:benchmark` still reports stored comparison rows.
 
 ## Rollback
 

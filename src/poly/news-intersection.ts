@@ -7,9 +7,9 @@ import { logger } from '../logger.js';
  *
  * The matching rule is intentionally conservative: token-overlap on the
  * slug, with stopword/short-token filtering and a 2-distinct-token-hit
- * threshold to suppress noise. Slugs are descriptive sentences ("will-jd-
- * vance-win-the-2028..."), so distinctive tokens like "vance", "alphabet",
- * "hormuz" carry the signal.
+ * threshold plus at least one distinctive token to suppress noise. Slugs are
+ * descriptive sentences ("will-jd-vance-win-the-2028..."), so distinctive
+ * tokens like "vance", "alphabet", "hormuz" carry the signal.
  */
 
 const STOPWORDS = new Set([
@@ -25,6 +25,17 @@ const STOPWORDS = new Set([
 ]);
 
 const MIN_TOKEN_LEN = 4;
+
+const WEAK_INTERSECTION_TOKENS = new Set([
+  'company', 'companies', 'market', 'markets', 'largest', 'world', 'cap',
+  'january', 'february', 'march', 'april', 'june', 'july', 'august',
+  'september', 'october', 'november', 'december',
+  'normal', 'returns', 'traffic', 'peace', 'deal', 'permanent', 'temporary',
+]);
+
+function hasDistinctiveMatch(tokens: string[]): boolean {
+  return tokens.some(tok => !WEAK_INTERSECTION_TOKENS.has(tok));
+}
 
 /**
  * Idempotent table bootstrap. Called once on first runtime use so a
@@ -124,7 +135,7 @@ export function findIntersections(db: Database.Database, opts: FindOpts): Inters
       const tokens = tokenizeSlug(t.market_slug);
       if (tokens.length < minMatches) continue;
       const matched = tokens.filter(tok => wholeWordMatch(tok, summaryLc));
-      if (matched.length >= minMatches) {
+      if (matched.length >= minMatches && hasDistinctiveMatch(matched)) {
         out.push({
           news_item_id: n.id,
           paper_trade_id: t.id,

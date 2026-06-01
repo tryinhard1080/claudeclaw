@@ -79,6 +79,13 @@ export function isRefusalResponse(text: string): boolean {
   return patterns.some((p) => lower.includes(p));
 }
 
+function decodeNumericEntity(raw: string, code: string, radix: number): string {
+  const n = Number.parseInt(code, radix);
+  return Number.isFinite(n) && n >= 0 && n <= 0x10ffff
+    ? String.fromCodePoint(n)
+    : raw;
+}
+
 function decodeXmlEntities(value: string): string {
   return value
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
@@ -86,8 +93,10 @@ function decodeXmlEntities(value: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
     .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_m, code: string) => String.fromCharCode(Number(code)));
+    .replace(/&#x([0-9a-f]+);/gi, (raw, code: string) => decodeNumericEntity(raw, code, 16))
+    .replace(/&#(\d+);/g, (raw, code: string) => decodeNumericEntity(raw, code, 10));
 }
 
 function stripTags(value: string): string {
@@ -128,6 +137,59 @@ const RSS_FALLBACK_FEEDS = [
   { source: 'Yahoo Finance SPY', url: 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY&region=US&lang=en-US' },
 ] as const;
 
+const TRADING_RELEVANCE_PATTERNS = [
+  /\bfed\b/, /\bfomc\b/, /\bpowell\b/, /\brates?\b/, /\binflation\b/,
+  /\bcpi\b/, /\bpce\b/, /\bjobs report\b/, /\bpayrolls?\b/,
+  /\btreasur(?:y|ies)\b/, /\byields?\b/,
+  /\bstocks?\b/, /\bstock market\b/, /\bwall street\b/,
+  /\bmarket(?:s)?\s+(?:rall(?:y|ies)|rise|fall|drop|slump|sell|gain|slide)/,
+  /\bfutures\b/, /\bs&p\b/, /\bspx\b/, /\bspy\b/, /\bnasdaq\b/, /\bdow\b/,
+  /\bearnings?\b/, /\boil\b/, /\bopec\b/,
+  /\btariffs?\b/, /\bsanctions?\b/, /\bsec\b/, /\bregulat(?:ion|or|ory)\b/,
+  /\bcrypto\b/, /\bbitcoin\b/, /\bethereum\b/,
+  /\belection\b/, /\bcongress\b/, /\bsupreme court\b/,
+  /\btrump\b/, /\bbiden\b/,
+  /\biran\b/, /\bisrael\b/, /\bhezbollah\b/, /\bhormuz\b/,
+  /\brussia\b/, /\bukraine\b/, /\bchina\b/, /\btaiwan\b/,
+  /\bnvidia\b/, /\balphabet\b/, /\bgoogle\b/, /\bapple\b/,
+  /\bmicrosoft\b/, /\btesla\b/, /\bmeta\b/, /\bamazon\b/,
+];
+
+const PERSONAL_FINANCE_NOISE_PATTERNS = [
+  /\bi(?:'|’)?m\b/, /\bi am\b/,
+  /\bmy\s+(?:husband|wife|spouse|partner|kids?|parents?|family)\b/,
+  /\blong-term care\b/, /\bsocial security\b/, /\bmedicare\b/,
+  /\bestate planning\b/, /\bretire(?:d|ment)?\b/, /\b401\(k\)\b/,
+  /\bmortgage\b/, /\bcredit cards?\b/, /\bstudent loans?\b/,
+  /\bhome buyer\b/, /\badvice\b/,
+];
+
+const PERSONAL_FINANCE_STRONG_OVERRIDE_PATTERNS = [
+  /\bfed\b/, /\bfomc\b/, /\bstocks?\b/, /\bstock market\b/,
+  /\bs&p\b/, /\bspx\b/, /\bspy\b/, /\bnasdaq\b/, /\bdow\b/,
+  /\bfutures\b/, /\binflation\b/, /\bcpi\b/, /\bpce\b/,
+  /\btariffs?\b/, /\bsanctions?\b/, /\boil\b/, /\bcrypto\b/,
+  /\bbitcoin\b/, /\bearnings?\b/,
+];
+
+export function isTradingRelevantRssItem(item: RssNewsItem): boolean {
+  const haystack = `${item.title} ${item.description}`.toLowerCase();
+  const hasTradingSignal = TRADING_RELEVANCE_PATTERNS.some(pattern => pattern.test(haystack));
+  if (!hasTradingSignal) return false;
+
+  const looksLikePersonalFinance = PERSONAL_FINANCE_NOISE_PATTERNS.some(pattern => pattern.test(haystack));
+  if (!looksLikePersonalFinance) return true;
+
+  return PERSONAL_FINANCE_STRONG_OVERRIDE_PATTERNS.some(pattern => pattern.test(haystack));
+}
+
+export function selectTradingRelevantRssItems(items: RssNewsItem[], limit = 12): RssNewsItem[] {
+  return [...items]
+    .filter(isTradingRelevantRssItem)
+    .sort((a, b) => (b.pubDate ?? 0) - (a.pubDate ?? 0))
+    .slice(0, limit);
+}
+
 async function fetchTextWithTimeout(url: string, timeoutMs = 15_000): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -141,10 +203,8 @@ async function fetchTextWithTimeout(url: string, timeoutMs = 15_000): Promise<st
 }
 
 export function formatRssFallbackSummary(items: RssNewsItem[], nowSec: number = Math.floor(Date.now() / 1000)): string {
-  const latest = [...items]
-    .sort((a, b) => (b.pubDate ?? 0) - (a.pubDate ?? 0))
-    .slice(0, 12);
-  if (latest.length === 0) throw new Error('RSS fallback found no items');
+  const latest = selectTradingRelevantRssItems(items);
+  if (latest.length === 0) throw new Error('RSS fallback found no trading-relevant items');
 
   return [
     'RSS fallback latest available headlines:',
@@ -168,8 +228,9 @@ export const rssFallbackFetcher: PerplexityFetcher = async () => {
       ? parseRssItems(result.value.xml, result.value.feed.source)
       : []
   ));
-  const summary = formatRssFallbackSummary(items);
-  const citations = [...new Set(items.map(item => item.link).filter(Boolean))].slice(0, 12);
+  const selected = selectTradingRelevantRssItems(items);
+  const summary = formatRssFallbackSummary(selected);
+  const citations = [...new Set(selected.map(item => item.link).filter(Boolean))].slice(0, 12);
   return {
     model: 'rss-fallback',
     choices: [{ message: { role: 'assistant', content: summary }, finish_reason: 'stop' }],

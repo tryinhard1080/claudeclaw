@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import {
   hashPrompt, extractSummary, isRefusalResponse, insertNewsItem, writeHeartbeat, readHeartbeat,
   runNewsSync, NEWS_SYNC_PROMPT, makePwmCliFetcher, parseRssItems, formatRssFallbackSummary,
+  isTradingRelevantRssItem, selectTradingRelevantRssItems,
   type PerplexityResponse, type PerplexityFetcher, type PwmRunner,
 } from './news-sync.js';
 
@@ -96,6 +97,52 @@ describe('RSS fallback helpers', () => {
     expect(items[0]!.title).toBe('Fed keeps rates steady & stocks rise');
     expect(items[0]!.source).toBe('Example');
     expect(items[0]!.pubDate).toBe(Math.floor(Date.parse('2026-06-01T13:30:00.000Z') / 1000));
+  });
+
+  it('decodes hex numeric XML entities', () => {
+    const items = parseRssItems(`
+      <rss><channel><item>
+        <title>Fed&#x2019;s Powell &apos;waits&apos; as stocks rise</title>
+        <link>https://example.com/fed-hex</link>
+      </item></channel></rss>
+    `, 'Example');
+
+    expect(items[0]!.title).toBe("Fed\u2019s Powell 'waits' as stocks rise");
+  });
+
+  it('filters RSS fallback to trading-relevant headlines', () => {
+    const personal = {
+      title: "I'm 55, married and want a long-term care policy",
+      link: 'https://example.com/personal',
+      source: 'MarketWatch',
+      pubDate: 1_800_000_100,
+      description: 'Advice-column personal finance question.',
+    };
+    const macro = {
+      title: 'Fed keeps rates steady as stocks rise',
+      link: 'https://example.com/fed',
+      source: 'CNBC',
+      pubDate: 1_800_000_000,
+      description: 'Policy-sensitive stocks moved.',
+    };
+
+    expect(isTradingRelevantRssItem(personal)).toBe(false);
+    expect(isTradingRelevantRssItem(macro)).toBe(true);
+    expect(selectTradingRelevantRssItems([personal, macro])).toEqual([macro]);
+
+    const summary = formatRssFallbackSummary([personal, macro], 1_800_003_600);
+    expect(summary).toContain('Fed keeps rates steady');
+    expect(summary).not.toContain('long-term care');
+  });
+
+  it('fails the RSS fallback when no trading-relevant items are present', () => {
+    expect(() => formatRssFallbackSummary([{
+      title: 'Personal budget advice for retirement',
+      link: 'https://example.com/advice',
+      source: 'Example',
+      pubDate: 1,
+      description: 'Household finance only.',
+    }])).toThrow(/trading-relevant/);
   });
 
   it('formats RSS fallback without claiming model-sourced live search', () => {

@@ -136,6 +136,22 @@ describe('findIntersections', () => {
     expect(matches).toEqual([]);
   });
 
+  it('suppresses matches made only of weak generic tokens', () => {
+    insertNews(db, 'A company executive says market conditions are mixed.');
+    insertTrade(db, 'will-alphabet-be-the-largest-company-in-the-world-by-market-cap-on-june-30');
+    const matches = findIntersections(db, { sinceSec: 0 });
+    expect(matches).toEqual([]);
+  });
+
+  it('allows generic tokens when a distinctive market token also matches', () => {
+    insertNews(db, 'Alphabet gains in market value after earnings.');
+    const tradeId = insertTrade(db, 'will-alphabet-be-the-largest-company-in-the-world-by-market-cap-on-june-30');
+    const matches = findIntersections(db, { sinceSec: 0 });
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.paper_trade_id).toBe(tradeId);
+    expect(matches[0]!.matched_tokens).toEqual(expect.arrayContaining(['alphabet', 'market']));
+  });
+
   it('matches whole words only (iran does not match iranian)', () => {
     insertNews(db, 'Iranian foreign ministry comments reference uranium enrichment programs.');
     insertTrade(db, 'will-iran-strike-saudi-arabia');
