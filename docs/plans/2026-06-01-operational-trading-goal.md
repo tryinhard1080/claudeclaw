@@ -69,4 +69,4 @@ Final report:
 |---|---|---|
 | 2026-06-01 12:00 CT | Active TTL and market-quality filters verified in PM2 logs. Latest scans captured 4 active candidates from 9 shadow candidates. | Make stale gate evidence machine-readable. |
 | 2026-06-01 12:05 CT | Box 5 review ledger and Box 6 kill-switch evidence moved from manual WARN to machine-checked status. | Re-run full capacity status and commit. |
-
+| 2026-06-01 12:15 CT | Added an enhanced-loop evidence target: prove Polymarket settlement pipeline, signal flow, TTL filter freshness, and regime Sharpe sample depth in one CLI/dashboard surface. | Verify `npm run readiness:evidence`, tests, build, dashboard API, then commit. |

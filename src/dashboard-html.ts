@@ -316,6 +316,20 @@ export function getDashboardHtml(token: string, chatId: string): string {
   </div>
 
   <div class="card">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evidence Path</h3>
+      <span id="evidence-status" class="pill">-</span>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+      <div class="compact-stat"><div class="stat-val" id="evidence-poly-settled">-</div><div class="stat-label">Poly settled</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-poly-due">-</div><div class="stat-label">Due 30d</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-regime-days">-</div><div class="stat-label">Regime days</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-ttl-pass">-</div><div class="stat-label">TTL pass</div></div>
+    </div>
+    <div id="evidence-detail" class="text-xs text-gray-500 border-t border-gray-800 pt-2">Loading...</div>
+  </div>
+
+  <div class="card">
     <div class="flex items-center justify-between mb-2">
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Open positions</h3>
       <span id="poly-unrealized-agg" class="text-xs text-gray-500">-</span>
@@ -2125,6 +2139,55 @@ function setOpsText(id, check) {
   el.textContent = opsText(check);
   el.style.color = opsColor(check && check.status);
 }
+function statusBg(status) {
+  return status === 'pass' ? '#064e3b' : (status === 'warn' ? '#422006' : '#3b0f0f');
+}
+function renderEvidencePath(evidence) {
+  if (!evidence) return;
+  const status = evidence.status || 'fail';
+  const statusEl = document.getElementById('evidence-status');
+  if (statusEl) {
+    statusEl.textContent = status.toUpperCase();
+    statusEl.style.background = statusBg(status);
+    statusEl.style.color = opsColor(status);
+  }
+
+  const poly = evidence.polymarket || {};
+  const regime = evidence.regimeSharpe || {};
+  const ttl = evidence.ttlFilter || {};
+
+  const settledEl = document.getElementById('evidence-poly-settled');
+  if (settledEl) settledEl.textContent = (poly.settledTrades ?? 0) + '/' + (poly.targetSettledTrades ?? 50);
+
+  const dueEl = document.getElementById('evidence-poly-due');
+  if (dueEl) dueEl.textContent = (poly.dueNext30Days ?? 0) + '/' + (poly.openTrades ?? 0);
+
+  const regimeEl = document.getElementById('evidence-regime-days');
+  if (regimeEl) regimeEl.textContent = (regime.minDays ?? 0) + '/' + (regime.targetDays ?? 60);
+
+  const ttlEl = document.getElementById('evidence-ttl-pass');
+  if (ttlEl) ttlEl.textContent = ttl.passRate === null || ttl.passRate === undefined ? '-' : fmtPct(ttl.passRate, 0);
+
+  const detailEl = document.getElementById('evidence-detail');
+  if (detailEl) {
+    const nearest = poly.nearestOpenEndAt
+      ? new Date(poly.nearestOpenEndAt * 1000).toLocaleDateString()
+      : '-';
+    const ttlAge = ttl.ageSec === null || ttl.ageSec === undefined ? '-' : fmtAgo(ttl.ageSec);
+    const incomplete = (evidence.metrics || [])
+      .filter(m => m.status !== 'pass')
+      .map(m => m.name + ': ' + m.state)
+      .join(' / ');
+    detailEl.textContent =
+      'signals 24h ' + (poly.signals24h ?? 0) +
+      ' / approved ' + (poly.approvedSignals24h ?? 0) +
+      ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
+      ' / nearest end ' + nearest +
+      ' / ttl tick ' + ttlAge +
+      (incomplete ? ' / tracking ' + incomplete : '');
+    detailEl.style.color = status === 'fail' ? '#f87171' : '#9ca3af';
+  }
+}
 async function loadEquity() {
   try {
     const payload = await api('/api/equity/overview');
@@ -2313,7 +2376,11 @@ async function loadTradingOps() {
 }
 async function loadLiveReadiness() {
   try {
-    const payload = await api('/api/readiness/live');
+    const [payload, evidence] = await Promise.all([
+      api('/api/readiness/live'),
+      api('/api/readiness/evidence'),
+    ]);
+    renderEvidencePath(evidence);
     const status = payload.liveStartup && payload.liveStartup.status ? payload.liveStartup.status : 'fail';
     const statusEl = document.getElementById('live-readiness-status');
     if (statusEl) {

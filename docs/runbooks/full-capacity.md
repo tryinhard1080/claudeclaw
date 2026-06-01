@@ -25,6 +25,7 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
    npm run agent:surface:check
    npm run source:freshness:refresh
    npm run trading:benchmark:snapshot
+   npm run readiness:evidence
    npm run capacity:status
    ```
 
@@ -67,6 +68,7 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
 - `npm run trading:status` has no FAIL rows. A stopped regime-trader instance is acceptable only when the script reports `closed_until_next_open`, `opening_grace`, or `closed_stale_open_state` outside regular session.
 - `npm run trading:benchmark` reports a benchmark row for each regime-trader instance.
 - `npm run gate:status` reports real-money gate progress and source freshness rows.
+- `npm run readiness:evidence` reports Polymarket settlement progress, near-term resolution pipeline, TTL filter evidence, and regime Sharpe sample depth.
 - `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled.
 - `npm run typecheck` passes after edits.
 - `npm test` passes after code or config changes that can affect behavior.
@@ -86,7 +88,7 @@ Full capacity does not mean real money. It means:
 
 - Financial Datasets MCP may be missing from the active tool list. This blocks some research context, not trading execution.
 - News sync source freshness may be stale until the Perplexity or equivalent news feed is re-authorized.
-- Polymarket Box 2 remains structurally constrained until resolved trade count improves.
+- Polymarket Box 2 remains structurally constrained until resolved trade count improves. Use `npm run readiness:evidence` and the dashboard Evidence Path card to track due open positions and signal flow.
 - Active Polymarket TTL filtering is enabled locally after Richard's 2026-06-01 approval. Keep the TTL shadow report running as the comparison and rollback evidence path.
 - Regime-trader Sharpe has only a small sample until the 60-day clock completes.
 
