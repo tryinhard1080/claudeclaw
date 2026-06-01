@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   collectGateProgress,
+  summarizePaperClockGate,
   summarizeKillSwitchRollbackGate,
   summarizeHaltGate,
   summarizePolymarketResolvedGate,
@@ -21,6 +22,40 @@ function db(): Database.Database {
 }
 
 describe('gate progress', () => {
+  it('surfaces paper-clock evidence when elapsed days are ready for mission review', () => {
+    const check = summarizePaperClockGate(`
+- [ ] 30+ consecutive days of paper trading without manual intervention.
+      (2026-05-11) Day 20/30 on clock that started 2026-04-21. Target 2026-05-21.
+- _2026-05-12_ - **A1 ACK: Gate-clock reading PERMISSIVE.** Operator-directed sprint deploys do NOT reset the Box-1 clock.
+    `, Math.floor(Date.UTC(2026, 5, 1) / 1000));
+
+    expect(check.status).toBe('warn');
+    expect(check.state).toBe('elapsed_review_ready');
+    expect(check.current).toBe(41);
+    expect(check.target).toBe(30);
+    expect(check.detail).toContain('MISSION checkbox still open');
+  });
+
+  it('passes the paper-clock gate only when MISSION marks the checkbox complete', () => {
+    const check = summarizePaperClockGate(`
+- [x] 30+ consecutive days of paper trading without manual intervention.
+      (2026-05-21) Complete.
+    `);
+
+    expect(check.status).toBe('pass');
+    expect(check.state).toBe('mission_checked');
+  });
+
+  it('keeps the paper-clock gate in review when the start date is not readable', () => {
+    const check = summarizePaperClockGate(`
+- [ ] 30+ consecutive days of paper trading without manual intervention.
+- _2026-05-12_ - **A1 ACK: Gate-clock reading PERMISSIVE.**
+    `);
+
+    expect(check.status).toBe('warn');
+    expect(check.state).toBe('mission_review_required');
+  });
+
   it('counts only won/lost Polymarket trades toward the resolved gate', () => {
     const mem = db();
     mem.exec(`

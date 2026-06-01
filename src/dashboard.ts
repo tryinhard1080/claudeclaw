@@ -138,9 +138,11 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  // Rate limiting (in-memory token bucket, 60 req/min per IP)
+  // Rate limiting (in-memory token bucket). The dashboard does bursty readonly
+  // refreshes across many cards, so keep this above the normal UI polling rate.
   const rateBuckets = new Map<string, { tokens: number; lastRefill: number }>();
-  const RATE_LIMIT = 60;
+  const parsedRateLimit = Number.parseInt(process.env.DASHBOARD_RATE_LIMIT_PER_MIN ?? '240', 10);
+  const RATE_LIMIT = Number.isFinite(parsedRateLimit) && parsedRateLimit > 0 ? parsedRateLimit : 240;
   const RATE_WINDOW_MS = 60_000;
   app.use('/api/*', async (c, next) => {
     const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';

@@ -21,10 +21,14 @@ interface SharpeGateRow {
   created_at: number;
 }
 
+const PAPER_CLOCK_TARGET_DAYS = 30;
+const DAY_SEC = 24 * 60 * 60;
+
 export interface GateProgressOptions {
   projectRoot?: string;
   reviewFindingsText?: string | null;
   missionText?: string | null;
+  nowSec?: number;
 }
 
 function tableExists(db: Database.Database, name: string): boolean {
@@ -51,6 +55,117 @@ function readProjectText(projectRoot: string, relativePath: string): string | nu
   } catch {
     return null;
   }
+}
+
+function parseUtcDate(dateText: string): number | null {
+  const match = dateText.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  return Math.floor(Date.UTC(year, month - 1, day) / 1000);
+}
+
+function formatUtcDate(epochSec: number): string {
+  return new Date(epochSec * 1000).toISOString().slice(0, 10);
+}
+
+function findPaperClockStartDate(missionText: string): string | null {
+  const startedMatch = missionText.match(/clock that started\s+(\d{4}-\d{2}-\d{2})/i);
+  if (startedMatch?.[1]) return startedMatch[1];
+
+  for (const line of missionText.split(/\r?\n/)) {
+    if (!/30-day gate-box-1 clock restarts today/i.test(line)) continue;
+    const lineDate = line.match(/^\s*-\s*_?(\d{4}-\d{2}-\d{2})_?/);
+    if (lineDate?.[1]) return lineDate[1];
+  }
+
+  return null;
+}
+
+export function summarizePaperClockGate(
+  missionText: string | null | undefined,
+  nowSec = Math.floor(Date.now() / 1000),
+): GateProgressCheck {
+  if (!missionText) {
+    return {
+      box: 1,
+      name: '30-day paper clock',
+      status: 'warn',
+      state: 'mission_review_required',
+      detail: 'MISSION.md not readable',
+      target: PAPER_CLOCK_TARGET_DAYS,
+    };
+  }
+
+  const missionChecked = Boolean(
+    missionText.match(/-\s*\[x\]\s+30\+\s+consecutive days of paper trading without manual intervention/i),
+  );
+  const permissiveAck = Boolean(missionText.match(/A1 ACK:\s*Gate-clock reading PERMISSIVE/i));
+  const startDate = findPaperClockStartDate(missionText);
+  const startSec = startDate ? parseUtcDate(startDate) : null;
+
+  if (missionChecked) {
+    return {
+      box: 1,
+      name: '30-day paper clock',
+      status: 'pass',
+      state: 'mission_checked',
+      detail: 'MISSION.md marks 30+ consecutive paper-trading days complete',
+      current: startSec === null ? undefined : Math.max(0, Math.floor((nowSec - startSec) / DAY_SEC)),
+      target: PAPER_CLOCK_TARGET_DAYS,
+    };
+  }
+
+  if (startSec === null) {
+    return {
+      box: 1,
+      name: '30-day paper clock',
+      status: 'warn',
+      state: 'mission_review_required',
+      detail: 'MISSION.md does not expose a machine-readable Box 1 clock start',
+      target: PAPER_CLOCK_TARGET_DAYS,
+    };
+  }
+
+  const elapsedDays = Math.max(0, Math.floor((nowSec - startSec) / DAY_SEC));
+  const targetDate = formatUtcDate(startSec + PAPER_CLOCK_TARGET_DAYS * DAY_SEC);
+
+  if (!permissiveAck) {
+    return {
+      box: 1,
+      name: '30-day paper clock',
+      status: 'warn',
+      state: 'mission_review_required',
+      detail: `elapsed ${elapsedDays}/${PAPER_CLOCK_TARGET_DAYS} days since ${startDate}; missing A1 permissive restart ACK`,
+      current: elapsedDays,
+      target: PAPER_CLOCK_TARGET_DAYS,
+    };
+  }
+
+  if (elapsedDays >= PAPER_CLOCK_TARGET_DAYS) {
+    return {
+      box: 1,
+      name: '30-day paper clock',
+      status: 'warn',
+      state: 'elapsed_review_ready',
+      detail: `elapsed ${elapsedDays}/${PAPER_CLOCK_TARGET_DAYS} days since ${startDate}; target ${targetDate}; A1 ACK present; MISSION checkbox still open`,
+      current: elapsedDays,
+      target: PAPER_CLOCK_TARGET_DAYS,
+    };
+  }
+
+  return {
+    box: 1,
+    name: '30-day paper clock',
+    status: 'warn',
+    state: 'clock_running',
+    detail: `elapsed ${elapsedDays}/${PAPER_CLOCK_TARGET_DAYS} days since ${startDate}; target ${targetDate}; A1 ACK present`,
+    current: elapsedDays,
+    target: PAPER_CLOCK_TARGET_DAYS,
+  };
 }
 
 export function summarizePolymarketResolvedGate(db: Database.Database): GateProgressCheck {
@@ -204,14 +319,7 @@ export function collectGateProgress(db: Database.Database, options: GateProgress
     : readProjectText(projectRoot, 'MISSION.md');
 
   return [
-    {
-      box: 1,
-      name: '30-day paper clock',
-      status: 'warn',
-      state: 'mission_review_required',
-      detail: 'read MISSION.md sign-off log for operator-directed restart classification',
-      target: 30,
-    },
+    summarizePaperClockGate(missionText, options.nowSec),
     summarizePolymarketResolvedGate(db),
     summarizeRegimeSharpeGate(db),
     summarizeHaltGate(db),

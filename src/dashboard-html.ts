@@ -2400,7 +2400,14 @@ async function loadLiveReadiness() {
       api('/api/readiness/live'),
       api('/api/readiness/evidence'),
     ]);
-    renderEvidencePath(evidence);
+    if (!payload || payload.error || !Array.isArray(payload.gates) || payload.gates.length === 0 ||
+        !payload.liveStartup || !Array.isArray(payload.liveStartup.checks) ||
+        !Array.isArray(payload.sources)) {
+      throw new Error(payload && payload.error ? payload.error : 'invalid readiness live payload');
+    }
+    if (evidence && !evidence.error) {
+      renderEvidencePath(evidence);
+    }
     const status = payload.liveStartup && payload.liveStartup.status ? payload.liveStartup.status : 'fail';
     const statusEl = document.getElementById('live-readiness-status');
     if (statusEl) {
@@ -2453,10 +2460,24 @@ async function loadLiveReadiness() {
     }
   } catch (err) {
     console.error('loadLiveReadiness failed', err);
+    const statusEl = document.getElementById('live-readiness-status');
+    if (statusEl) {
+      statusEl.textContent = 'FAIL';
+      statusEl.style.background = '#3b0f0f';
+      statusEl.style.color = '#f87171';
+    }
     const detailEl = document.getElementById('live-readiness-detail');
     if (detailEl) {
       detailEl.textContent = 'Live readiness unavailable';
       detailEl.style.color = '#f87171';
+    }
+    const gateEl = document.getElementById('live-gates-list');
+    if (gateEl) {
+      gateEl.innerHTML = '<div style="color:#f87171">Gate data unavailable</div>';
+    }
+    const sourceEl = document.getElementById('live-sources-list');
+    if (sourceEl) {
+      sourceEl.innerHTML = '<div style="color:#f87171">Source freshness unavailable</div>';
     }
   }
 }

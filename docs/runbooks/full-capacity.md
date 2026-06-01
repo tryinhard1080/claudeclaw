@@ -68,9 +68,15 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
 
 - `claudeclaw-main` is online in PM2 with unstable restarts at `0`.
 - Dashboard `/health` returns `status=healthy`, `database=ok`, and `telegram=connected`.
+- Dashboard readiness cards must not show `All gate boxes pass` when
+  `/api/readiness/live` is unavailable, malformed, or rate-limited; the correct
+  failure state is red unavailable text.
 - `npm run trading:status` has no FAIL rows. A stopped regime-trader instance is acceptable only when the script reports `closed_until_next_open`, `opening_grace`, or `closed_stale_open_state` outside regular session.
 - `npm run trading:benchmark` reports a benchmark row for each regime-trader instance.
 - `npm run gate:status` reports real-money gate progress and source freshness rows.
+  Box 1 should show either `clock_running`, `elapsed_review_ready`, or
+  `mission_checked`; `elapsed_review_ready` is evidence for review, not live
+  authorization.
 - `npm run readiness:evidence` reports Polymarket settlement progress, mark-to-market paper P&L, near-term resolution pipeline, TTL filter evidence, and regime Sharpe sample depth.
 - `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
 - `npm run readiness:evidence:cron` reports `already registered` or creates one active daily shell task for `scripts/readiness-evidence.ts --record --history 14`.
@@ -93,6 +99,8 @@ Full capacity does not mean real money. It means:
 
 - Financial Datasets MCP may be missing from the active tool list. This blocks some research context, not trading execution.
 - News sync source freshness may be stale until the Perplexity or equivalent news feed is re-authorized.
+- Box 1 can be `elapsed_review_ready` after the 30-day paper clock target. It
+  still stays a live-money blocker until the `MISSION.md` checkbox is closed.
 - Polymarket Box 2 remains structurally constrained until resolved trade count improves. Use `npm run readiness:evidence` and the dashboard Evidence Path card to track due open positions and signal flow.
 - Active Polymarket TTL filtering is enabled locally after Richard's 2026-06-01 approval. Keep the TTL shadow report running as the comparison and rollback evidence path.
 - Regime-trader Sharpe has only a small sample until the 60-day clock completes.
