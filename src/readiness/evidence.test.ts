@@ -76,6 +76,25 @@ describe('operational evidence', () => {
     expect(evidence.overdueOpenTrades).toBe(1);
     expect(evidence.approvedSignals24h).toBe(1);
     expect(evidence.approvalRate24h).toBe(0.5);
+    expect(evidence.resolutionQueue.map(row => row.marketSlug)).toEqual([
+      'open-overdue',
+      'open-soon',
+      'open-month',
+    ]);
+    expect(evidence.resolutionQueue[0]).toMatchObject({
+      tradeId: 5,
+      state: 'overdue',
+      sizeUsd: 10,
+      unrealizedPnlUsd: 1,
+    });
+    expect(evidence.resolutionQueue[1]).toMatchObject({
+      state: 'due_7d',
+      openPnlPct: 5 / 25,
+    });
+    expect(evidence.resolutionQueue[2]).toMatchObject({
+      state: 'due_30d',
+      daysToEnd: 20,
+    });
     mem.close();
   });
 

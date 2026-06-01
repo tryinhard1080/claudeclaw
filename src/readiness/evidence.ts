@@ -39,6 +39,27 @@ export interface PolymarketEvidence {
   latestApprovedSignalAt: number | null;
   progressPct: number;
   hasMarketMaturityData: boolean;
+  resolutionQueue: PolymarketResolutionQueueItem[];
+}
+
+export type PolymarketResolutionQueueState = 'overdue' | 'due_7d' | 'due_30d' | 'later' | 'unknown';
+
+export interface PolymarketResolutionQueueItem {
+  tradeId: number;
+  marketSlug: string;
+  question: string | null;
+  outcomeLabel: string | null;
+  openedAt: number;
+  entryPrice: number | null;
+  sizeUsd: number;
+  shares: number | null;
+  unrealizedPnlUsd: number;
+  openPnlPct: number | null;
+  endAt: number | null;
+  daysToEnd: number | null;
+  state: PolymarketResolutionQueueState;
+  volume24h: number | null;
+  liquidity: number | null;
 }
 
 export interface RegimeSharpeInstanceEvidence {
@@ -180,6 +201,106 @@ function normalizeEpochSec(value: number): number {
   return value > 10_000_000_000 ? Math.floor(value / 1000) : value;
 }
 
+function optionalColumn(
+  alias: string,
+  columns: Set<string>,
+  column: string,
+  fallback: string,
+  asName: string,
+): string {
+  return `${columns.has(column) ? `${alias}.${column}` : fallback} AS ${asName}`;
+}
+
+function queueState(endAt: number | null, nowSec: number): PolymarketResolutionQueueState {
+  if (!endAt || endAt <= 0) return 'unknown';
+  if (endAt <= nowSec) return 'overdue';
+  if (endAt <= nowSec + 7 * DAY_SEC) return 'due_7d';
+  if (endAt <= nowSec + 30 * DAY_SEC) return 'due_30d';
+  return 'later';
+}
+
+function collectResolutionQueue(
+  db: Database.Database,
+  nowSec: number,
+  hasTrades: boolean,
+  hasMarkets: boolean,
+  hasPositions: boolean,
+): PolymarketResolutionQueueItem[] {
+  if (!hasTrades) return [];
+
+  const tradeCols = tableColumns(db, 'poly_paper_trades');
+  const marketCols = hasMarkets ? tableColumns(db, 'poly_markets') : new Set<string>();
+  const positionCols = hasPositions ? tableColumns(db, 'poly_positions') : new Set<string>();
+  const marketJoin = hasMarkets
+    ? 'LEFT JOIN poly_markets m ON m.slug = t.market_slug'
+    : '';
+  const positionJoin = hasPositions
+    ? 'LEFT JOIN poly_positions p ON p.paper_trade_id = t.rowid'
+    : '';
+  const endExpr = hasMarkets && marketCols.has('end_date') ? 'm.end_date' : 'NULL';
+
+  const rows = db.prepare(`
+    SELECT
+      t.rowid AS trade_id,
+      t.created_at AS opened_at,
+      t.market_slug AS market_slug,
+      ${optionalColumn('t', tradeCols, 'outcome_label', 'NULL', 'outcome_label')},
+      ${optionalColumn('t', tradeCols, 'entry_price', 'NULL', 'entry_price')},
+      COALESCE(t.size_usd, 0) AS size_usd,
+      ${optionalColumn('t', tradeCols, 'shares', 'NULL', 'shares')},
+      ${optionalColumn('p', positionCols, 'unrealized_pnl', '0', 'unrealized_pnl')},
+      ${endExpr} AS end_at,
+      ${optionalColumn('m', marketCols, 'question', 'NULL', 'question')},
+      ${optionalColumn('m', marketCols, 'volume_24h', 'NULL', 'volume_24h')},
+      ${optionalColumn('m', marketCols, 'liquidity', 'NULL', 'liquidity')}
+    FROM poly_paper_trades t
+    ${marketJoin}
+    ${positionJoin}
+    WHERE t.status='open'
+    ORDER BY
+      CASE WHEN ${endExpr} IS NULL OR ${endExpr} <= 0 THEN 1 ELSE 0 END ASC,
+      ${endExpr} ASC,
+      t.created_at ASC
+    LIMIT 10
+  `).all() as Array<{
+    trade_id: number;
+    opened_at: number;
+    market_slug: string;
+    outcome_label: string | null;
+    entry_price: number | null;
+    size_usd: number | null;
+    shares: number | null;
+    unrealized_pnl: number | null;
+    end_at: number | null;
+    question: string | null;
+    volume_24h: number | null;
+    liquidity: number | null;
+  }>;
+
+  return rows.map(row => {
+    const endAt = row.end_at && row.end_at > 0 ? row.end_at : null;
+    const sizeUsd = row.size_usd ?? 0;
+    const unrealizedPnlUsd = row.unrealized_pnl ?? 0;
+    return {
+      tradeId: row.trade_id,
+      marketSlug: row.market_slug,
+      question: row.question,
+      outcomeLabel: row.outcome_label,
+      openedAt: normalizeEpochSec(row.opened_at),
+      entryPrice: row.entry_price,
+      sizeUsd,
+      shares: row.shares,
+      unrealizedPnlUsd,
+      openPnlPct: sizeUsd > 0 ? unrealizedPnlUsd / sizeUsd : null,
+      endAt,
+      daysToEnd: endAt === null ? null : (endAt - nowSec) / DAY_SEC,
+      state: queueState(endAt, nowSec),
+      volume24h: row.volume_24h,
+      liquidity: row.liquidity,
+    };
+  });
+}
+
 export function collectPolymarketEvidence(db: Database.Database, nowSec: number): PolymarketEvidence {
   const hasTrades = tableExists(db, 'poly_paper_trades');
   const hasMarkets = tableExists(db, 'poly_markets');
@@ -213,6 +334,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
       latestApprovedSignalAt: null,
       progressPct: 0,
       hasMarketMaturityData: hasMarkets,
+      resolutionQueue: [],
     };
   }
 
@@ -260,6 +382,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
   const latestApprovedSignalAt = hasSignals
     ? epoch(db, 'SELECT MAX(created_at) AS value FROM poly_signals WHERE approved=1')
     : null;
+  const resolutionQueue = collectResolutionQueue(db, nowSec, hasTrades, hasMarkets, hasPositions);
 
   return {
     settledTrades,
@@ -286,6 +409,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     latestApprovedSignalAt,
     progressPct: progress(settledTrades, SETTLED_TARGET),
     hasMarketMaturityData: hasMarkets,
+    resolutionQueue,
   };
 }
 

@@ -327,6 +327,8 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <div class="compact-stat"><div class="stat-val" id="evidence-ttl-pass">-</div><div class="stat-label">TTL pass</div></div>
     </div>
     <div id="evidence-detail" class="text-xs text-gray-500 border-t border-gray-800 pt-2">Loading...</div>
+    <div class="text-gray-500 uppercase tracking-wider text-[10px] mt-3 mb-1">Resolution queue</div>
+    <div id="evidence-resolution-queue" class="table-wrap text-xs"><div class="text-gray-500">Loading...</div></div>
   </div>
 
   <div class="card">
@@ -2120,6 +2122,23 @@ function pnlColor(n) {
   const v = Number(n || 0);
   return v > 0 ? '#6ee7b7' : (v < 0 ? '#f87171' : '#9ca3af');
 }
+function fmtDateSec(sec) {
+  if (!sec) return '-';
+  return new Date(Number(sec) * 1000).toISOString().slice(0, 10);
+}
+function fmtQueueDays(days) {
+  if (days === null || days === undefined || !isFinite(Number(days))) return '-';
+  const v = Number(days);
+  if (v < 0) return Math.ceil(Math.abs(v)) + 'd overdue';
+  if (v < 1) return '<1d';
+  return Math.ceil(v) + 'd';
+}
+function queueStateColor(state) {
+  if (state === 'overdue') return '#f87171';
+  if (state === 'due_7d') return '#6ee7b7';
+  if (state === 'due_30d') return '#fbbf24';
+  return '#9ca3af';
+}
 function formatShortTime(value) {
   if (!value) return '-';
   const d = new Date(value);
@@ -2173,6 +2192,40 @@ function setOpsText(id, check) {
 function statusBg(status) {
   return status === 'pass' ? '#064e3b' : (status === 'warn' ? '#422006' : '#3b0f0f');
 }
+function renderResolutionQueue(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return '<div class="text-gray-500">No open paper trades with resolution metadata</div>';
+  }
+
+  const body = rows.slice(0, 10).map(row => {
+    const state = String(row.state || 'unknown');
+    const label = state.replace(/_/g, ' ');
+    const market = row.question || row.marketSlug || '-';
+    const tradeMeta = '#' + escapeHtml(row.tradeId) +
+      (row.outcomeLabel ? ' ' + escapeHtml(row.outcomeLabel) : '') +
+      ' / exposure ' + fmtUsd(row.sizeUsd);
+    return '<tr>' +
+      '<td><span style="color:' + queueStateColor(state) + ';font-weight:700">' + escapeHtml(label) + '</span></td>' +
+      '<td>' +
+        '<div class="text-gray-300">' + escapeHtml(fmtDateSec(row.endAt)) + '</div>' +
+        '<div class="text-gray-600">' + escapeHtml(fmtQueueDays(row.daysToEnd)) + '</div>' +
+      '</td>' +
+      '<td style="min-width:180px;max-width:420px">' +
+        '<div class="text-gray-300" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(market) + '">' + escapeHtml(market) + '</div>' +
+        '<div class="text-gray-600">' + tradeMeta + '</div>' +
+      '</td>' +
+      '<td style="text-align:right;color:' + pnlColor(row.unrealizedPnlUsd) + '">' +
+        '<div>' + escapeHtml(fmtUsd(row.unrealizedPnlUsd)) + '</div>' +
+        '<div class="text-gray-600">' + escapeHtml(fmtPct(row.openPnlPct, 1)) + '</div>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  return '<table class="data-table">' +
+    '<thead><tr><th>State</th><th>End</th><th>Market</th><th style="text-align:right">P&amp;L</th></tr></thead>' +
+    '<tbody>' + body + '</tbody>' +
+    '</table>';
+}
 function renderEvidencePath(evidence) {
   if (!evidence) return;
   const status = evidence.status || 'fail';
@@ -2202,7 +2255,7 @@ function renderEvidencePath(evidence) {
   const detailEl = document.getElementById('evidence-detail');
   if (detailEl) {
     const nearest = poly.nearestOpenEndAt
-      ? new Date(poly.nearestOpenEndAt * 1000).toLocaleDateString()
+      ? fmtDateSec(poly.nearestOpenEndAt)
       : '-';
     const ttlAge = ttl.ageSec === null || ttl.ageSec === undefined ? '-' : fmtAgo(ttl.ageSec);
     const history = evidence.history || [];
@@ -2237,6 +2290,11 @@ function renderEvidencePath(evidence) {
       ' / ' + historyText +
       (incomplete ? ' / tracking ' + incomplete : '');
     detailEl.style.color = status === 'fail' ? '#f87171' : '#9ca3af';
+  }
+
+  const queueEl = document.getElementById('evidence-resolution-queue');
+  if (queueEl) {
+    queueEl.innerHTML = renderResolutionQueue(poly.resolutionQueue || []);
   }
 }
 async function loadEquity() {

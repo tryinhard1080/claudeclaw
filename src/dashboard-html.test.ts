@@ -21,4 +21,13 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("g.target");
     expect(html).toContain("meter-fill");
   });
+
+  it('renders the readiness evidence resolution queue', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("Resolution queue");
+    expect(html).toContain("evidence-resolution-queue");
+    expect(html).toContain("function renderResolutionQueue");
+    expect(html).toContain("poly.resolutionQueue");
+  });
 });

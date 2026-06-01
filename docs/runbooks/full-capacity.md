@@ -79,7 +79,11 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   authorization.
 - The dashboard Gate blockers card should show each open gate's state, detail,
   and current / target progress when those numbers exist.
-- `npm run readiness:evidence` reports Polymarket settlement progress, mark-to-market paper P&L, near-term resolution pipeline, TTL filter evidence, and regime Sharpe sample depth.
+- `npm run readiness:evidence` reports Polymarket settlement progress,
+  mark-to-market paper P&L, near-term resolution pipeline, the open-trade
+  resolution queue, TTL filter evidence, and regime Sharpe sample depth.
+- The dashboard Evidence Path card should show the same open-trade resolution
+  queue so Richard can see which paper positions can move Box 2 next.
 - `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
 - `npm run readiness:evidence:cron` reports `already registered` or creates one active daily shell task for `scripts/readiness-evidence.ts --record --history 14`.
 - `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled.

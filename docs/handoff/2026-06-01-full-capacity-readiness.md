@@ -11,7 +11,8 @@ ClaudeClaw is operational in paper mode for both configured markets:
   mark-to-market Polymarket paper P&L. Malformed or rate-limited readiness API
   payloads now render as red unavailable state instead of a false green gate
   pass. The Gate blockers card now shows blocker state, detail, and current /
-  target progress for each open real-money gate.
+  target progress for each open real-money gate. The Evidence Path card now
+  also shows the live Polymarket resolution queue for open paper trades.
 
 Real money remains disabled. This is correct.
 
@@ -24,6 +25,8 @@ Real money remains disabled. This is correct.
   approval rate `0.19%`.
 - Resolution pipeline: `2` open positions due within 7 days, `4` due within 30
   days, `0` overdue.
+- Resolution queue: next paper settlements are trade `#19` and `#23` due
+  2026-06-07, then trades `#28` and `#30` due around 2026-06-30/2026-07-01.
 - TTL evidence: latest active candidate set `4/9` inside the 1-30 day TTL band.
 - Box 1 paper clock: `elapsed_review_ready`, `41/30` days since 2026-04-21,
   target 2026-05-21, A1 ACK present, MISSION checkbox still open.
@@ -43,7 +46,7 @@ Real money remains disabled. This is correct.
   because real-money gate boxes remain blocked.
 - `npm run typecheck` - PASS.
 - `npx vitest run src/readiness/evidence.test.ts` - 7/7 PASS.
-- `npm test` - 74 files, 907 tests PASS.
+- `npm test` - 74 files, 908 tests PASS.
 - `npm run build` - PASS.
 - `npx vitest run src/readiness/gate-progress.test.ts` - 15/15 PASS after Box
   1 parser coverage.
@@ -60,6 +63,15 @@ Real money remains disabled. This is correct.
 - Browser dashboard verification after rebuild/restart - the rendered Gate
   blockers card shows `41/30`, `0/50`, and `8/60` plus blocker details for
   Boxes 1/2/3 and the pending Box 7 sign-off.
+- `npx vitest run src/readiness/evidence.test.ts src/dashboard-html.test.ts` -
+  10/10 PASS after adding the read-only resolution queue.
+- `npm run readiness:evidence` - PASS/WARN as expected and prints the live
+  resolution queue ordered by next end date.
+- `npm run capacity:status` after rebuild/restart - operational systems PASS;
+  live startup remains FAIL by design because Boxes 1/2/3/7 remain blocked.
+- Dashboard DOM verification - Evidence Path rendered the `10`-row resolution
+  queue with `due 7d` and `due 30d` rows; screenshot capture timed out in the
+  in-app browser, but API and DOM evidence matched.
 
 ## Remaining Live-Money Blocks
 

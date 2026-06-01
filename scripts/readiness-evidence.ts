@@ -41,6 +41,13 @@ function fmtDate(at: number | null): string {
   return new Date(at * 1000).toISOString().slice(0, 10);
 }
 
+function fmtDays(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
+  if (value < 0) return `${Math.ceil(Math.abs(value))}d overdue`;
+  if (value < 1) return '<1d';
+  return `${Math.ceil(value)}d`;
+}
+
 function argValue(name: string): string | null {
   const idx = process.argv.indexOf(name);
   return idx >= 0 ? process.argv[idx + 1] ?? null : null;
@@ -101,6 +108,23 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log(`Nearest open end date     ${fmtDate(polymarket.nearestOpenEndAt)}`);
   console.log(`Latest paper trade        ${fmtAge(payload.generatedAt, polymarket.latestPaperTradeAt)}`);
   console.log(`Signals / approvals 24h   ${polymarket.signals24h}/${polymarket.approvedSignals24h} (${fmtPct(polymarket.approvalRate24h)})`);
+
+  console.log();
+  console.log('Resolution Queue');
+  console.log('----------------');
+  if (polymarket.resolutionQueue.length === 0) {
+    console.log('No open paper trades with resolution metadata');
+  } else {
+    for (const row of polymarket.resolutionQueue.slice(0, 10)) {
+      const label = row.outcomeLabel ? ` ${row.outcomeLabel}` : '';
+      console.log(
+        `#${row.tradeId.toString().padEnd(3)} ${row.state.padEnd(8)} ` +
+        `${fmtDate(row.endAt)} (${fmtDays(row.daysToEnd)}) ` +
+        `${fmtUsd(row.sizeUsd).padStart(8)} ${fmtUsd(row.unrealizedPnlUsd).padStart(8)} ` +
+        `${row.marketSlug}${label}`,
+      );
+    }
+  }
 
   console.log();
   console.log('Equity Regime Evidence');
