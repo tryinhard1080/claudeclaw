@@ -325,8 +325,9 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evidence Path</h3>
       <span id="evidence-status" class="pill">-</span>
     </div>
-    <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 mb-3">
+    <div class="grid grid-cols-2 sm:grid-cols-7 gap-2 mb-3">
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-settled">-</div><div class="stat-label">Poly settled</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-poly-pipeline">-</div><div class="stat-label">Box 2 pipe</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-due">-</div><div class="stat-label">Due 30d</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-sync">-</div><div class="stat-label">Equity sync</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-edge">-</div><div class="stat-label">Equity edge</div></div>
@@ -2298,6 +2299,12 @@ function renderEvidencePath(evidence) {
   const settledEl = document.getElementById('evidence-poly-settled');
   if (settledEl) settledEl.textContent = (poly.settledTrades ?? 0) + '/' + (poly.targetSettledTrades ?? 50);
 
+  const pipelineEl = document.getElementById('evidence-poly-pipeline');
+  if (pipelineEl) {
+    pipelineEl.textContent = (poly.potentialSettledTrades ?? ((poly.settledTrades ?? 0) + (poly.openTrades ?? 0))) + '/' + (poly.targetSettledTrades ?? 50);
+    pipelineEl.style.color = poly.openPipelineCanReachTarget ? '#6ee7b7' : '#fbbf24';
+  }
+
   const dueEl = document.getElementById('evidence-poly-due');
   if (dueEl) dueEl.textContent = (poly.dueNext30Days ?? 0) + '/' + (poly.openTrades ?? 0);
 
@@ -2328,6 +2335,10 @@ function renderEvidencePath(evidence) {
       ? fmtDateSec(poly.nearestOpenEndAt)
       : '-';
     const ttlAge = ttl.ageSec === null || ttl.ageSec === undefined ? '-' : fmtAgo(ttl.ageSec);
+    const box2Text = ' / box2 potential ' +
+      (poly.potentialSettledTrades ?? ((poly.settledTrades ?? 0) + (poly.openTrades ?? 0))) + '/' +
+      (poly.targetSettledTrades ?? 50) +
+      ' need ' + (poly.additionalSettledTradesNeeded ?? Math.max(0, (poly.targetSettledTrades ?? 50) - ((poly.settledTrades ?? 0) + (poly.openTrades ?? 0))));
     const equitySyncText = equitySync
       ? ' / equity sync ' + (equitySync.freshCount ?? 0) + '/' + (equitySync.expectedCount ?? 0) +
         ' max age ' + (equitySync.maxAgeSec === null || equitySync.maxAgeSec === undefined ? '-' : fmtAgo(equitySync.maxAgeSec))
@@ -2349,6 +2360,8 @@ function renderEvidencePath(evidence) {
         (polyDelta !== 0 ? ' (' + (polyDelta > 0 ? '+' : '') + polyDelta + ')' : '') +
         ' / pnl ' + fmtUsd(last.polyTotalPnlUsd ?? 0) +
         (pnlDelta !== 0 ? ' (' + (pnlDelta > 0 ? '+' : '') + fmtUsd(Math.abs(pnlDelta)) + ')' : '') +
+        ' / potential ' + (last.polyPotentialSettledTrades ?? ((last.polySettledTrades ?? 0) + (last.polyOpenTrades ?? 0))) + '/' + (last.polyTargetSettledTrades ?? 50) +
+        ' need ' + (last.polyAdditionalSettledTradesNeeded ?? '-') +
         ' / regime ' + (last.regimeMinDays ?? 0) + '/' + (last.regimeTargetDays ?? 60) + 'd' +
         (regimeDelta !== 0 ? ' (' + (regimeDelta > 0 ? '+' : '') + regimeDelta + ')' : '') +
         ' / edge ' + fmtSignedPct(last.equityBenchmarkMinExcessReturn ?? null, 2);
@@ -2365,6 +2378,7 @@ function renderEvidencePath(evidence) {
       ' / equity ' + fmtUsd(poly.paperEquityUsd ?? 0) +
       ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
       ' / nearest end ' + nearest +
+      box2Text +
       equitySyncText +
       equityBenchmarkText +
       ' / ttl tick ' + ttlAge +

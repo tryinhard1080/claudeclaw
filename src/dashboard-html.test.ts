@@ -45,6 +45,15 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("poly.resolutionQueue");
   });
 
+  it('renders Polymarket Box 2 pipeline capacity in the evidence path', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("evidence-poly-pipeline");
+    expect(html).toContain("poly.potentialSettledTrades");
+    expect(html).toContain("poly.additionalSettledTradesNeeded");
+    expect(html).toContain("box2 potential");
+  });
+
   it('renders live equity sync evidence separately from daily Sharpe', () => {
     const html = getDashboardHtml('token', 'chat');
 

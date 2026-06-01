@@ -73,6 +73,11 @@ describe('operational evidence', () => {
     expect(evidence.openTrades).toBe(3);
     expect(evidence.voidedTrades).toBe(1);
     expect(evidence.openExposureUsd).toBe(65);
+    expect(evidence.potentialSettledTrades).toBe(5);
+    expect(evidence.remainingSettledTrades).toBe(48);
+    expect(evidence.additionalSettledTradesNeeded).toBe(45);
+    expect(evidence.openPipelineCanReachTarget).toBe(false);
+    expect(evidence.openPipelineCoveragePct).toBe(0.1);
     expect(evidence.dueNext7Days).toBe(1);
     expect(evidence.dueNext30Days).toBe(2);
     expect(evidence.overdueOpenTrades).toBe(1);
@@ -340,6 +345,12 @@ describe('operational evidence', () => {
 
     expect(payload.status).toBe('warn');
     expect(payload.metrics.map(metric => metric.key)).toContain('polymarket_resolution_pipeline');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_box2_pipeline_capacity')).toMatchObject({
+      status: 'warn',
+      state: 'open_book_underfilled',
+      current: 1,
+      target: 50,
+    });
     expect(payload.metrics.find(metric => metric.key === 'equity_state_sync')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'equity_benchmark_edge')?.status).toBe('pass');
     expect(payload.equityBenchmark?.minExcessReturn).toBeCloseTo(0.03, 6);
@@ -355,6 +366,7 @@ describe('operational evidence', () => {
     const payload = collectOperationalEvidence(mem, NOW);
 
     expect(payload.polymarket.settledTrades).toBe(0);
+    expect(payload.polymarket.additionalSettledTradesNeeded).toBe(50);
     expect(payload.regimeSharpe.instances).toEqual([]);
     expect(payload.ttlFilter.latestAt).toBeNull();
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('fail');
@@ -423,6 +435,8 @@ describe('operational evidence', () => {
     expect(history[0]!.snapshotYmd).toBe(firstYmd);
     expect(history[0]!.capturedAt).toBe(NOW + 60);
     expect(history[0]!.polyOpenTrades).toBe(1);
+    expect(history[0]!.polyPotentialSettledTrades).toBe(1);
+    expect(history[0]!.polyAdditionalSettledTradesNeeded).toBe(49);
     expect(history[0]!.polyTotalPnlUsd).toBe(0);
     expect(history[0]!.polyPaperEquityUsd).toBe(5000);
     expect(history[0]!.polyApprovalRate24h).toBe(1);

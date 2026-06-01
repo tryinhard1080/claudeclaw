@@ -30,6 +30,7 @@ Tracker for Codex code-review findings across every shipped sprint. This artifac
 | 2026-06-01 | dashboard trading quick actions | N/A | Replaced non-trading dashboard chat quick actions with Polymarket and equity status commands. No `risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, monetary cap, halt, or live-money flag changes. | CLOSED 2026-06-01 - zero P0/P1 | `pending` |
 | 2026-06-01 | equity live-sync evidence | N/A | Added read-only equity state freshness evidence to CLI/dashboard readiness so live regime-trader sync is separated from daily Sharpe sampling. No `risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, monetary cap, halt, or live-money flag changes. | CLOSED 2026-06-01 - zero P0/P1 | `pending` |
 | 2026-06-01 | equity benchmark evidence | N/A | Added read-only equity benchmark edge to CLI/dashboard readiness so strategy return versus buy-and-hold is visible. No `risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, monetary cap, halt, or live-money flag changes. | CLOSED 2026-06-01 - zero P0/P1 | `pending` |
+| 2026-06-01 | Box 2 pipeline capacity | N/A | Added read-only Polymarket Box 2 pipeline-capacity evidence to CLI/dashboard readiness so the settled-trade deficit and additional resolved-trade need are explicit. No `risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, monetary cap, halt, or live-money flag changes. | CLOSED 2026-06-01 - zero P0/P1 | `pending` |
 
 See per-sprint review notes:
 
@@ -44,5 +45,6 @@ See per-sprint review notes:
 - `2026-06-01-dashboard-quick-actions-review.md` - dashboard trading quick actions review. 0 P0 / 0 P1.
 - `2026-06-01-equity-live-sync-review.md` - equity live-sync evidence review. 0 P0 / 0 P1.
 - `2026-06-01-equity-benchmark-evidence-review.md` - equity benchmark evidence review. 0 P0 / 0 P1.
+- `2026-06-01-box2-pipeline-capacity-review.md` - Box 2 pipeline-capacity evidence review. 0 P0 / 0 P1.
 
 _(Last codex pass: 2026-06-01 operational goal gate evidence review. Re-run triggers: any subsequent edit to a TRUST Tier-3 surface (`risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, `strategy-engine.ts`); any live-money flag change; any monetary cap change; OR codex CLI stdin repair that allows a formal full-project codex run.)_

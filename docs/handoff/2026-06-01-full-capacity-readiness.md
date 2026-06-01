@@ -18,16 +18,20 @@ ClaudeClaw is operational in paper mode for both configured markets:
   `Poly P&L`, `Trade Status`, and `Trade Sharpe`. Personal-assistant shortcuts
   such as Todo and Gmail are not present. The Evidence Path card now separates
   equity live-sync freshness from the daily post-close Sharpe sample and shows
-  current equity benchmark edge versus buy-and-hold.
+  current equity benchmark edge versus buy-and-hold. It also shows Box 2
+  pipeline capacity, which separates current settled count from the maximum
+  settled count the existing open book could produce.
 
 Real money remains disabled. This is correct.
 
 ## Latest Evidence
 
-- Polymarket Box 2: `0/50` settled trades, `11` open, `23` voided.
-- Polymarket mark-to-market: `$26.27` total paper P&L, all unrealized, on
-  `$529.35` open exposure. Paper equity is `$5,026.27`.
-- Polymarket signal flow: `531` signals and `2` approvals in the last 24 hours,
+- Polymarket Box 2: `0/50` settled trades, `11` open, `23` voided. The
+  current open book can cover at most `11/50` potential settled trades, so at
+  least `39` additional resolved trades are needed after the current book.
+- Polymarket mark-to-market: `$26.09` total paper P&L, all unrealized, on
+  `$529.35` open exposure. Paper equity is `$5,026.09`.
+- Polymarket signal flow: `529` signals and `2` approvals in the last 24 hours,
   approval rate `0.37%`.
 - Resolution pipeline: `2` open positions due within 7 days, `5` due within 30
   days, `0` overdue.
@@ -95,8 +99,27 @@ Real money remains disabled. This is correct.
 - `npm run readiness:evidence` - PASS/WARN as expected after adding equity
   benchmark evidence; `Equity benchmark` PASS shows `spy-aggressive
   excess=+0.79%` and `spy-conservative excess=+0.80%`.
+- `npx vitest run src/readiness/evidence.test.ts src/dashboard-html.test.ts` -
+  18/18 PASS after adding Box 2 pipeline capacity coverage.
 - `npm run readiness:evidence:record` - refreshed the 2026-06-01 readiness
-  evidence snapshot; snapshot history now shows `equitySync=2/2`.
+  evidence snapshot with `potential=11/50` and `additional resolved need=39`.
+- `npm test` - 75 files, 919 tests PASS after Box 2 pipeline capacity.
+- `npm run build` - PASS after Box 2 pipeline capacity.
+- `pm2 restart claudeclaw-main --update-env` - PASS; `claudeclaw-main` online.
+- Authenticated `/api/readiness/evidence` after rebuild/restart - returned
+  `potential=11`, `target=50`, `additionalNeed=39`,
+  `pipelineMetric=open_book_underfilled`, and snapshot history matching
+  `11/39`.
+- Browser dashboard DOM after rebuild/restart - Evidence Path rendered
+  `settled=0/50`, `Box 2 pipe=11/50`, detail text containing `box2
+  potential` and `need 39`, and the resolution queue still rendered 10 rows.
+- Post-restart `npm run capacity:status` after Box 2 pipeline capacity -
+  operational systems PASS; Financial Datasets MCP connected; Polymarket scans
+  fresh at `1m`; Box 2 pipeline capacity WARN explicitly reports `11/50`
+  potential and `39` more resolved trades needed; `0` system blockers; live
+  startup remains blocked by Boxes 1/2/3/7 by design.
+- `npm run readiness:evidence:record` - earlier refreshed the 2026-06-01
+  readiness evidence snapshot; snapshot history showed `equitySync=2/2`.
 - `npm test` - 75 files, 916 tests PASS after equity live-sync evidence.
 - `npm run build` - PASS after equity live-sync evidence.
 - Authenticated `/api/readiness/evidence` after rebuild/restart - returned
