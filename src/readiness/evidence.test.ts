@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectEquitySyncEvidence,
   collectOperationalEvidence,
   collectPolymarketEvidence,
   collectRegimeSharpeEvidence,
@@ -96,6 +97,48 @@ describe('operational evidence', () => {
       daysToEnd: 20,
     });
     mem.close();
+  });
+
+  it('summarizes live equity state sync from regime-trader state files', () => {
+    const evidence = collectEquitySyncEvidence(NOW, {
+      instanceNames: ['spy-aggressive', 'spy-conservative'],
+      freshSec: 900,
+      readState: (instance) => ({
+        raw: JSON.stringify({
+          market_open: true,
+          equity: instance === 'spy-aggressive' ? 101000 : 100500,
+          regime: { label: 'WEAK_BULL' },
+          risk: { max_exposure: 1 },
+        }),
+        mtimeMs: (NOW - (instance === 'spy-aggressive' ? 30 : 60)) * 1000,
+      }),
+    });
+
+    expect(evidence.status).toBe('pass');
+    expect(evidence.freshCount).toBe(2);
+    expect(evidence.allOpenFull).toBe(true);
+    expect(evidence.maxAgeSec).toBe(60);
+    expect(evidence.instances.map(row => row.state)).toEqual(['fresh_open_full', 'fresh_open_full']);
+  });
+
+  it('warns when one equity state file is stale or partial', () => {
+    const evidence = collectEquitySyncEvidence(NOW, {
+      instanceNames: ['spy-aggressive', 'spy-conservative'],
+      freshSec: 900,
+      readState: (instance) => ({
+        raw: JSON.stringify({
+          market_open: true,
+          equity: 100000,
+          regime: instance === 'spy-aggressive' ? { label: 'WEAK_BULL' } : null,
+          risk: { max_exposure: 1 },
+        }),
+        mtimeMs: (NOW - (instance === 'spy-aggressive' ? 30 : 1200)) * 1000,
+      }),
+    });
+
+    expect(evidence.status).toBe('warn');
+    expect(evidence.freshCount).toBe(1);
+    expect(evidence.instances[1]!.state).toBe('stale');
   });
 
   it('summarizes latest regime Sharpe snapshots per instance', () => {
@@ -204,10 +247,46 @@ describe('operational evidence', () => {
       INSERT INTO poly_ttl_shadow_ticks VALUES (${NOW - 30}, 8, 1, 18, 130, 1, 30);
     `);
 
-    const payload = collectOperationalEvidence(mem, NOW);
+    const payload = collectOperationalEvidence(mem, NOW, {
+      equitySync: {
+        instances: [
+          {
+            instance: 'spy-aggressive',
+            state: 'fresh_open_full',
+            syncedAt: NOW - 30,
+            ageSec: 30,
+            marketOpen: true,
+            hasRegime: true,
+            hasRisk: true,
+            equity: 101000,
+            error: null,
+          },
+          {
+            instance: 'spy-conservative',
+            state: 'fresh_open_full',
+            syncedAt: NOW - 30,
+            ageSec: 30,
+            marketOpen: true,
+            hasRegime: true,
+            hasRisk: true,
+            equity: 100500,
+            error: null,
+          },
+        ],
+        expectedCount: 2,
+        freshCount: 2,
+        latestAt: NOW - 30,
+        maxAgeSec: 30,
+        allFresh: true,
+        allOpenFull: true,
+        status: 'pass',
+        summary: 'spy-aggressive fresh_open_full 30s; spy-conservative fresh_open_full 30s',
+      },
+    });
 
     expect(payload.status).toBe('warn');
     expect(payload.metrics.map(metric => metric.key)).toContain('polymarket_resolution_pipeline');
+    expect(payload.metrics.find(metric => metric.key === 'equity_state_sync')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'polymarket_mark_to_market')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'regime_sharpe_track')?.current).toBe(8);
@@ -278,6 +357,8 @@ describe('operational evidence', () => {
     expect(history[0]!.polyTotalPnlUsd).toBe(0);
     expect(history[0]!.polyPaperEquityUsd).toBe(5000);
     expect(history[0]!.polyApprovalRate24h).toBe(1);
+    expect(history[0]!.equitySyncFreshCount).toBe(0);
+    expect(history[0]!.equitySyncExpectedCount).toBe(0);
     expect(history[0]!.regimeMinDays).toBe(8);
     expect(history[1]!.snapshotYmd).not.toBe(firstYmd);
     mem.close();

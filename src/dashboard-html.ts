@@ -325,9 +325,10 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evidence Path</h3>
       <span id="evidence-status" class="pill">-</span>
     </div>
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-settled">-</div><div class="stat-label">Poly settled</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-due">-</div><div class="stat-label">Due 30d</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-equity-sync">-</div><div class="stat-label">Equity sync</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-regime-days">-</div><div class="stat-label">Regime days</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-ttl-pass">-</div><div class="stat-label">TTL pass</div></div>
     </div>
@@ -2288,6 +2289,7 @@ function renderEvidencePath(evidence) {
   }
 
   const poly = evidence.polymarket || {};
+  const equitySync = evidence.equitySync || null;
   const regime = evidence.regimeSharpe || {};
   const ttl = evidence.ttlFilter || {};
 
@@ -2296,6 +2298,13 @@ function renderEvidencePath(evidence) {
 
   const dueEl = document.getElementById('evidence-poly-due');
   if (dueEl) dueEl.textContent = (poly.dueNext30Days ?? 0) + '/' + (poly.openTrades ?? 0);
+
+  const syncEl = document.getElementById('evidence-equity-sync');
+  if (syncEl) {
+    syncEl.textContent = equitySync
+      ? (equitySync.freshCount ?? 0) + '/' + (equitySync.expectedCount ?? 0)
+      : '-';
+  }
 
   const regimeEl = document.getElementById('evidence-regime-days');
   if (regimeEl) regimeEl.textContent = (regime.minDays ?? 0) + '/' + (regime.targetDays ?? 60);
@@ -2309,6 +2318,10 @@ function renderEvidencePath(evidence) {
       ? fmtDateSec(poly.nearestOpenEndAt)
       : '-';
     const ttlAge = ttl.ageSec === null || ttl.ageSec === undefined ? '-' : fmtAgo(ttl.ageSec);
+    const equitySyncText = equitySync
+      ? ' / equity sync ' + (equitySync.freshCount ?? 0) + '/' + (equitySync.expectedCount ?? 0) +
+        ' max age ' + (equitySync.maxAgeSec === null || equitySync.maxAgeSec === undefined ? '-' : fmtAgo(equitySync.maxAgeSec))
+      : '';
     const history = evidence.history || [];
     let historyText = 'history no snapshots';
     if (history.length > 0) {
@@ -2337,6 +2350,7 @@ function renderEvidencePath(evidence) {
       ' / equity ' + fmtUsd(poly.paperEquityUsd ?? 0) +
       ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
       ' / nearest end ' + nearest +
+      equitySyncText +
       ' / ttl tick ' + ttlAge +
       ' / ' + historyText +
       (incomplete ? ' / tracking ' + incomplete : '');

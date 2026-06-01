@@ -45,6 +45,15 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("poly.resolutionQueue");
   });
 
+  it('renders live equity sync evidence separately from daily Sharpe', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("evidence-equity-sync");
+    expect(html).toContain("evidence.equitySync");
+    expect(html).toContain("equity sync");
+    expect(html).toContain("max age");
+  });
+
   it('keeps chat quick actions trading scoped', () => {
     const html = getDashboardHtml('token', 'chat');
 

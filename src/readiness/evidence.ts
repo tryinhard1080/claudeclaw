@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
 
-import { POLY_PAPER_CAPITAL } from '../config.js';
+import { POLY_PAPER_CAPITAL, REGIME_TRADER_INSTANCES, REGIME_TRADER_PATH } from '../config.js';
 import type { ReadinessStatus } from './gate-progress.js';
 
 export interface ReadinessEvidenceMetric {
@@ -78,6 +80,46 @@ export interface RegimeSharpeEvidence {
   progressPct: number;
 }
 
+export type EquitySyncState =
+  | 'fresh_open_full'
+  | 'fresh_open_partial'
+  | 'fresh_closed'
+  | 'fresh_unknown'
+  | 'stale'
+  | 'missing'
+  | 'unreadable';
+
+export interface EquitySyncInstanceEvidence {
+  instance: string;
+  state: EquitySyncState;
+  syncedAt: number | null;
+  ageSec: number | null;
+  marketOpen: boolean | null;
+  hasRegime: boolean;
+  hasRisk: boolean;
+  equity: number | null;
+  error: string | null;
+}
+
+export interface EquitySyncEvidence {
+  instances: EquitySyncInstanceEvidence[];
+  expectedCount: number;
+  freshCount: number;
+  latestAt: number | null;
+  maxAgeSec: number | null;
+  allFresh: boolean;
+  allOpenFull: boolean;
+  status: ReadinessStatus;
+  summary: string;
+}
+
+export interface EquitySyncOptions {
+  instanceNames?: ReadonlyArray<string>;
+  regimeTraderPath?: string;
+  freshSec?: number;
+  readState?: (instance: string, statePath: string) => { raw: string; mtimeMs: number };
+}
+
 export interface TtlFilterEvidence {
   latestAt: number | null;
   ageSec: number | null;
@@ -94,9 +136,16 @@ export interface OperationalEvidencePayload {
   generatedAt: number;
   status: ReadinessStatus;
   polymarket: PolymarketEvidence;
+  equitySync: EquitySyncEvidence | null;
   regimeSharpe: RegimeSharpeEvidence;
   ttlFilter: TtlFilterEvidence;
   metrics: ReadinessEvidenceMetric[];
+}
+
+export interface OperationalEvidenceOptions {
+  collectEquitySync?: boolean;
+  equitySync?: EquitySyncEvidence | null;
+  equitySyncOptions?: EquitySyncOptions;
 }
 
 export interface OperationalEvidenceHistoryPoint {
@@ -115,6 +164,9 @@ export interface OperationalEvidenceHistoryPoint {
   polyDueNext7Days: number;
   polyDueNext30Days: number;
   polyOverdueOpenTrades: number;
+  equitySyncFreshCount: number;
+  equitySyncExpectedCount: number;
+  equitySyncMaxAgeSec: number | null;
   regimeMinDays: number;
   regimeTargetDays: number;
   regimeAllInstancesPositive: boolean;
@@ -143,6 +195,8 @@ interface TtlRow {
 const SETTLED_TARGET = 50;
 const REGIME_DAYS_TARGET = 60;
 const DAY_SEC = 86_400;
+const EQUITY_SYNC_FRESH_SEC = 15 * 60;
+const DEFAULT_EQUITY_INSTANCES = ['spy-aggressive', 'spy-conservative'] as const;
 
 function tableExists(db: Database.Database, name: string): boolean {
   const row = db.prepare(
@@ -456,6 +510,125 @@ export function collectRegimeSharpeEvidence(db: Database.Database): RegimeSharpe
   };
 }
 
+function defaultEquityInstanceNames(): ReadonlyArray<string> {
+  return REGIME_TRADER_INSTANCES.length > 0 ? REGIME_TRADER_INSTANCES : DEFAULT_EQUITY_INSTANCES;
+}
+
+function defaultReadEquityState(_instance: string, statePath: string): { raw: string; mtimeMs: number } {
+  const stat = fs.statSync(statePath);
+  return {
+    raw: fs.readFileSync(statePath, 'utf-8'),
+    mtimeMs: stat.mtimeMs,
+  };
+}
+
+function equitySyncState(args: {
+  ageSec: number | null;
+  freshSec: number;
+  marketOpen: boolean | null;
+  hasRegime: boolean;
+  hasRisk: boolean;
+}): EquitySyncState {
+  if (args.ageSec === null || args.ageSec > args.freshSec) return 'stale';
+  if (args.marketOpen === true) {
+    return args.hasRegime && args.hasRisk ? 'fresh_open_full' : 'fresh_open_partial';
+  }
+  if (args.marketOpen === false) return 'fresh_closed';
+  return 'fresh_unknown';
+}
+
+function summarizeEquitySync(instances: ReadonlyArray<EquitySyncInstanceEvidence>): string {
+  if (instances.length === 0) return 'no expected equity instances';
+  return instances
+    .map(row => {
+      const age = row.ageSec === null
+        ? '-'
+        : row.ageSec < 60
+          ? `${row.ageSec}s`
+          : `${Math.floor(row.ageSec / 60)}m`;
+      return `${row.instance} ${row.state} ${age}`;
+    })
+    .join('; ');
+}
+
+export function collectEquitySyncEvidence(
+  nowSec = Math.floor(Date.now() / 1000),
+  options: EquitySyncOptions = {},
+): EquitySyncEvidence {
+  const instanceNames = options.instanceNames ?? defaultEquityInstanceNames();
+  const root = options.regimeTraderPath ?? (REGIME_TRADER_PATH || 'C:\\Code\\regime-trader');
+  const freshSec = options.freshSec ?? EQUITY_SYNC_FRESH_SEC;
+  const readState = options.readState ?? defaultReadEquityState;
+
+  const instances = instanceNames.map<EquitySyncInstanceEvidence>(instance => {
+    const statePath = path.join(root, 'instances', instance, 'data', 'state.json');
+    try {
+      const { raw, mtimeMs } = readState(instance, statePath);
+      const syncedAt = Math.floor(mtimeMs / 1000);
+      const ageSec = Math.max(0, nowSec - syncedAt);
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const marketOpen = typeof parsed.market_open === 'boolean' ? parsed.market_open : null;
+      const hasRegime = parsed.regime !== null && parsed.regime !== undefined;
+      const hasRisk = parsed.risk !== null && parsed.risk !== undefined;
+      const equity = typeof parsed.equity === 'number' && Number.isFinite(parsed.equity)
+        ? parsed.equity
+        : null;
+      return {
+        instance,
+        state: equitySyncState({ ageSec, freshSec, marketOpen, hasRegime, hasRisk }),
+        syncedAt,
+        ageSec,
+        marketOpen,
+        hasRegime,
+        hasRisk,
+        equity,
+        error: null,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const missing = /ENOENT|no such file/i.test(message);
+      return {
+        instance,
+        state: missing ? 'missing' : 'unreadable',
+        syncedAt: null,
+        ageSec: null,
+        marketOpen: null,
+        hasRegime: false,
+        hasRisk: false,
+        equity: null,
+        error: message.slice(0, 180),
+      };
+    }
+  });
+
+  const latestAtValues = instances
+    .map(row => row.syncedAt)
+    .filter((value): value is number => value !== null);
+  const ages = instances
+    .map(row => row.ageSec)
+    .filter((value): value is number => value !== null);
+  const freshCount = instances.filter(row => row.ageSec !== null && row.ageSec <= freshSec).length;
+  const allFresh = instances.length > 0 && freshCount === instances.length;
+  const allOpenFull = instances.length > 0 && instances.every(row => row.state === 'fresh_open_full');
+  const hasUnreadable = instances.some(row => row.state === 'missing' || row.state === 'unreadable');
+  const hasPartial = instances.some(row => row.state === 'fresh_open_partial' || row.state === 'fresh_unknown');
+  const status: ReadinessStatus = instances.length === 0 || freshCount === 0
+    ? 'fail'
+    : (!allFresh || hasUnreadable || hasPartial ? 'warn' : 'pass');
+
+  return {
+    instances,
+    expectedCount: instances.length,
+    freshCount,
+    latestAt: latestAtValues.length > 0 ? Math.max(...latestAtValues) : null,
+    maxAgeSec: ages.length > 0 ? Math.max(...ages) : null,
+    allFresh,
+    allOpenFull,
+    status,
+    summary: summarizeEquitySync(instances),
+  };
+}
+
 export function collectTtlFilterEvidence(db: Database.Database, nowSec: number): TtlFilterEvidence {
   if (!tableExists(db, 'poly_ttl_shadow_ticks')) {
     return {
@@ -508,6 +681,7 @@ export function collectTtlFilterEvidence(db: Database.Database, nowSec: number):
 
 function buildMetrics(
   polymarket: PolymarketEvidence,
+  equitySync: EquitySyncEvidence | null,
   regimeSharpe: RegimeSharpeEvidence,
   ttlFilter: TtlFilterEvidence,
 ): ReadinessEvidenceMetric[] {
@@ -522,7 +696,7 @@ function buildMetrics(
           ? 'long_dated_open'
           : 'awaiting_new_trades';
 
-  return [
+  const metrics: ReadinessEvidenceMetric[] = [
     {
       key: 'polymarket_settled_trades',
       name: 'Polymarket Box 2',
@@ -574,6 +748,24 @@ function buildMetrics(
       target: ttlFilter.candidatesTotal,
       progressPct: ttlFilter.passRate,
     },
+  ];
+
+  if (equitySync) {
+    metrics.push({
+      key: 'equity_state_sync',
+      name: 'Equity state sync',
+      status: equitySync.status,
+      state: equitySync.status === 'pass'
+        ? (equitySync.allOpenFull ? 'open_full' : 'fresh')
+        : (equitySync.freshCount > 0 ? 'partial_or_stale' : 'missing_or_stale'),
+      detail: equitySync.summary,
+      current: equitySync.freshCount,
+      target: equitySync.expectedCount,
+      progressPct: equitySync.expectedCount > 0 ? progress(equitySync.freshCount, equitySync.expectedCount) : null,
+    });
+  }
+
+  metrics.push(
     {
       key: 'regime_sharpe_track',
       name: 'Regime Box 3',
@@ -588,22 +780,31 @@ function buildMetrics(
       target: REGIME_DAYS_TARGET,
       progressPct: regimeSharpe.progressPct,
     },
-  ];
+  );
+
+  return metrics;
 }
 
 export function collectOperationalEvidence(
   db: Database.Database,
   nowSec = Math.floor(Date.now() / 1000),
+  options: OperationalEvidenceOptions = {},
 ): OperationalEvidencePayload {
   const polymarket = collectPolymarketEvidence(db, nowSec);
+  const equitySync = options.equitySync !== undefined
+    ? options.equitySync
+    : options.collectEquitySync
+      ? collectEquitySyncEvidence(nowSec, options.equitySyncOptions)
+      : null;
   const regimeSharpe = collectRegimeSharpeEvidence(db);
   const ttlFilter = collectTtlFilterEvidence(db, nowSec);
-  const metrics = buildMetrics(polymarket, regimeSharpe, ttlFilter);
+  const metrics = buildMetrics(polymarket, equitySync, regimeSharpe, ttlFilter);
 
   return {
     generatedAt: nowSec,
     status: worstStatus(metrics),
     polymarket,
+    equitySync,
     regimeSharpe,
     ttlFilter,
     metrics,
@@ -628,6 +829,9 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
       poly_due_next_7d              INTEGER NOT NULL,
       poly_due_next_30d             INTEGER NOT NULL,
       poly_overdue_open_trades      INTEGER NOT NULL,
+      equity_sync_fresh_count       INTEGER NOT NULL DEFAULT 0,
+      equity_sync_expected_count    INTEGER NOT NULL DEFAULT 0,
+      equity_sync_max_age_sec       INTEGER,
       regime_min_days               INTEGER NOT NULL,
       regime_target_days            INTEGER NOT NULL,
       regime_all_instances_positive INTEGER NOT NULL,
@@ -644,6 +848,9 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_total_pnl_usd', 'poly_total_pnl_usd REAL NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_paper_equity_usd', 'poly_paper_equity_usd REAL NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_approval_rate_24h', 'poly_approval_rate_24h REAL');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_fresh_count', 'equity_sync_fresh_count INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_expected_count', 'equity_sync_expected_count INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_max_age_sec', 'equity_sync_max_age_sec INTEGER');
 }
 
 export function recordOperationalEvidenceSnapshot(
@@ -660,10 +867,11 @@ export function recordOperationalEvidenceSnapshot(
       poly_approval_rate_24h,
       poly_open_trades, poly_voided_trades, poly_due_next_7d,
       poly_due_next_30d, poly_overdue_open_trades,
+      equity_sync_fresh_count, equity_sync_expected_count, equity_sync_max_age_sec,
       regime_min_days, regime_target_days, regime_all_instances_positive,
       ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
       payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(snapshot_ymd) DO UPDATE SET
       captured_at = excluded.captured_at,
       status = excluded.status,
@@ -679,6 +887,9 @@ export function recordOperationalEvidenceSnapshot(
       poly_due_next_7d = excluded.poly_due_next_7d,
       poly_due_next_30d = excluded.poly_due_next_30d,
       poly_overdue_open_trades = excluded.poly_overdue_open_trades,
+      equity_sync_fresh_count = excluded.equity_sync_fresh_count,
+      equity_sync_expected_count = excluded.equity_sync_expected_count,
+      equity_sync_max_age_sec = excluded.equity_sync_max_age_sec,
       regime_min_days = excluded.regime_min_days,
       regime_target_days = excluded.regime_target_days,
       regime_all_instances_positive = excluded.regime_all_instances_positive,
@@ -702,6 +913,9 @@ export function recordOperationalEvidenceSnapshot(
     payload.polymarket.dueNext7Days,
     payload.polymarket.dueNext30Days,
     payload.polymarket.overdueOpenTrades,
+    payload.equitySync?.freshCount ?? 0,
+    payload.equitySync?.expectedCount ?? 0,
+    payload.equitySync?.maxAgeSec ?? null,
     payload.regimeSharpe.minDays,
     payload.regimeSharpe.targetDays,
     payload.regimeSharpe.allInstancesPositive ? 1 : 0,
@@ -732,6 +946,9 @@ export function readOperationalEvidenceHistory(
            ${optional('poly_approval_rate_24h', 'NULL')} AS poly_approval_rate_24h,
            poly_open_trades, poly_voided_trades,
            poly_due_next_7d, poly_due_next_30d, poly_overdue_open_trades,
+           ${optional('equity_sync_fresh_count', '0')} AS equity_sync_fresh_count,
+           ${optional('equity_sync_expected_count', '0')} AS equity_sync_expected_count,
+           ${optional('equity_sync_max_age_sec', 'NULL')} AS equity_sync_max_age_sec,
            regime_min_days, regime_target_days, regime_all_instances_positive,
            ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate
       FROM readiness_evidence_snapshots
@@ -753,6 +970,9 @@ export function readOperationalEvidenceHistory(
     poly_due_next_7d: number;
     poly_due_next_30d: number;
     poly_overdue_open_trades: number;
+    equity_sync_fresh_count: number;
+    equity_sync_expected_count: number;
+    equity_sync_max_age_sec: number | null;
     regime_min_days: number;
     regime_target_days: number;
     regime_all_instances_positive: number;
@@ -777,6 +997,9 @@ export function readOperationalEvidenceHistory(
     polyDueNext7Days: row.poly_due_next_7d,
     polyDueNext30Days: row.poly_due_next_30d,
     polyOverdueOpenTrades: row.poly_overdue_open_trades,
+    equitySyncFreshCount: row.equity_sync_fresh_count,
+    equitySyncExpectedCount: row.equity_sync_expected_count,
+    equitySyncMaxAgeSec: row.equity_sync_max_age_sec,
     regimeMinDays: row.regime_min_days,
     regimeTargetDays: row.regime_target_days,
     regimeAllInstancesPositive: row.regime_all_instances_positive === 1,

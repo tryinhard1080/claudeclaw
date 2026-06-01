@@ -16,7 +16,8 @@ ClaudeClaw is operational in paper mode for both configured markets:
   Live Readiness card now includes the real-money gate audit summary and next
   actions. Dashboard chat quick actions are trading-scoped: `Poly Status`,
   `Poly P&L`, `Trade Status`, and `Trade Sharpe`. Personal-assistant shortcuts
-  such as Todo and Gmail are not present.
+  such as Todo and Gmail are not present. The Evidence Path card now separates
+  equity live-sync freshness from the daily post-close Sharpe sample.
 
 Real money remains disabled. This is correct.
 
@@ -34,6 +35,9 @@ Real money remains disabled. This is correct.
   2026-06-30/2026-07-01.
 - Real-money gate audit: `3/7` boxes complete, `2` operator actions, `2`
   sample/time blockers, `0` system blockers, and live-money ready `NO`.
+- Equity live sync: `2/2` regime-trader state files fresh and open-full during
+  the active session, latest checked at roughly `3m` max state age. This proves
+  the live bridge is synced now; it does not close the daily Sharpe sample gate.
 - TTL evidence: latest active candidate set `4/9` inside the 1-30 day TTL band.
 - Box 1 paper clock: `elapsed_review_ready`, `41/30` days since 2026-04-21,
   target 2026-05-21, A1 ACK present, MISSION checkbox still open.
@@ -79,6 +83,22 @@ Real money remains disabled. This is correct.
   - 7/7 PASS after adding the dashboard gate-audit rendering guard.
 - `npx vitest run src/dashboard-html.test.ts` - 5/5 PASS after replacing
   non-trading chat quick actions with trading commands and regression coverage.
+- `npx vitest run src/readiness/evidence.test.ts src/dashboard-html.test.ts` -
+  15/15 PASS after adding the equity live-sync evidence surface.
+- `npm run readiness:evidence` - PASS/WARN as expected; adds `Equity state
+  sync` PASS with `2/2` fresh/open-full instances while keeping Regime Box 3
+  WARN at `8/60`.
+- `npm run readiness:evidence:record` - refreshed the 2026-06-01 readiness
+  evidence snapshot; snapshot history now shows `equitySync=2/2`.
+- `npm test` - 75 files, 916 tests PASS after equity live-sync evidence.
+- `npm run build` - PASS after equity live-sync evidence.
+- Authenticated `/api/readiness/evidence` after rebuild/restart - returned
+  `status=warn`, `equitySync.status=pass`, `equitySync=2/2`,
+  `regimeSharpe=8/60`, and history `equitySync=2/2`.
+- Post-restart `npm run capacity:status` - operational systems PASS; Financial
+  Datasets MCP connected; Polymarket scans fresh; both regime-trader instances
+  `open_full`; `Equity state sync` PASS at `2/2`; `0` system blockers; live
+  startup remains blocked by Boxes 1/2/3/7 by design.
 - `npm test` - 75 files, 913 tests PASS after rebuild and sequential rerun.
 - `npm run build` - PASS.
 - `pm2 restart claudeclaw-main --update-env` - PASS; `claudeclaw-main` online.

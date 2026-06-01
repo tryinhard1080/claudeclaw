@@ -30,10 +30,15 @@ function fmtUsd(value: number): string {
 function fmtAge(nowSec: number, at: number | null): string {
   if (!at) return '-';
   const ageSec = Math.max(0, nowSec - at);
-  if (ageSec < 60) return `${ageSec}s ago`;
-  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
-  if (ageSec < 86_400) return `${Math.floor(ageSec / 3600)}h ago`;
-  return `${Math.floor(ageSec / 86_400)}d ago`;
+  return `${fmtDuration(ageSec)} ago`;
+}
+
+function fmtDuration(ageSec: number | null): string {
+  if (ageSec === null || ageSec === undefined) return '-';
+  if (ageSec < 60) return `${ageSec}s`;
+  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m`;
+  if (ageSec < 86_400) return `${Math.floor(ageSec / 3600)}h`;
+  return `${Math.floor(ageSec / 86_400)}d`;
 }
 
 function fmtDate(at: number | null): string {
@@ -69,6 +74,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
       `poly=${row.polySettledTrades}/${row.polyTargetSettledTrades}  ` +
       `pnl=${fmtUsd(row.polyTotalPnlUsd)}  ` +
       `due30=${row.polyDueNext30Days}/${row.polyOpenTrades}  ` +
+      `equitySync=${row.equitySyncFreshCount}/${row.equitySyncExpectedCount}  ` +
       `regime=${row.regimeMinDays}/${row.regimeTargetDays}d  ` +
       `ttl=${fmtPct(row.ttlPassRate)}`,
     );
@@ -76,7 +82,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
 }
 
 function printEvidence(payload: OperationalEvidencePayload, history: OperationalEvidenceHistoryPoint[] = []): void {
-  const { polymarket, regimeSharpe, ttlFilter } = payload;
+  const { polymarket, equitySync, regimeSharpe, ttlFilter } = payload;
 
   console.log('Operational Evidence');
   console.log('--------------------');
@@ -127,6 +133,21 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   }
 
   console.log();
+  console.log('Equity Live Sync');
+  console.log('----------------');
+  if (!equitySync) {
+    console.log('Equity state sync not collected');
+  } else {
+    console.log(`Fresh instances          ${equitySync.freshCount}/${equitySync.expectedCount}`);
+    console.log(`Latest state write       ${fmtAge(payload.generatedAt, equitySync.latestAt)}`);
+    console.log(`Max state age            ${fmtDuration(equitySync.maxAgeSec)}`);
+    for (const row of equitySync.instances) {
+      const equity = row.equity === null ? '-' : fmtUsd(row.equity);
+      console.log(`${row.instance.padEnd(18)} ${row.state.padEnd(18)} age=${fmtDuration(row.ageSec)} equity=${equity}`);
+    }
+  }
+
+  console.log();
   console.log('Equity Regime Evidence');
   console.log('----------------------');
   if (regimeSharpe.instances.length === 0) {
@@ -161,7 +182,7 @@ export function main(): number {
   try {
     db.pragma('busy_timeout = 5000');
     if (shouldRecord) db.pragma('journal_mode = WAL');
-    const payload = collectOperationalEvidence(db);
+    const payload = collectOperationalEvidence(db, Math.floor(Date.now() / 1000), { collectEquitySync: true });
     if (shouldRecord) {
       const ymd = recordOperationalEvidenceSnapshot(db, payload);
       console.log(`Recorded readiness evidence snapshot: ${ymd}`);
