@@ -16,6 +16,8 @@ import {
 } from './evidence.js';
 
 const NOW = 1_800_000_000;
+const REGULAR_SESSION_NOW = Math.floor(Date.parse('2026-06-01T15:00:00-04:00') / 1000);
+const AFTER_CLOSE_NOW = Math.floor(Date.parse('2026-06-01T16:20:00-04:00') / 1000);
 
 function db(): Database.Database {
   return new Database(':memory:');
@@ -140,8 +142,32 @@ describe('operational evidence', () => {
     expect(evidence.instances.map(row => row.state)).toEqual(['fresh_open_full', 'fresh_open_full']);
   });
 
+  it('accepts closed equity state until next open even after the write age exceeds the open-session freshness window', () => {
+    const evidence = collectEquitySyncEvidence(AFTER_CLOSE_NOW, {
+      instanceNames: ['spy-aggressive', 'spy-conservative'],
+      freshSec: 900,
+      readState: () => ({
+        raw: JSON.stringify({
+          market_open: false,
+          equity: 105000,
+          cash: 92000,
+          next_open: '2026-06-02 09:30:00-04:00',
+        }),
+        mtimeMs: (AFTER_CLOSE_NOW - 1200) * 1000,
+      }),
+    });
+
+    expect(evidence.status).toBe('pass');
+    expect(evidence.freshCount).toBe(2);
+    expect(evidence.maxAgeSec).toBe(1200);
+    expect(evidence.instances.map(row => row.state)).toEqual([
+      'closed_until_next_open',
+      'closed_until_next_open',
+    ]);
+  });
+
   it('warns when one equity state file is stale or partial', () => {
-    const evidence = collectEquitySyncEvidence(NOW, {
+    const evidence = collectEquitySyncEvidence(REGULAR_SESSION_NOW, {
       instanceNames: ['spy-aggressive', 'spy-conservative'],
       freshSec: 900,
       readState: (instance) => ({
@@ -151,7 +177,7 @@ describe('operational evidence', () => {
           regime: instance === 'spy-aggressive' ? { label: 'WEAK_BULL' } : null,
           risk: { max_exposure: 1 },
         }),
-        mtimeMs: (NOW - (instance === 'spy-aggressive' ? 30 : 1200)) * 1000,
+        mtimeMs: (REGULAR_SESSION_NOW - (instance === 'spy-aggressive' ? 30 : 1200)) * 1000,
       }),
     });
 

@@ -55,10 +55,12 @@ Final report:
 
 ## Current Execution State
 
-- Equities: Alpaca paper account and regime-trader instances are online and
-  visible in the dashboard.
-- Polymarket: paper scanner is online. `POLY_TTL_FILTER_ENABLED=true` and
-  `POLY_MARKET_QUALITY_FILTER_ENABLED=true` are active in PM2 logs.
+- Equities: Alpaca paper account is wired through regime-trader. After-hours
+  states are expected to report `closed_until_next_open`; the next market-open
+  sync is the next equity proof point.
+- Polymarket: paper scanner is online with widened Gamma discovery, TTL filter,
+  market-quality filter, source freshness, approval quality, open-book quality,
+  and resolution queue evidence surfaced in CLI and dashboard.
 - Dashboard: equity cockpit, Polymarket paper status, trading ops, gate progress,
   live flags, and source freshness are visible.
 - Real money: still disabled. This is correct.
@@ -97,3 +99,5 @@ Final report:
 | 2026-06-01 14:55 CT | Re-ran the enhanced goal loop and selected the next safe blocker: approved signal quality. Added a read-only evidence surface for approved Polymarket signals so CLI/dashboard review shows source freshness, paper-trade linkage, average/max edge, stale or missing source context, and low-confidence high-edge watches. Live evidence currently shows `9/11` recent approvals with fresh source context, `11/11` linked to paper trades, and `1` low-confidence high-edge watch. | Run full tests, rebuild, record the snapshot, restart PM2, browser-verify `Signal qual`, then commit and push. |
 | 2026-06-01 15:05 CT | Live news-sync smoke found the next safe source-quality blocker: Sonar refused live search, RSS fallback worked, but raw fallback quality could admit personal-finance filler and position intersections could alert on weak generic tokens such as `company` and `market`. | Add deterministic RSS trading-relevance filtering, XML entity cleanup, and distinctive-token intersection gating; verify with targeted tests, live sync, full tests/build, capacity, then commit and push. |
 | 2026-06-01 15:10 CT | Full-capacity bookkeeping exposed an after-hours benchmark snapshot bug: `trading:benchmark:snapshot` failed when regime-trader closed-market state omitted `positions[].current_price`, even though stored benchmark status remained usable. | Add a tested clean-skip path for missing SPY price so readiness does not treat closed-market source shape as a system blocker. |
+| 2026-06-01 15:15 CT | Re-ran the enhanced goal loop against the fresh baseline. Operational systems are green with `0` system blockers, Polymarket scans fresh at `991` markets, `20` open paper positions, `603` signals and `11` approvals in the last 24h, paper equity `$5,002.91`, regime Sharpe `8/60`, and live-money startup blocked only by Boxes 1/2/3/7. The shared Claude/Codex surface still had the older Box 2 `11/50` potential count. | Update shared agent guidance and this checkpoint log, then verify `agent:surface:check`, record readiness evidence, run capacity status, commit, and push. |
+| 2026-06-01 15:21 CT | Readiness evidence briefly false-failed equity sync after market close because state-file age exceeded the open-session freshness window. Reused the regime-state classifier so closed-session states count correctly. Verified `readiness:evidence:record` and `capacity:status`: equity sync PASS `2/2 closed_until_next_open`, Polymarket scans fresh at `990` markets, `20` open paper positions, `612` signals and `11` approvals in the last 24h, and system blockers remain `0`. | Commit and push. Remaining live-money blockers are Box 1 operator review, Box 2 settled trade sample, Box 3 60-day Sharpe sample, and Box 7 final written sign-off. |

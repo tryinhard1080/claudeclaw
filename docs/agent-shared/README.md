@@ -90,8 +90,10 @@ The remaining blockers are evidence/operator gates:
 
 - Box 1: elapsed paper-clock evidence is ready, but the `MISSION.md` checkbox
   still needs operator review.
-- Box 2: Polymarket paper trades are `0/50` settled, with `11/50` potential
-  after the current open book and `39` additional resolved trades still needed.
+- Box 2: Polymarket paper trades are `0/50` settled, with `20/50` potential
+  after the current open book and `30` additional resolved trades still needed.
+  Near-term capacity is `14/50` due within 30 days, so `36` more near-term
+  resolved trades are still needed for a faster learning sample.
 - Box 3: regime-trader Sharpe evidence is `8/60` sample days.
 - Box 7: Richard's final written live-money sign-off is still pending.
 

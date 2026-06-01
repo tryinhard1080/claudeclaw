@@ -14,6 +14,7 @@ import {
 import { evaluateMarketQuality } from '../poly/market-quality.js';
 import type { Market } from '../poly/types.js';
 import { compareEquityBenchmark, type EquityCurvePoint } from '../trading/equity-benchmark.js';
+import { summarizeRegimeState, type MinimalRegimeState } from '../trading/ops-status.js';
 import type { ReadinessStatus } from './gate-progress.js';
 
 export interface ReadinessEvidenceMetric {
@@ -188,6 +189,12 @@ export type EquitySyncState =
   | 'fresh_open_partial'
   | 'fresh_closed'
   | 'fresh_unknown'
+  | 'closed_until_next_open'
+  | 'opening_grace'
+  | 'closed_stale_open_state'
+  | 'closed_missing_next_open'
+  | 'stale_after_next_open'
+  | 'invalid'
   | 'stale'
   | 'missing'
   | 'unreadable';
@@ -1269,19 +1276,41 @@ function defaultReadEquityState(_instance: string, statePath: string): { raw: st
   };
 }
 
-function equitySyncState(args: {
-  ageSec: number | null;
-  freshSec: number;
-  marketOpen: boolean | null;
-  hasRegime: boolean;
-  hasRisk: boolean;
-}): EquitySyncState {
-  if (args.ageSec === null || args.ageSec > args.freshSec) return 'stale';
-  if (args.marketOpen === true) {
-    return args.hasRegime && args.hasRisk ? 'fresh_open_full' : 'fresh_open_partial';
+function equitySyncStateFromRegimeSummary(state: string): EquitySyncState {
+  switch (state) {
+    case 'open_full':
+      return 'fresh_open_full';
+    case 'open_partial':
+      return 'fresh_open_partial';
+    case 'closed_until_next_open':
+    case 'opening_grace':
+    case 'closed_stale_open_state':
+    case 'closed_missing_next_open':
+    case 'stale_after_next_open':
+      return state;
+    case 'invalid':
+      return 'invalid';
+    case 'open_stale_during_session':
+      return 'stale';
+    default:
+      return 'fresh_unknown';
   }
-  if (args.marketOpen === false) return 'fresh_closed';
-  return 'fresh_unknown';
+}
+
+function isEquitySyncPassState(state: EquitySyncState): boolean {
+  return state === 'fresh_open_full'
+    || state === 'fresh_closed'
+    || state === 'closed_until_next_open'
+    || state === 'opening_grace'
+    || state === 'closed_stale_open_state';
+}
+
+function isEquitySyncFailureState(state: EquitySyncState): boolean {
+  return state === 'stale'
+    || state === 'stale_after_next_open'
+    || state === 'missing'
+    || state === 'unreadable'
+    || state === 'invalid';
 }
 
 function summarizeEquitySync(instances: ReadonlyArray<EquitySyncInstanceEvidence>): string {
@@ -1320,9 +1349,13 @@ export function collectEquitySyncEvidence(
       const equity = typeof parsed.equity === 'number' && Number.isFinite(parsed.equity)
         ? parsed.equity
         : null;
+      const stateSummary = summarizeRegimeState(parsed as MinimalRegimeState, nowSec * 1000, {
+        stateMtimeMs: mtimeMs,
+        openStateStaleMs: freshSec * 1000,
+      });
       return {
         instance,
-        state: equitySyncState({ ageSec, freshSec, marketOpen, hasRegime, hasRisk }),
+        state: equitySyncStateFromRegimeSummary(stateSummary.state),
         syncedAt,
         ageSec,
         marketOpen,
@@ -1354,14 +1387,16 @@ export function collectEquitySyncEvidence(
   const ages = instances
     .map(row => row.ageSec)
     .filter((value): value is number => value !== null);
-  const freshCount = instances.filter(row => row.ageSec !== null && row.ageSec <= freshSec).length;
+  const freshCount = instances.filter(row => isEquitySyncPassState(row.state)).length;
   const allFresh = instances.length > 0 && freshCount === instances.length;
   const allOpenFull = instances.length > 0 && instances.every(row => row.state === 'fresh_open_full');
-  const hasUnreadable = instances.some(row => row.state === 'missing' || row.state === 'unreadable');
+  const hasFailure = instances.some(row => isEquitySyncFailureState(row.state));
   const hasPartial = instances.some(row => row.state === 'fresh_open_partial' || row.state === 'fresh_unknown');
-  const status: ReadinessStatus = instances.length === 0 || freshCount === 0
+  const hasWarning = hasPartial || instances.some(row => row.state === 'closed_missing_next_open');
+  const viableCount = instances.filter(row => !isEquitySyncFailureState(row.state)).length;
+  const status: ReadinessStatus = instances.length === 0 || viableCount === 0
     ? 'fail'
-    : (!allFresh || hasUnreadable || hasPartial ? 'warn' : 'pass');
+    : (!allFresh || hasFailure || hasWarning ? 'warn' : 'pass');
 
   return {
     instances,
@@ -1746,13 +1781,22 @@ function buildMetrics(
   ];
 
   if (equitySync) {
+    const equitySyncMetricState = equitySync.status === 'pass'
+      ? (
+          equitySync.allOpenFull
+            ? 'open_full'
+            : equitySync.instances.every(row => row.state === 'closed_until_next_open')
+              ? 'closed_until_next_open'
+              : equitySync.instances.every(row => row.state === 'closed_stale_open_state')
+                ? 'closed_stale_open_state'
+                : 'fresh'
+        )
+      : (equitySync.freshCount > 0 ? 'partial_or_stale' : 'missing_or_stale');
     metrics.push({
       key: 'equity_state_sync',
       name: 'Equity state sync',
       status: equitySync.status,
-      state: equitySync.status === 'pass'
-        ? (equitySync.allOpenFull ? 'open_full' : 'fresh')
-        : (equitySync.freshCount > 0 ? 'partial_or_stale' : 'missing_or_stale'),
+      state: equitySyncMetricState,
       detail: equitySync.summary,
       current: equitySync.freshCount,
       target: equitySync.expectedCount,
