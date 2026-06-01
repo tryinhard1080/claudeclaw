@@ -79,6 +79,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
       `${row.snapshotYmd}  status=${row.status.toUpperCase()}  ` +
       `poly=${row.polySettledTrades}/${row.polyTargetSettledTrades}  ` +
       `potential=${row.polyPotentialSettledTrades}/${row.polyTargetSettledTrades}  ` +
+      `near30=${row.polyNearTermPotentialSettledTrades}/${row.polyTargetSettledTrades}  ` +
       `pnl=${fmtUsd(row.polyTotalPnlUsd)}  ` +
       `due30=${row.polyDueNext30Days}/${row.polyOpenTrades}  ` +
       `equitySync=${row.equitySyncFreshCount}/${row.equitySyncExpectedCount}  ` +
@@ -119,6 +120,8 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log(`Box 2 potential settled   ${polymarket.potentialSettledTrades}/${polymarket.targetSettledTrades}`);
   console.log(`Additional resolved need  ${polymarket.additionalSettledTradesNeeded}`);
   console.log(`Open book reaches target  ${polymarket.openPipelineCanReachTarget ? 'yes' : 'no'}`);
+  console.log(`Near-term Box 2 capacity  ${polymarket.nearTermPotentialSettledTrades}/${polymarket.targetSettledTrades}`);
+  console.log(`Near-term resolved need   ${polymarket.additionalNearTermSettledTradesNeeded}`);
   console.log(`Open exposure             ${fmtUsd(polymarket.openExposureUsd)} (${fmtPct(polymarket.openPnlPct)} open P&L)`);
   console.log(`Due next 7d / 30d         ${polymarket.dueNext7Days}/${polymarket.dueNext30Days}`);
   console.log(`Overdue open              ${polymarket.overdueOpenTrades}`);

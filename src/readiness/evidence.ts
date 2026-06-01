@@ -36,6 +36,10 @@ export interface PolymarketEvidence {
   additionalSettledTradesNeeded: number;
   openPipelineCanReachTarget: boolean;
   openPipelineCoveragePct: number;
+  nearTermPotentialSettledTrades: number;
+  additionalNearTermSettledTradesNeeded: number;
+  nearTermPipelineCanReachTarget: boolean;
+  nearTermPipelineCoveragePct: number;
   overdueOpenTrades: number;
   dueNext7Days: number;
   dueNext30Days: number;
@@ -190,6 +194,8 @@ export interface OperationalEvidenceHistoryPoint {
   polyVoidedTrades: number;
   polyPotentialSettledTrades: number;
   polyAdditionalSettledTradesNeeded: number;
+  polyNearTermPotentialSettledTrades: number;
+  polyAdditionalNearTermSettledTradesNeeded: number;
   polyDueNext7Days: number;
   polyDueNext30Days: number;
   polyOverdueOpenTrades: number;
@@ -434,6 +440,10 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
       additionalSettledTradesNeeded: SETTLED_TARGET,
       openPipelineCanReachTarget: false,
       openPipelineCoveragePct: 0,
+      nearTermPotentialSettledTrades: 0,
+      additionalNearTermSettledTradesNeeded: SETTLED_TARGET,
+      nearTermPipelineCanReachTarget: false,
+      nearTermPipelineCoveragePct: 0,
       overdueOpenTrades: 0,
       dueNext7Days: 0,
       dueNext30Days: 0,
@@ -488,6 +498,11 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     nearestOpenEndAt = epoch(db, `SELECT MIN(m.end_date) AS value ${openWithEndDate} AND m.end_date > ?`, [nowSec]);
   }
 
+  const nearTermPotentialSettledTrades = settledTrades + dueNext30Days;
+  const additionalNearTermSettledTradesNeeded = Math.max(0, SETTLED_TARGET - nearTermPotentialSettledTrades);
+  const nearTermPipelineCanReachTarget = nearTermPotentialSettledTrades >= SETTLED_TARGET;
+  const nearTermPipelineCoveragePct = progress(nearTermPotentialSettledTrades, SETTLED_TARGET);
+
   const signals24h = hasSignals
     ? scalar(db, 'SELECT COUNT(*) AS value FROM poly_signals WHERE created_at >= ?', [dayAgo])
     : 0;
@@ -519,6 +534,10 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     additionalSettledTradesNeeded,
     openPipelineCanReachTarget,
     openPipelineCoveragePct,
+    nearTermPotentialSettledTrades,
+    additionalNearTermSettledTradesNeeded,
+    nearTermPipelineCanReachTarget,
+    nearTermPipelineCoveragePct,
     overdueOpenTrades,
     dueNext7Days,
     dueNext30Days,
@@ -894,6 +913,18 @@ function buildMetrics(
       progressPct: polymarket.openPipelineCoveragePct,
     },
     {
+      key: 'polymarket_near_term_box2_capacity',
+      name: 'Near-term Box 2 capacity',
+      status: polymarket.settledTrades >= SETTLED_TARGET && polymarket.realizedPnlPositive ? 'pass' : 'warn',
+      state: polymarket.nearTermPipelineCanReachTarget
+        ? 'near_term_book_can_reach_target'
+        : (polymarket.nearTermPotentialSettledTrades > polymarket.settledTrades ? 'near_term_underfilled' : 'no_near_term_pipeline'),
+      detail: `${polymarket.settledTrades} settled + ${polymarket.dueNext30Days} due <=30d = ${polymarket.nearTermPotentialSettledTrades}/${SETTLED_TARGET} near-term; needs ${polymarket.additionalNearTermSettledTradesNeeded} more near-term resolved trades`,
+      current: polymarket.nearTermPotentialSettledTrades,
+      target: SETTLED_TARGET,
+      progressPct: polymarket.nearTermPipelineCoveragePct,
+    },
+    {
       key: 'polymarket_resolution_pipeline',
       name: 'Resolution pipeline',
       status: hasPaperTrades ? 'pass' : 'warn',
@@ -1034,6 +1065,8 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
       poly_voided_trades            INTEGER NOT NULL,
       poly_potential_settled_trades INTEGER NOT NULL DEFAULT 0,
       poly_additional_settled_trades_needed INTEGER NOT NULL DEFAULT 0,
+      poly_near_term_potential_settled_trades INTEGER NOT NULL DEFAULT 0,
+      poly_additional_near_term_settled_trades_needed INTEGER NOT NULL DEFAULT 0,
       poly_due_next_7d              INTEGER NOT NULL,
       poly_due_next_30d             INTEGER NOT NULL,
       poly_overdue_open_trades      INTEGER NOT NULL,
@@ -1061,6 +1094,8 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_approval_rate_24h', 'poly_approval_rate_24h REAL');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_potential_settled_trades', 'poly_potential_settled_trades INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_additional_settled_trades_needed', 'poly_additional_settled_trades_needed INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_near_term_potential_settled_trades', 'poly_near_term_potential_settled_trades INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_additional_near_term_settled_trades_needed', 'poly_additional_near_term_settled_trades_needed INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_fresh_count', 'equity_sync_fresh_count INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_expected_count', 'equity_sync_expected_count INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_max_age_sec', 'equity_sync_max_age_sec INTEGER');
@@ -1084,13 +1119,14 @@ export function recordOperationalEvidenceSnapshot(
       poly_open_trades, poly_voided_trades, poly_due_next_7d,
       poly_due_next_30d, poly_overdue_open_trades,
       poly_potential_settled_trades, poly_additional_settled_trades_needed,
+      poly_near_term_potential_settled_trades, poly_additional_near_term_settled_trades_needed,
       equity_sync_fresh_count, equity_sync_expected_count, equity_sync_max_age_sec,
       equity_benchmark_min_excess_return, equity_benchmark_all_outperforming,
       equity_benchmark_instance_count,
       regime_min_days, regime_target_days, regime_all_instances_positive,
       ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
       payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(snapshot_ymd) DO UPDATE SET
       captured_at = excluded.captured_at,
       status = excluded.status,
@@ -1108,6 +1144,8 @@ export function recordOperationalEvidenceSnapshot(
       poly_overdue_open_trades = excluded.poly_overdue_open_trades,
       poly_potential_settled_trades = excluded.poly_potential_settled_trades,
       poly_additional_settled_trades_needed = excluded.poly_additional_settled_trades_needed,
+      poly_near_term_potential_settled_trades = excluded.poly_near_term_potential_settled_trades,
+      poly_additional_near_term_settled_trades_needed = excluded.poly_additional_near_term_settled_trades_needed,
       equity_sync_fresh_count = excluded.equity_sync_fresh_count,
       equity_sync_expected_count = excluded.equity_sync_expected_count,
       equity_sync_max_age_sec = excluded.equity_sync_max_age_sec,
@@ -1139,6 +1177,8 @@ export function recordOperationalEvidenceSnapshot(
     payload.polymarket.overdueOpenTrades,
     payload.polymarket.potentialSettledTrades,
     payload.polymarket.additionalSettledTradesNeeded,
+    payload.polymarket.nearTermPotentialSettledTrades,
+    payload.polymarket.additionalNearTermSettledTradesNeeded,
     payload.equitySync?.freshCount ?? 0,
     payload.equitySync?.expectedCount ?? 0,
     payload.equitySync?.maxAgeSec ?? null,
@@ -1177,6 +1217,8 @@ export function readOperationalEvidenceHistory(
            poly_due_next_7d, poly_due_next_30d, poly_overdue_open_trades,
            ${optional('poly_potential_settled_trades', 'poly_settled_trades + poly_open_trades')} AS poly_potential_settled_trades,
            ${optional('poly_additional_settled_trades_needed', 'MAX(poly_target_settled_trades - (poly_settled_trades + poly_open_trades), 0)')} AS poly_additional_settled_trades_needed,
+           ${optional('poly_near_term_potential_settled_trades', 'poly_settled_trades + poly_due_next_30d')} AS poly_near_term_potential_settled_trades,
+           ${optional('poly_additional_near_term_settled_trades_needed', 'MAX(poly_target_settled_trades - (poly_settled_trades + poly_due_next_30d), 0)')} AS poly_additional_near_term_settled_trades_needed,
            ${optional('equity_sync_fresh_count', '0')} AS equity_sync_fresh_count,
            ${optional('equity_sync_expected_count', '0')} AS equity_sync_expected_count,
            ${optional('equity_sync_max_age_sec', 'NULL')} AS equity_sync_max_age_sec,
@@ -1203,6 +1245,8 @@ export function readOperationalEvidenceHistory(
     poly_voided_trades: number;
     poly_potential_settled_trades: number;
     poly_additional_settled_trades_needed: number;
+    poly_near_term_potential_settled_trades: number;
+    poly_additional_near_term_settled_trades_needed: number;
     poly_due_next_7d: number;
     poly_due_next_30d: number;
     poly_overdue_open_trades: number;
@@ -1235,6 +1279,8 @@ export function readOperationalEvidenceHistory(
     polyVoidedTrades: row.poly_voided_trades,
     polyPotentialSettledTrades: row.poly_potential_settled_trades,
     polyAdditionalSettledTradesNeeded: row.poly_additional_settled_trades_needed,
+    polyNearTermPotentialSettledTrades: row.poly_near_term_potential_settled_trades,
+    polyAdditionalNearTermSettledTradesNeeded: row.poly_additional_near_term_settled_trades_needed,
     polyDueNext7Days: row.poly_due_next_7d,
     polyDueNext30Days: row.poly_due_next_30d,
     polyOverdueOpenTrades: row.poly_overdue_open_trades,
