@@ -82,6 +82,12 @@ describe('operational evidence', () => {
     expect(evidence.additionalNearTermSettledTradesNeeded).toBe(46);
     expect(evidence.nearTermPipelineCanReachTarget).toBe(false);
     expect(evidence.nearTermPipelineCoveragePct).toBe(0.08);
+    expect(evidence.paperTradesOpened24h).toBe(5);
+    expect(evidence.nearTermPaperTradesOpened24h).toBe(2);
+    expect(evidence.dailyNearTermTradeTarget30d).toBeCloseTo(46 / 30, 6);
+    expect(evidence.nearTermPipelineFillDaysAt24hRate).toBe(23);
+    expect(evidence.nearTermPipelineFillEtaAt).toBe(NOW + 23 * 86400);
+    expect(evidence.nearTermVelocityState).toBe('near_term_on_pace');
     expect(evidence.dueNext7Days).toBe(1);
     expect(evidence.dueNext30Days).toBe(2);
     expect(evidence.overdueOpenTrades).toBe(1);
@@ -361,6 +367,12 @@ describe('operational evidence', () => {
       current: 1,
       target: 50,
     });
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_box2_learning_velocity')).toMatchObject({
+      status: 'warn',
+      state: 'near_term_below_pace',
+      current: 1,
+      target: 2,
+    });
     expect(payload.metrics.find(metric => metric.key === 'equity_state_sync')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'equity_benchmark_edge')?.status).toBe('pass');
     expect(payload.equityBenchmark?.minExcessReturn).toBeCloseTo(0.03, 6);
@@ -378,6 +390,7 @@ describe('operational evidence', () => {
     expect(payload.polymarket.settledTrades).toBe(0);
     expect(payload.polymarket.additionalSettledTradesNeeded).toBe(50);
     expect(payload.polymarket.additionalNearTermSettledTradesNeeded).toBe(50);
+    expect(payload.polymarket.nearTermVelocityState).toBe('missing_maturity_data');
     expect(payload.regimeSharpe.instances).toEqual([]);
     expect(payload.ttlFilter.latestAt).toBeNull();
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('fail');
@@ -450,6 +463,10 @@ describe('operational evidence', () => {
     expect(history[0]!.polyAdditionalSettledTradesNeeded).toBe(49);
     expect(history[0]!.polyNearTermPotentialSettledTrades).toBe(1);
     expect(history[0]!.polyAdditionalNearTermSettledTradesNeeded).toBe(49);
+    expect(history[0]!.polyPaperTradesOpened24h).toBe(1);
+    expect(history[0]!.polyNearTermPaperTradesOpened24h).toBe(1);
+    expect(history[0]!.polyDailyNearTermTradeTarget30d).toBeCloseTo(49 / 30, 6);
+    expect(history[0]!.polyNearTermFillDaysAt24hRate).toBe(49);
     expect(history[0]!.polyTotalPnlUsd).toBe(0);
     expect(history[0]!.polyPaperEquityUsd).toBe(5000);
     expect(history[0]!.polyApprovalRate24h).toBe(1);

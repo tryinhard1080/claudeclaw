@@ -59,6 +59,11 @@ function fmtDays(value: number | null | undefined): string {
   return `${Math.ceil(value)}d`;
 }
 
+function fmtEta(nowSec: number, at: number | null): string {
+  if (!at) return '-';
+  return `${fmtDate(at)} (${fmtDays((at - nowSec) / 86_400)})`;
+}
+
 function argValue(name: string): string | null {
   const idx = process.argv.indexOf(name);
   return idx >= 0 ? process.argv[idx + 1] ?? null : null;
@@ -80,6 +85,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
       `poly=${row.polySettledTrades}/${row.polyTargetSettledTrades}  ` +
       `potential=${row.polyPotentialSettledTrades}/${row.polyTargetSettledTrades}  ` +
       `near30=${row.polyNearTermPotentialSettledTrades}/${row.polyTargetSettledTrades}  ` +
+      `vel=${row.polyNearTermPaperTradesOpened24h}/24h  ` +
       `pnl=${fmtUsd(row.polyTotalPnlUsd)}  ` +
       `due30=${row.polyDueNext30Days}/${row.polyOpenTrades}  ` +
       `equitySync=${row.equitySyncFreshCount}/${row.equitySyncExpectedCount}  ` +
@@ -122,6 +128,10 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log(`Open book reaches target  ${polymarket.openPipelineCanReachTarget ? 'yes' : 'no'}`);
   console.log(`Near-term Box 2 capacity  ${polymarket.nearTermPotentialSettledTrades}/${polymarket.targetSettledTrades}`);
   console.log(`Near-term resolved need   ${polymarket.additionalNearTermSettledTradesNeeded}`);
+  console.log(`Learning trades 24h       ${polymarket.paperTradesOpened24h}`);
+  console.log(`Near-term opened 24h      ${polymarket.nearTermPaperTradesOpened24h}`);
+  console.log(`30d near-term target      ${polymarket.dailyNearTermTradeTarget30d.toFixed(1)}/day`);
+  console.log(`Near-term fill ETA        ${fmtEta(payload.generatedAt, polymarket.nearTermPipelineFillEtaAt)}`);
   console.log(`Open exposure             ${fmtUsd(polymarket.openExposureUsd)} (${fmtPct(polymarket.openPnlPct)} open P&L)`);
   console.log(`Due next 7d / 30d         ${polymarket.dueNext7Days}/${polymarket.dueNext30Days}`);
   console.log(`Overdue open              ${polymarket.overdueOpenTrades}`);

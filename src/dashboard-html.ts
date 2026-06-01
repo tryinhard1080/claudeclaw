@@ -2346,6 +2346,13 @@ function renderEvidencePath(evidence) {
       (poly.nearTermPotentialSettledTrades ?? ((poly.settledTrades ?? 0) + (poly.dueNext30Days ?? 0))) + '/' +
       (poly.targetSettledTrades ?? 50) +
       ' need ' + (poly.additionalNearTermSettledTradesNeeded ?? Math.max(0, (poly.targetSettledTrades ?? 50) - ((poly.settledTrades ?? 0) + (poly.dueNext30Days ?? 0))));
+    const nearTermDailyTarget = Number.isFinite(poly.dailyNearTermTradeTarget30d)
+      ? poly.dailyNearTermTradeTarget30d.toFixed(1)
+      : '-';
+    const box2VelocityText = ' / box2 velocity ' +
+      (poly.nearTermPaperTradesOpened24h ?? 0) + '/24h' +
+      ' target ' + nearTermDailyTarget + '/d' +
+      ' ETA ' + (poly.nearTermPipelineFillEtaAt ? fmtDateSec(poly.nearTermPipelineFillEtaAt) : '-');
     const equitySyncText = equitySync
       ? ' / equity sync ' + (equitySync.freshCount ?? 0) + '/' + (equitySync.expectedCount ?? 0) +
         ' max age ' + (equitySync.maxAgeSec === null || equitySync.maxAgeSec === undefined ? '-' : fmtAgo(equitySync.maxAgeSec))
@@ -2371,6 +2378,7 @@ function renderEvidencePath(evidence) {
         ' need ' + (last.polyAdditionalSettledTradesNeeded ?? '-') +
         ' / near30 ' + (last.polyNearTermPotentialSettledTrades ?? ((last.polySettledTrades ?? 0) + (last.polyDueNext30Days ?? 0))) + '/' + (last.polyTargetSettledTrades ?? 50) +
         ' need ' + (last.polyAdditionalNearTermSettledTradesNeeded ?? '-') +
+        ' / vel ' + (last.polyNearTermPaperTradesOpened24h ?? 0) + '/24h' +
         ' / regime ' + (last.regimeMinDays ?? 0) + '/' + (last.regimeTargetDays ?? 60) + 'd' +
         (regimeDelta !== 0 ? ' (' + (regimeDelta > 0 ? '+' : '') + regimeDelta + ')' : '') +
         ' / edge ' + fmtSignedPct(last.equityBenchmarkMinExcessReturn ?? null, 2);
@@ -2388,6 +2396,7 @@ function renderEvidencePath(evidence) {
       ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
       ' / nearest end ' + nearest +
       box2Text +
+      box2VelocityText +
       equitySyncText +
       equityBenchmarkText +
       ' / ttl tick ' + ttlAge +

@@ -53,8 +53,12 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("poly.additionalSettledTradesNeeded");
     expect(html).toContain("poly.nearTermPotentialSettledTrades");
     expect(html).toContain("poly.additionalNearTermSettledTradesNeeded");
+    expect(html).toContain("poly.nearTermPaperTradesOpened24h");
+    expect(html).toContain("poly.dailyNearTermTradeTarget30d");
+    expect(html).toContain("poly.nearTermPipelineFillEtaAt");
     expect(html).toContain("box2 potential");
     expect(html).toContain("box2 30d");
+    expect(html).toContain("box2 velocity");
   });
 
   it('renders live equity sync evidence separately from daily Sharpe', () => {

@@ -89,21 +89,24 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
 - The dashboard chat quick actions should stay trading-scoped and must not
   include personal-assistant shortcuts such as Todo or Gmail.
 - `npm run readiness:evidence` reports Polymarket settlement progress,
-  Box 2 pipeline capacity, near-term Box 2 capacity, mark-to-market paper P&L, near-term resolution
-  pipeline, the open-trade resolution queue, equity live-sync freshness, equity
+  Box 2 pipeline capacity, near-term Box 2 capacity, Box 2 learning velocity,
+  mark-to-market paper P&L, near-term resolution pipeline, the open-trade
+  resolution queue, equity live-sync freshness, equity
   benchmark edge, TTL filter evidence, and regime Sharpe sample depth. Box 2
   pipeline capacity should make the current settled-trade deficit explicit,
   including how many additional resolved trades are needed after the current
   open book. Near-term Box 2 capacity should separately show how many settled
   plus due-in-30-days trades can move the sample soon, and how many additional
-  near-term resolved trades are needed. Equity live-sync freshness proves current regime-trader state sync;
+  near-term resolved trades are needed. Box 2 learning velocity should show
+  near-term paper trades opened in the last 24 hours, the daily pace needed for
+  a 30-day path, and an ETA at the current rate. Equity live-sync freshness proves current regime-trader state sync;
   equity benchmark edge compares paper return against buy-and-hold; regime
   Sharpe remains a separate daily post-close sample gate.
 - The dashboard Evidence Path card should show the same open-trade resolution
   queue so Richard can see which paper positions can move Box 2 next. It should
-  also show Box 2 pipeline capacity, near-term Box 2 capacity, equity sync as
-  fresh instance count, and equity edge as percent excess return, separate from
-  regime days.
+  also show Box 2 pipeline capacity, near-term Box 2 capacity, Box 2 learning
+  velocity, equity sync as fresh instance count, and equity edge as percent
+  excess return, separate from regime days.
 - `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
 - `npm run readiness:evidence:cron` reports `already registered` or creates one active daily shell task for `scripts/readiness-evidence.ts --record --history 14`.
 - `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled.
