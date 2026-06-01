@@ -737,4 +737,39 @@ describe('selectPriceCaptureCandidates', () => {
     const out = selectPriceCaptureCandidates([noYes, mkMarket({ slug: 'normal' })], baseOpts);
     expect(out.map(m => m.slug)).toEqual(['normal']);
   });
+
+  it('filters markets outside the active TTL band before topN slicing', () => {
+    const near = mkMarket({
+      slug: 'near-valid',
+      volume24h: 20_000,
+      endDate: baseOpts.nowSec + 10 * 86400,
+    });
+    const longDated = mkMarket({
+      slug: 'long-dated-high-volume',
+      volume24h: 1_000_000,
+      endDate: baseOpts.nowSec + 200 * 86400,
+    });
+    const out = selectPriceCaptureCandidates([longDated, near], {
+      ...baseOpts,
+      ttlFilterEnabled: true,
+      minMarketTtlDays: 1,
+      maxMarketTtlDays: 30,
+      topN: 1,
+    });
+    expect(out.map(m => m.slug)).toEqual(['near-valid']);
+  });
+
+  it('filters untradeable joke markets when market quality filter is active', () => {
+    const bad = mkMarket({
+      slug: 'will-jesus-christ-return-before-gta-vi-665',
+      question: 'Will Jesus Christ return before GTA VI?',
+      volume24h: 1_000_000,
+    });
+    const good = mkMarket({ slug: 'normal-market', volume24h: 20_000 });
+    const out = selectPriceCaptureCandidates([bad, good], {
+      ...baseOpts,
+      marketQualityFilterEnabled: true,
+    });
+    expect(out.map(m => m.slug)).toEqual(['normal-market']);
+  });
 });

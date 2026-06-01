@@ -9,6 +9,10 @@ import {
   POLY_KELLY_LOW_MULT, POLY_KELLY_MED_MULT, POLY_KELLY_HIGH_MULT,
   POLY_EXPOSURE_AWARE_SIZING, POLY_MAX_DEPLOYED_PCT,
   POLY_WEATHER_SHADOW_ENABLED,
+  POLY_MIN_MARKET_TTL_DAYS,
+  POLY_MAX_MARKET_TTL_DAYS,
+  POLY_TTL_FILTER_ENABLED,
+  POLY_MARKET_QUALITY_FILTER_ENABLED,
 } from '../config.js';
 import type { Market, Signal, ProbabilityEstimate } from './types.js';
 import { bestAskAndDepth, fetchBook } from './clob-client.js';
@@ -31,6 +35,7 @@ import {
   WEATHER_SHADOW_PROMPT_VERSION,
   WEATHER_SHADOW_PROVIDER,
 } from './weather-shadow.js';
+import { evaluateMarketQuality } from './market-quality.js';
 
 const STRATEGY = 'ai-probability';
 const HALT_KEY = 'poly.halt';
@@ -82,6 +87,12 @@ export interface StrategyEngineOptions {
   confidenceMults?: ConfidenceMultipliers;
   /** Sprint 9: deduct live open-trade exposure from paperCapital before sizing. */
   exposureAwareSizing?: boolean;
+  /** Active upper/lower TTL band filter. Off by default unless enabled in env. */
+  ttlFilterEnabled?: boolean;
+  minMarketTtlDays?: number;
+  maxMarketTtlDays?: number;
+  /** Deterministic filter for contracts that are not useful for paper learning. */
+  marketQualityFilterEnabled?: boolean;
 }
 
 function emptyBook() {
@@ -117,6 +128,10 @@ export interface SelectCandidatesOpts {
   minYesPrice: number;
   maxYesPrice: number;
   topN: number;
+  ttlFilterEnabled?: boolean;
+  minMarketTtlDays?: number;
+  maxMarketTtlDays?: number;
+  marketQualityFilterEnabled?: boolean;
 }
 
 export function selectPriceCaptureCandidates(
@@ -132,6 +147,14 @@ export function selectPriceCaptureCandidates(
       const yes = m.outcomes.find(o => o.label.toLowerCase() === 'yes');
       if (!yes) return false;
       if (yes.price < opts.minYesPrice || yes.price > opts.maxYesPrice) return false;
+      const quality = evaluateMarketQuality(m, {
+        nowSec: opts.nowSec,
+        ttlFilterEnabled: opts.ttlFilterEnabled ?? false,
+        minTtlDays: opts.minMarketTtlDays,
+        maxTtlDays: opts.maxMarketTtlDays,
+        marketQualityFilterEnabled: opts.marketQualityFilterEnabled ?? false,
+      });
+      if (!quality.passed) return false;
       return true;
     })
     .sort((a, b) => b.volume24h - a.volume24h)
@@ -234,6 +257,10 @@ export class StrategyEngine extends EventEmitter {
   private readonly kellyFraction: number;
   private readonly minYesPrice: number;
   private readonly maxYesPrice: number;
+  private readonly ttlFilterEnabled: boolean;
+  private readonly minMarketTtlDays: number;
+  private readonly maxMarketTtlDays: number;
+  private readonly marketQualityFilterEnabled: boolean;
   private readonly gateConfig: GateConfig;
   private readonly evaluate: EvaluateFn;
   private readonly fetchBookFn: NonNullable<StrategyEngineOptions['fetchBook']>;
@@ -257,6 +284,10 @@ export class StrategyEngine extends EventEmitter {
     this.kellyFraction = opts.kellyFraction ?? POLY_KELLY_FRACTION;
     this.minYesPrice = opts.minYesPrice ?? POLY_MIN_MARKET_PRICE;
     this.maxYesPrice = opts.maxYesPrice ?? POLY_MAX_MARKET_PRICE;
+    this.ttlFilterEnabled = opts.ttlFilterEnabled ?? POLY_TTL_FILTER_ENABLED;
+    this.minMarketTtlDays = opts.minMarketTtlDays ?? POLY_MIN_MARKET_TTL_DAYS;
+    this.maxMarketTtlDays = opts.maxMarketTtlDays ?? POLY_MAX_MARKET_TTL_DAYS;
+    this.marketQualityFilterEnabled = opts.marketQualityFilterEnabled ?? POLY_MARKET_QUALITY_FILTER_ENABLED;
     this.gateConfig = opts.gateConfig ?? defaultGateConfig();
     this.evaluate = opts.evaluate ?? (args => evaluateMarket(args));
     this.fetchBookFn = opts.fetchBook ?? fetchBook;
@@ -325,6 +356,10 @@ export class StrategyEngine extends EventEmitter {
       minYesPrice: this.minYesPrice,
       maxYesPrice: this.maxYesPrice,
       topN: this.topN,
+      ttlFilterEnabled: this.ttlFilterEnabled,
+      minMarketTtlDays: this.minMarketTtlDays,
+      maxMarketTtlDays: this.maxMarketTtlDays,
+      marketQualityFilterEnabled: this.marketQualityFilterEnabled,
     });
   }
 

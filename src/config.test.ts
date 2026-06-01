@@ -13,6 +13,8 @@ describe('CONFIG_ENV_KEYS', () => {
       'POLY_TAKE_PROFIT_PCT',
       'POLY_STOP_LOSS_PCT',
       'POLY_EXPOSURE_AWARE_SIZING',
+      'POLY_TTL_FILTER_ENABLED',
+      'POLY_MARKET_QUALITY_FILTER_ENABLED',
     ]));
   });
 

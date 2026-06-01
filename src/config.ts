@@ -55,6 +55,8 @@ export const CONFIG_ENV_KEYS = [
   'POLY_MAX_MARKET_PRICE',
   'POLY_MIN_MARKET_TTL_DAYS',
   'POLY_MAX_MARKET_TTL_DAYS',
+  'POLY_TTL_FILTER_ENABLED',
+  'POLY_MARKET_QUALITY_FILTER_ENABLED',
   'POLY_RESEARCH_NOTEBOOK_ID',
   'POLY_WEATHER_SHADOW_ENABLED',
   'POLY_REFLECTION_ENABLED',
@@ -293,6 +295,10 @@ export const POLY_MAX_MARKET_PRICE = num('POLY_MAX_MARKET_PRICE', 0.85);
 // on 14 days of shadow data. See docs/research/sprint-s2-ttl-filter-shadow.md.
 export const POLY_MIN_MARKET_TTL_DAYS = num('POLY_MIN_MARKET_TTL_DAYS', 1);
 export const POLY_MAX_MARKET_TTL_DAYS = num('POLY_MAX_MARKET_TTL_DAYS', 30);
+export const POLY_TTL_FILTER_ENABLED =
+  (process.env.POLY_TTL_FILTER_ENABLED || envConfig.POLY_TTL_FILTER_ENABLED || 'false').toLowerCase() === 'true';
+export const POLY_MARKET_QUALITY_FILTER_ENABLED =
+  (process.env.POLY_MARKET_QUALITY_FILTER_ENABLED || envConfig.POLY_MARKET_QUALITY_FILTER_ENABLED || 'false').toLowerCase() === 'true';
 export const POLY_RESEARCH_NOTEBOOK_ID =
   process.env.POLY_RESEARCH_NOTEBOOK_ID || envConfig.POLY_RESEARCH_NOTEBOOK_ID || '';
 // Weather Goat shadow evaluator. Writes advisory `v3-weather-shadow` rows for

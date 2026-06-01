@@ -11,6 +11,8 @@ import {
   POLY_MAX_MARKET_PRICE,
   POLY_MIN_MARKET_TTL_DAYS,
   POLY_MAX_MARKET_TTL_DAYS,
+  POLY_TTL_FILTER_ENABLED,
+  POLY_MARKET_QUALITY_FILTER_ENABLED,
 } from '../config.js';
 import { fetchActiveMarkets } from './gamma-client.js';
 import type { Market } from './types.js';
@@ -97,7 +99,7 @@ export class MarketScanner extends EventEmitter {
       // StrategyEngine would actually evaluate. Cut writes from ~100k/tick
       // to ~40/tick (2500x reduction). Selection logic shared with the
       // engine via selectPriceCaptureCandidates.
-      const candidates = selectPriceCaptureCandidates(markets, {
+      const shadowCandidates = selectPriceCaptureCandidates(markets, {
         nowSec: Math.floor(Date.now() / 1000),
         minVolumeUsd: this.minVolumeUsd,
         minTtrHours: this.minTtrHours,
@@ -105,7 +107,19 @@ export class MarketScanner extends EventEmitter {
         maxYesPrice: this.maxYesPrice,
         topN: this.topN,
       });
-      scanTrace('candidates', { count: candidates.length });
+      const candidates = selectPriceCaptureCandidates(markets, {
+        nowSec: Math.floor(Date.now() / 1000),
+        minVolumeUsd: this.minVolumeUsd,
+        minTtrHours: this.minTtrHours,
+        minYesPrice: this.minYesPrice,
+        maxYesPrice: this.maxYesPrice,
+        topN: this.topN,
+        ttlFilterEnabled: POLY_TTL_FILTER_ENABLED,
+        minMarketTtlDays: POLY_MIN_MARKET_TTL_DAYS,
+        maxMarketTtlDays: POLY_MAX_MARKET_TTL_DAYS,
+        marketQualityFilterEnabled: POLY_MARKET_QUALITY_FILTER_ENABLED,
+      });
+      scanTrace('candidates', { count: candidates.length, shadowCount: shadowCandidates.length });
 
       // B4: upsert + capture + prune in ONE transaction. Atomic per-scan,
       // gives the checkpointer a single clean cut point, and prevents the
@@ -120,7 +134,7 @@ export class MarketScanner extends EventEmitter {
       try {
         const tickSec = Math.floor(started / 1000);
         const band = { minDays: POLY_MIN_MARKET_TTL_DAYS, maxDays: POLY_MAX_MARKET_TTL_DAYS };
-        const partition = partitionByTtl(candidates, band, tickSec);
+        const partition = partitionByTtl(shadowCandidates, band, tickSec);
         const tickStats = summarizeTick(partition, tickSec);
         recordTtlShadowTick(this.db, tickStats, band, tickSec);
       } catch (e) {
@@ -128,7 +142,14 @@ export class MarketScanner extends EventEmitter {
       }
 
       const duration = Date.now() - started;
-      logger.info({ count: markets.length, captured: candidates.length, ms: duration }, 'poly scan complete');
+      logger.info({
+        count: markets.length,
+        captured: candidates.length,
+        shadowCandidates: shadowCandidates.length,
+        ttlFilterEnabled: POLY_TTL_FILTER_ENABLED,
+        marketQualityFilterEnabled: POLY_MARKET_QUALITY_FILTER_ENABLED,
+        ms: duration,
+      }, 'poly scan complete');
       // Sprint 1.5: persist per-run metrics for drift dashboards. Wrapped
       // in try/catch so a scan-run write failure can't break the tick.
       try {
