@@ -148,6 +148,19 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log(`Nearest open end date     ${fmtDate(polymarket.nearestOpenEndAt)}`);
   console.log(`Latest paper trade        ${fmtAge(payload.generatedAt, polymarket.latestPaperTradeAt)}`);
   console.log(`Signals / approvals 24h   ${polymarket.signals24h}/${polymarket.approvedSignals24h} (${fmtPct(polymarket.approvalRate24h)})`);
+  console.log(
+    `Approved signal quality   source ${polymarket.approvedSignalQuality.sourceFreshSignals24h}/${polymarket.approvedSignalQuality.approvedSignals24h}; ` +
+    `linked ${polymarket.approvedSignalQuality.linkedPaperTradeSignals24h}/${polymarket.approvedSignalQuality.approvedSignals24h}; ` +
+    `avg edge ${polymarket.approvedSignalQuality.avgEdgePct === null ? '-' : `${polymarket.approvedSignalQuality.avgEdgePct.toFixed(1)}pp`}; ` +
+    `state ${polymarket.approvedSignalQuality.state}`,
+  );
+  if (polymarket.approvedSignalQuality.reasons.length > 0) {
+    const reasonText = polymarket.approvedSignalQuality.reasons
+      .slice(0, 3)
+      .map(reason => `${reason.code}=${reason.count}${reason.sampleSlug ? ` sample=${reason.sampleSlug}` : ''}`)
+      .join('; ');
+    console.log(`Signal quality warnings   ${reasonText}`);
+  }
 
   console.log();
   console.log('Market Discovery Evidence');

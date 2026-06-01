@@ -34,6 +34,15 @@ export type PolymarketNearTermVelocityState =
   | 'no_near_term_trade_velocity'
   | 'missing_maturity_data';
 
+export type PolymarketApprovedSignalQualityState =
+  | 'no_approved_signals'
+  | 'clean_approved_signals'
+  | 'invalid_approved_signal'
+  | 'source_context_schema_missing'
+  | 'source_context_incomplete'
+  | 'execution_link_incomplete'
+  | 'low_confidence_high_edge_watch';
+
 export interface PolymarketEvidence {
   settledTrades: number;
   targetSettledTrades: number;
@@ -75,6 +84,7 @@ export interface PolymarketEvidence {
   progressPct: number;
   hasMarketMaturityData: boolean;
   openBookQuality: PolymarketOpenBookQualityEvidence;
+  approvedSignalQuality: PolymarketApprovedSignalQualityEvidence;
   resolutionQueue: PolymarketResolutionQueueItem[];
 }
 
@@ -108,6 +118,34 @@ export interface PolymarketOpenBookQualityEvidence {
   status: ReadinessStatus;
   state: PolymarketOpenBookQualityState;
   reasons: PolymarketOpenBookQualityReason[];
+  summary: string;
+}
+
+export interface PolymarketApprovedSignalQualityReason {
+  code: string;
+  count: number;
+  sampleSlug: string | null;
+  reason: string;
+}
+
+export interface PolymarketApprovedSignalQualityEvidence {
+  approvedSignals24h: number;
+  linkedPaperTradeSignals24h: number;
+  sourceContextColumnPresent: boolean;
+  sourceFreshSignals24h: number;
+  missingSourceContextSignals24h: number;
+  staleSourceContextSignals24h: number;
+  malformedSourceContextSignals24h: number;
+  invalidApprovedSignals24h: number;
+  lowConfidenceHighEdgeSignals24h: number;
+  avgEdgePct: number | null;
+  maxEdgePct: number | null;
+  sourceFreshRate: number | null;
+  linkedTradeRate: number | null;
+  lowConfidenceHighEdgeThresholdPct: number;
+  status: ReadinessStatus;
+  state: PolymarketApprovedSignalQualityState;
+  reasons: PolymarketApprovedSignalQualityReason[];
   summary: string;
 }
 
@@ -344,6 +382,8 @@ const MARKET_DISCOVERY_TARGET = 500;
 const MARKET_DISCOVERY_FIRST_PAGE_CAP = 150;
 const MARKET_DISCOVERY_FRESH_SEC = 10 * 60;
 const EQUITY_SYNC_FRESH_SEC = 15 * 60;
+const APPROVED_SIGNAL_QUALITY_WINDOW_SEC = DAY_SEC;
+const LOW_CONFIDENCE_HIGH_EDGE_PCT = 15;
 const DEFAULT_EQUITY_INSTANCES = ['spy-aggressive', 'spy-conservative'] as const;
 
 function tableExists(db: Database.Database, name: string): boolean {
@@ -477,6 +517,38 @@ function addQualityReason(
     return;
   }
   reasons.set(code, { code, count: 1, sampleSlug, reason });
+}
+
+function addSignalQualityReason(
+  reasons: Map<string, PolymarketApprovedSignalQualityReason>,
+  code: string,
+  sampleSlug: string | null,
+  reason: string,
+): void {
+  const existing = reasons.get(code);
+  if (existing) {
+    existing.count += 1;
+    return;
+  }
+  reasons.set(code, { code, count: 1, sampleSlug, reason });
+}
+
+interface ParsedSignalSourceContext {
+  fresh: boolean;
+  malformed: boolean;
+}
+
+function parseSignalSourceContext(raw: string | null): ParsedSignalSourceContext | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { allRequiredFresh?: unknown };
+    return {
+      fresh: parsed.allRequiredFresh === true,
+      malformed: typeof parsed.allRequiredFresh !== 'boolean',
+    };
+  } catch {
+    return { fresh: false, malformed: true };
+  }
 }
 
 export interface OpenBookQualityOptions {
@@ -631,6 +703,232 @@ export function collectOpenBookQualityEvidence(
   };
 }
 
+export interface ApprovedSignalQualityOptions {
+  windowSec?: number;
+  lowConfidenceHighEdgeThresholdPct?: number;
+}
+
+export function collectApprovedSignalQualityEvidence(
+  db: Database.Database,
+  nowSec: number,
+  options: ApprovedSignalQualityOptions = {},
+): PolymarketApprovedSignalQualityEvidence {
+  const windowSec = options.windowSec ?? APPROVED_SIGNAL_QUALITY_WINDOW_SEC;
+  const lowConfidenceHighEdgeThresholdPct =
+    options.lowConfidenceHighEdgeThresholdPct ?? LOW_CONFIDENCE_HIGH_EDGE_PCT;
+
+  const empty = (
+    status: ReadinessStatus,
+    state: PolymarketApprovedSignalQualityState,
+    summary: string,
+    reasons: PolymarketApprovedSignalQualityReason[] = [],
+  ): PolymarketApprovedSignalQualityEvidence => ({
+    approvedSignals24h: 0,
+    linkedPaperTradeSignals24h: 0,
+    sourceContextColumnPresent: tableExists(db, 'poly_signals')
+      ? tableColumns(db, 'poly_signals').has('source_context_json')
+      : false,
+    sourceFreshSignals24h: 0,
+    missingSourceContextSignals24h: 0,
+    staleSourceContextSignals24h: 0,
+    malformedSourceContextSignals24h: 0,
+    invalidApprovedSignals24h: 0,
+    lowConfidenceHighEdgeSignals24h: 0,
+    avgEdgePct: null,
+    maxEdgePct: null,
+    sourceFreshRate: null,
+    linkedTradeRate: null,
+    lowConfidenceHighEdgeThresholdPct,
+    status,
+    state,
+    reasons,
+    summary,
+  });
+
+  if (!tableExists(db, 'poly_signals')) {
+    return empty('fail', 'no_approved_signals', 'poly_signals table is missing');
+  }
+
+  const cols = tableColumns(db, 'poly_signals');
+  const sourceContextColumnPresent = cols.has('source_context_json');
+  const hasPaperTradeId = cols.has('paper_trade_id');
+  const required = ['created_at', 'market_slug', 'market_price', 'estimated_prob', 'edge_pct', 'confidence', 'approved'];
+  const missingRequired = required.filter(column => !cols.has(column));
+  if (missingRequired.length > 0) {
+    return empty('warn', 'source_context_schema_missing', `poly_signals quality audit missing column(s): ${missingRequired.join(', ')}`);
+  }
+
+  const rows = db.prepare(`
+    SELECT
+      rowid AS signal_id,
+      market_slug,
+      market_price,
+      estimated_prob,
+      edge_pct,
+      confidence,
+      ${hasPaperTradeId ? 'paper_trade_id' : 'NULL'} AS paper_trade_id,
+      ${sourceContextColumnPresent ? 'source_context_json' : 'NULL'} AS source_context_json
+    FROM poly_signals
+    WHERE approved=1 AND created_at >= ?
+    ORDER BY created_at DESC
+  `).all(nowSec - windowSec) as Array<{
+    signal_id: number;
+    market_slug: string;
+    market_price: number | null;
+    estimated_prob: number | null;
+    edge_pct: number | null;
+    confidence: string | null;
+    paper_trade_id: number | null;
+    source_context_json: string | null;
+  }>;
+
+  if (rows.length === 0) {
+    return {
+      ...empty('warn', 'no_approved_signals', 'no approved Polymarket signals in the last 24h'),
+      sourceContextColumnPresent,
+    };
+  }
+
+  const reasons = new Map<string, PolymarketApprovedSignalQualityReason>();
+  let linkedPaperTradeSignals24h = 0;
+  let sourceFreshSignals24h = 0;
+  let missingSourceContextSignals24h = 0;
+  let staleSourceContextSignals24h = 0;
+  let malformedSourceContextSignals24h = 0;
+  let invalidApprovedSignals24h = 0;
+  let lowConfidenceHighEdgeSignals24h = 0;
+  let edgeTotal = 0;
+  let edgeCount = 0;
+  let maxEdgePct: number | null = null;
+
+  for (const row of rows) {
+    const edgePct = Number(row.edge_pct);
+    const marketPrice = Number(row.market_price);
+    const estimatedProb = Number(row.estimated_prob);
+    const slug = row.market_slug ?? `signal:${row.signal_id}`;
+    let rowInvalid = false;
+
+    if (hasPaperTradeId && row.paper_trade_id !== null && row.paper_trade_id !== undefined) {
+      linkedPaperTradeSignals24h += 1;
+    } else if (hasPaperTradeId) {
+      addSignalQualityReason(
+        reasons,
+        'missing_paper_trade_link',
+        slug,
+        'approved signal is not linked to a paper trade',
+      );
+    }
+
+    if (!Number.isFinite(edgePct)) {
+      rowInvalid = true;
+      addSignalQualityReason(reasons, 'invalid_edge', slug, 'approved signal has a non-numeric edge');
+    } else {
+      edgeTotal += edgePct;
+      edgeCount += 1;
+      maxEdgePct = maxEdgePct === null ? edgePct : Math.max(maxEdgePct, edgePct);
+      if (edgePct <= 0) {
+        rowInvalid = true;
+        addSignalQualityReason(reasons, 'non_positive_edge', slug, 'approved signal has non-positive edge');
+      }
+      if (edgePct >= lowConfidenceHighEdgeThresholdPct && row.confidence !== 'high') {
+        lowConfidenceHighEdgeSignals24h += 1;
+        addSignalQualityReason(
+          reasons,
+          'low_confidence_high_edge',
+          slug,
+          `approved signal edge >= ${lowConfidenceHighEdgeThresholdPct}pp without high confidence`,
+        );
+      }
+    }
+
+    if (!Number.isFinite(marketPrice) || marketPrice <= 0 || marketPrice >= 1) {
+      rowInvalid = true;
+      addSignalQualityReason(reasons, 'invalid_market_price', slug, 'approved signal has an invalid market price');
+    }
+    if (!Number.isFinite(estimatedProb) || estimatedProb <= 0 || estimatedProb >= 1) {
+      rowInvalid = true;
+      addSignalQualityReason(reasons, 'invalid_estimated_probability', slug, 'approved signal has an invalid estimated probability');
+    }
+    if (Number.isFinite(marketPrice) && Number.isFinite(estimatedProb) && estimatedProb <= marketPrice) {
+      rowInvalid = true;
+      addSignalQualityReason(reasons, 'probability_not_above_market', slug, 'approved signal probability is not above market price');
+    }
+    if (rowInvalid) invalidApprovedSignals24h += 1;
+
+    if (!sourceContextColumnPresent) {
+      continue;
+    }
+
+    const context = parseSignalSourceContext(row.source_context_json);
+    if (context === null) {
+      missingSourceContextSignals24h += 1;
+      addSignalQualityReason(reasons, 'missing_source_context', slug, 'approved signal has no source freshness context');
+      continue;
+    }
+    if (context.malformed) {
+      malformedSourceContextSignals24h += 1;
+      addSignalQualityReason(reasons, 'malformed_source_context', slug, 'approved signal source freshness context is malformed');
+      continue;
+    }
+    if (context.fresh) {
+      sourceFreshSignals24h += 1;
+    } else {
+      staleSourceContextSignals24h += 1;
+      addSignalQualityReason(reasons, 'stale_source_context', slug, 'approved signal was created with stale required sources');
+    }
+  }
+
+  const approvedSignals24h = rows.length;
+  const linkedTradeRate = hasPaperTradeId ? linkedPaperTradeSignals24h / approvedSignals24h : null;
+  const sourceFreshRate = sourceContextColumnPresent ? sourceFreshSignals24h / approvedSignals24h : null;
+  const contextIssueCount =
+    missingSourceContextSignals24h + staleSourceContextSignals24h + malformedSourceContextSignals24h;
+
+  const state: PolymarketApprovedSignalQualityState = invalidApprovedSignals24h > 0
+    ? 'invalid_approved_signal'
+    : !sourceContextColumnPresent
+      ? 'source_context_schema_missing'
+      : contextIssueCount > 0
+        ? 'source_context_incomplete'
+        : hasPaperTradeId && linkedPaperTradeSignals24h < approvedSignals24h
+          ? 'execution_link_incomplete'
+          : lowConfidenceHighEdgeSignals24h > 0
+            ? 'low_confidence_high_edge_watch'
+            : 'clean_approved_signals';
+  const status: ReadinessStatus = state === 'invalid_approved_signal'
+    ? 'fail'
+    : state === 'clean_approved_signals'
+      ? 'pass'
+      : 'warn';
+  const avgEdgePct = edgeCount > 0 ? edgeTotal / edgeCount : null;
+
+  return {
+    approvedSignals24h,
+    linkedPaperTradeSignals24h: hasPaperTradeId ? linkedPaperTradeSignals24h : approvedSignals24h,
+    sourceContextColumnPresent,
+    sourceFreshSignals24h,
+    missingSourceContextSignals24h,
+    staleSourceContextSignals24h,
+    malformedSourceContextSignals24h,
+    invalidApprovedSignals24h,
+    lowConfidenceHighEdgeSignals24h,
+    avgEdgePct,
+    maxEdgePct,
+    sourceFreshRate,
+    linkedTradeRate: hasPaperTradeId ? linkedTradeRate : 1,
+    lowConfidenceHighEdgeThresholdPct,
+    status,
+    state,
+    reasons: Array.from(reasons.values()).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
+    summary: `${approvedSignals24h} approved/24h; ` +
+      `linked ${hasPaperTradeId ? linkedPaperTradeSignals24h : approvedSignals24h}/${approvedSignals24h}; ` +
+      `source fresh ${sourceContextColumnPresent ? sourceFreshSignals24h : 0}/${approvedSignals24h}; ` +
+      `avg edge ${avgEdgePct === null ? 'n/a' : `${avgEdgePct.toFixed(1)}pp`}; ` +
+      `max edge ${maxEdgePct === null ? 'n/a' : `${maxEdgePct.toFixed(1)}pp`}; ` +
+      `watch ${lowConfidenceHighEdgeSignals24h}`,
+  };
+}
+
 function queueState(endAt: number | null, nowSec: number): PolymarketResolutionQueueState {
   if (!endAt || endAt <= 0) return 'unknown';
   if (endAt <= nowSec) return 'overdue';
@@ -728,6 +1026,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
   const hasPositions = tableExists(db, 'poly_positions');
   const dayAgo = nowSec - DAY_SEC;
   const openBookQuality = collectOpenBookQualityEvidence(db, nowSec);
+  const approvedSignalQuality = collectApprovedSignalQualityEvidence(db, nowSec);
 
   if (!hasTrades) {
     return {
@@ -771,6 +1070,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
       progressPct: 0,
       hasMarketMaturityData: hasMarkets,
       openBookQuality,
+      approvedSignalQuality,
       resolutionQueue: [],
     };
   }
@@ -909,6 +1209,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     progressPct: progress(settledTrades, SETTLED_TARGET),
     hasMarketMaturityData: hasMarkets,
     openBookQuality,
+    approvedSignalQuality,
     resolutionQueue,
   };
 }
@@ -1409,6 +1710,16 @@ function buildMetrics(
       state: polymarket.approvedSignals24h > 0 ? 'approving' : (polymarket.signals24h > 0 ? 'scanning_no_approvals' : 'no_signals'),
       detail: `${polymarket.signals24h} signals and ${polymarket.approvedSignals24h} approvals in the last 24h`,
       current: polymarket.approvedSignals24h,
+    },
+    {
+      key: 'polymarket_approved_signal_quality',
+      name: 'Approved signal quality',
+      status: polymarket.approvedSignalQuality.status,
+      state: polymarket.approvedSignalQuality.state,
+      detail: polymarket.approvedSignalQuality.summary,
+      current: polymarket.approvedSignalQuality.sourceFreshSignals24h,
+      target: polymarket.approvedSignalQuality.approvedSignals24h,
+      progressPct: polymarket.approvedSignalQuality.sourceFreshRate,
     },
     {
       key: 'polymarket_market_discovery',

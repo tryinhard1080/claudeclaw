@@ -23,8 +23,9 @@ ClaudeClaw is operational in paper mode for both configured markets:
   current equity benchmark edge versus buy-and-hold. It also shows Box 2
   pipeline capacity, which separates current settled count from the maximum
   settled count the existing open book could produce. It also shows market
-  discovery depth against the widened post-Gamma-cap target and open-book
-  quality against the currently active paper-learning filters.
+  discovery depth against the widened post-Gamma-cap target, open-book
+  quality against the currently active paper-learning filters, and approved
+  signal quality against source freshness and edge sanity.
 
 Real money remains disabled. This is correct.
 
@@ -33,17 +34,23 @@ Real money remains disabled. This is correct.
 - Polymarket Box 2: `0/50` settled trades, `20` open, `23` voided. The
   current open book can cover at most `20/50` potential settled trades, so at
   least `30` additional resolved trades are needed after the current book.
-- Market discovery: latest scan discovered `992/500` target markets, state
-  `healthy`, duration about `327ms`. `poly:paper:status` now includes a
+- Market discovery: latest scan discovered `990/500` target markets, state
+  `healthy`, duration about `266ms`. `poly:paper:status` now includes a
   `Market discovery depth` check that warns if discovery falls back near the old
   first-page cap.
 - Open-book quality: `14/20` open paper trades pass today's active
   paper-learning filters. The `6` exceptions are long-dated legacy positions
   opened before the 2026-06-01 active TTL/quality filter window.
-- Polymarket mark-to-market: `$14.71` total paper P&L, all unrealized, on
-  `$944.21` open exposure. Paper equity is `$5,014.71`.
-- Polymarket signal flow: `562` signals and `11` approvals in the last 24 hours,
-  approval rate about `2.0%`.
+- Polymarket mark-to-market: `$8.69` total paper P&L, all unrealized, on
+  `$944.21` open exposure. Paper equity is `$5,008.69`.
+- Polymarket signal flow: `579` signals and `11` approvals in the last 24 hours,
+  approval rate about `1.9%`.
+- Approved signal quality: latest live check shows `11` approvals in the last
+  24 hours, `11/11` linked to paper trades, `9/11` with fresh source context,
+  average edge `12.3pp`, max edge `46.0pp`, and one low-confidence high-edge
+  watch. Current WARN reasons are one stale source-context approval, one
+  missing source-context legacy approval, and one low-confidence high-edge
+  watch.
 - Resolution pipeline: `5` open positions due within 7 days, `14` due within 30
   days, `0` overdue.
 - Resolution queue: next paper settlements are trades `#35` and `#40` due
@@ -78,6 +85,29 @@ Real money remains disabled. This is correct.
 - `npx vitest run src/readiness/evidence.test.ts` - 7/7 PASS.
 - `npm test` - 74 files, 908 tests PASS.
 - `npm run build` - PASS.
+- `npx vitest run src/readiness/evidence.test.ts src/dashboard-html.test.ts` -
+  25/25 PASS after adding approved-signal-quality evidence.
+- `npm run typecheck` - PASS after approved-signal-quality evidence.
+- `npm test` - 75 files, 930 tests PASS after approved-signal-quality
+  evidence.
+- `npm run build` - PASS after approved-signal-quality evidence.
+- `npm run readiness:evidence:record` - refreshed the 2026-06-01 readiness
+  evidence snapshot with approved signal quality in the persisted payload.
+- `pm2 restart claudeclaw-main --update-env` - PASS; `claudeclaw-main`
+  online with unstable restarts `0`.
+- Authenticated `/api/readiness/evidence` after rebuild/restart - returned
+  `signalQualityStatus=warn`, `sourceFresh=9`, `approvals=11`, `linked=11`,
+  average edge `12.27pp`, max edge `46pp`, and warning reasons
+  `low_confidence_high_edge`, `missing_source_context`, and
+  `stale_source_context`.
+- Served dashboard HTML after rebuild/restart - contains Evidence Path,
+  `Signal qual`, `evidence-signal-quality`, and `poly.approvedSignalQuality`
+  wiring.
+- Post-restart `npm run capacity:status` - operational systems PASS;
+  Financial Datasets MCP connected; Polymarket scans fresh at `0m`; market
+  discovery `990/500`; approved signal quality WARN at `9/11` fresh source
+  context; `0` system blockers; live startup remains blocked by Boxes 1/2/3/7
+  by design.
 - `npx vitest run src/readiness/gate-progress.test.ts` - 15/15 PASS after Box
   1 parser coverage.
 - `npx vitest run src/readiness/gate-progress.test.ts src/dashboard-html.test.ts`

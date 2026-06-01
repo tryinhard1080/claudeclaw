@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectApprovedSignalQualityEvidence,
   collectEquityBenchmarkEvidence,
   collectEquitySyncEvidence,
   collectMarketDiscoveryEvidence,
@@ -346,6 +347,57 @@ describe('operational evidence', () => {
     mem.close();
   });
 
+  it('audits approved Polymarket signal quality without mutating trades', () => {
+    const mem = db();
+    const freshContext = JSON.stringify({ allRequiredFresh: true, sources: [] });
+    const staleContext = JSON.stringify({ allRequiredFresh: false, sources: [] });
+    mem.exec(`
+      CREATE TABLE poly_signals (
+        id INTEGER PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        market_slug TEXT NOT NULL,
+        outcome_token_id TEXT NOT NULL,
+        outcome_label TEXT NOT NULL,
+        market_price REAL NOT NULL,
+        estimated_prob REAL NOT NULL,
+        edge_pct REAL NOT NULL,
+        confidence TEXT NOT NULL,
+        reasoning TEXT NOT NULL,
+        approved INTEGER NOT NULL,
+        paper_trade_id INTEGER,
+        source_context_json TEXT
+      );
+    `);
+    const insert = mem.prepare(`
+      INSERT INTO poly_signals (
+        id, created_at, market_slug, outcome_token_id, outcome_label,
+        market_price, estimated_prob, edge_pct, confidence, reasoning,
+        approved, paper_trade_id, source_context_json
+      ) VALUES (?, ?, ?, 'tok', 'Yes', ?, ?, ?, ?, 'r', 1, ?, ?)
+    `);
+    insert.run(1, NOW - 10, 'clean', 0.40, 0.50, 10, 'high', 101, freshContext);
+    insert.run(2, NOW - 20, 'stale-source', 0.30, 0.39, 9, 'medium', 102, staleContext);
+    insert.run(3, NOW - 30, 'missing-source', 0.20, 0.38, 18, 'low', 103, null);
+    insert.run(4, NOW - 40, 'invalid-edge', 0.70, 0.69, -1, 'high', 104, freshContext);
+    insert.run(5, NOW - 2 * 86400, 'old', 0.40, 0.50, 10, 'high', 105, freshContext);
+
+    const evidence = collectApprovedSignalQualityEvidence(mem, NOW);
+
+    expect(evidence.status).toBe('fail');
+    expect(evidence.state).toBe('invalid_approved_signal');
+    expect(evidence.approvedSignals24h).toBe(4);
+    expect(evidence.linkedPaperTradeSignals24h).toBe(4);
+    expect(evidence.sourceFreshSignals24h).toBe(2);
+    expect(evidence.staleSourceContextSignals24h).toBe(1);
+    expect(evidence.missingSourceContextSignals24h).toBe(1);
+    expect(evidence.invalidApprovedSignals24h).toBeGreaterThan(0);
+    expect(evidence.lowConfidenceHighEdgeSignals24h).toBe(1);
+    expect(evidence.reasons.map(reason => reason.code)).toContain('stale_source_context');
+    expect(evidence.reasons.map(reason => reason.code)).toContain('missing_source_context');
+    expect(evidence.reasons.map(reason => reason.code)).toContain('low_confidence_high_edge');
+    mem.close();
+  });
+
   it('warns when market discovery falls back to the old first-page cap', () => {
     const mem = db();
     mem.exec(`
@@ -490,6 +542,7 @@ describe('operational evidence', () => {
       target: 1,
     });
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('pass');
+    expect(payload.metrics.map(metric => metric.key)).toContain('polymarket_approved_signal_quality');
     expect(payload.metrics.find(metric => metric.key === 'polymarket_market_discovery')).toMatchObject({
       status: 'pass',
       state: 'healthy',

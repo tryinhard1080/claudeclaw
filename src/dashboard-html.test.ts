@@ -79,6 +79,15 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("polyQualityPassingOpenTrades");
   });
 
+  it('renders approved signal quality in the evidence path', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("evidence-signal-quality");
+    expect(html).toContain("poly.approvedSignalQuality");
+    expect(html).toContain("signal quality");
+    expect(html).toContain("sourceFreshSignals24h");
+  });
+
   it('renders live equity sync evidence separately from daily Sharpe', () => {
     const html = getDashboardHtml('token', 'chat');
 

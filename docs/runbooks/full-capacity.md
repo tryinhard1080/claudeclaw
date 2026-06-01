@@ -91,7 +91,8 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
 - `npm run readiness:evidence` reports Polymarket settlement progress,
   Box 2 pipeline capacity, near-term Box 2 capacity, Box 2 learning velocity,
   market-discovery depth, open-book quality against current paper-learning
-  filters, mark-to-market paper P&L, near-term resolution pipeline, the open-trade
+  filters, approved signal quality against source freshness and edge sanity,
+  mark-to-market paper P&L, near-term resolution pipeline, the open-trade
   resolution queue, equity live-sync freshness, equity
   benchmark edge, TTL filter evidence, and regime Sharpe sample depth. Box 2
   pipeline capacity should make the current settled-trade deficit explicit,
@@ -107,7 +108,8 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   queue so Richard can see which paper positions can move Box 2 next. It should
   also show Box 2 pipeline capacity, near-term Box 2 capacity, Box 2 learning
   velocity, open-book quality as the count of open trades that still pass the
-  current paper-learning filters, market discovery as the latest
+  current paper-learning filters, approved signal quality as recent approvals
+  with fresh source context, market discovery as the latest
   markets-discovered count against target, equity sync as fresh instance count,
   and equity edge as percent excess return, separate from regime days.
 - `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
@@ -149,6 +151,11 @@ Full capacity does not mean real money. It means:
   them as audit visibility, not as permission to close or alter paper trades.
   New trades should increasingly show as inside the active TTL and quality
   filters.
+- Approved signal quality WARNs mean recent approvals need review before
+  scaling. They do not halt paper trading by themselves. Investigate stale or
+  missing source context, unlinked approved signals, invalid edge/probability
+  data, and low-confidence high-edge watches before considering any live-money
+  review.
 - Active Polymarket TTL filtering is enabled locally after Richard's 2026-06-01 approval. Keep the TTL shadow report running as the comparison and rollback evidence path.
 - Regime-trader Sharpe has only a small sample until the 60-day clock completes.
 

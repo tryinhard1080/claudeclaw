@@ -325,11 +325,12 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evidence Path</h3>
       <span id="evidence-status" class="pill">-</span>
     </div>
-    <div class="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-9 gap-2 mb-3">
+    <div class="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2 mb-3">
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-settled">-</div><div class="stat-label">Poly settled</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-pipeline">-</div><div class="stat-label">Box 2 pipe</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-due">-</div><div class="stat-label">Box2 30d</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-book-quality">-</div><div class="stat-label">Quality</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-signal-quality">-</div><div class="stat-label">Signal qual</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-market-discovery">-</div><div class="stat-label">Discovery</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-sync">-</div><div class="stat-label">Equity sync</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-edge">-</div><div class="stat-label">Equity edge</div></div>
@@ -2299,6 +2300,7 @@ function renderEvidencePath(evidence) {
   const ttl = evidence.ttlFilter || {};
   const discovery = evidence.marketDiscovery || {};
   const bookQuality = poly.openBookQuality || {};
+  const signalQuality = poly.approvedSignalQuality || {};
 
   const settledEl = document.getElementById('evidence-poly-settled');
   if (settledEl) settledEl.textContent = (poly.settledTrades ?? 0) + '/' + (poly.targetSettledTrades ?? 50);
@@ -2325,6 +2327,12 @@ function renderEvidencePath(evidence) {
   if (qualityEl) {
     qualityEl.textContent = (bookQuality.passingTrades ?? 0) + '/' + (bookQuality.openTrades ?? 0);
     qualityEl.style.color = bookQuality.status === 'pass' ? '#6ee7b7' : '#fbbf24';
+  }
+
+  const signalQualityEl = document.getElementById('evidence-signal-quality');
+  if (signalQualityEl) {
+    signalQualityEl.textContent = (signalQuality.sourceFreshSignals24h ?? 0) + '/' + (signalQuality.approvedSignals24h ?? 0);
+    signalQualityEl.style.color = signalQuality.status === 'pass' ? '#6ee7b7' : (signalQuality.status === 'fail' ? '#f87171' : '#fbbf24');
   }
 
   const syncEl = document.getElementById('evidence-equity-sync');
@@ -2383,6 +2391,10 @@ function renderEvidencePath(evidence) {
     const qualityText = ' / book quality ' +
       (bookQuality.passingTrades ?? 0) + '/' + (bookQuality.openTrades ?? 0) +
       ' ' + (bookQuality.state || 'unknown');
+    const signalQualityText = ' / signal quality ' +
+      (signalQuality.sourceFreshSignals24h ?? 0) + '/' + (signalQuality.approvedSignals24h ?? 0) +
+      ' ' + (signalQuality.state || 'unknown') +
+      ' avg edge ' + (Number.isFinite(signalQuality.avgEdgePct) ? signalQuality.avgEdgePct.toFixed(1) + 'pp' : '-');
     const history = evidence.history || [];
     let historyText = 'history no snapshots';
     if (history.length > 0) {
@@ -2425,6 +2437,7 @@ function renderEvidencePath(evidence) {
       equityBenchmarkText +
       discoveryText +
       qualityText +
+      signalQualityText +
       ' / ttl tick ' + ttlAge +
       ' / ' + historyText +
       (incomplete ? ' / tracking ' + incomplete : '');
