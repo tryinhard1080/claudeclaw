@@ -11,4 +11,14 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("Gate data unavailable");
     expect(html).toContain("Source freshness unavailable");
   });
+
+  it('renders gate blocker details and progress values', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("function renderGateBlocker");
+    expect(html).toContain("g.detail");
+    expect(html).toContain("g.current");
+    expect(html).toContain("g.target");
+    expect(html).toContain("meter-fill");
+  });
 });

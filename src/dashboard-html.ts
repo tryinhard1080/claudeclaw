@@ -2133,6 +2133,37 @@ function renderStatusChip(status, label) {
     escapeHtml(label || String(status || '-').toUpperCase()) +
     '</span>';
 }
+function renderGateBlocker(g) {
+  const status = String(g.status || 'fail');
+  const color = opsColor(status);
+  const current = Number(g.current);
+  const target = Number(g.target);
+  const hasProgress = Number.isFinite(current) && Number.isFinite(target) && target > 0;
+  const pct = hasProgress ? Math.max(0, Math.min(100, (current / target) * 100)) : 0;
+  const progressText = hasProgress ? fmtQty(current) + '/' + fmtQty(target) : '';
+  const detail = g.detail ? '<div class="text-gray-500 mt-1 leading-snug">' + escapeHtml(g.detail) + '</div>' : '';
+  const progress = hasProgress
+    ? '<div class="flex items-center gap-2 mt-1">' +
+        '<div class="meter" style="flex:1;height:5px"><div class="meter-fill" style="width:' + pct.toFixed(0) + '%;background:' + color + '"></div></div>' +
+        '<span class="text-gray-500" style="min-width:48px;text-align:right">' + escapeHtml(progressText) + '</span>' +
+      '</div>'
+    : '';
+
+  return '<div class="py-1.5" style="border-bottom:1px solid #222">' +
+      '<div class="flex items-start gap-2">' +
+        '<span style="color:' + color + ';min-width:38px">' + escapeHtml(status.toUpperCase()) + '</span>' +
+        '<span class="text-gray-500" style="min-width:44px">Box ' + escapeHtml(String(g.box)) + '</span>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div class="flex items-center justify-between gap-2">' +
+            '<span class="text-gray-300" style="overflow-wrap:anywhere">' + escapeHtml(g.name) + '</span>' +
+            '<span class="text-gray-500" style="font-size:10px;text-align:right">' + escapeHtml(g.state || '') + '</span>' +
+          '</div>' +
+          detail +
+          progress +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
 function setOpsText(id, check) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -2433,13 +2464,7 @@ async function loadLiveReadiness() {
       if (gates.length === 0) {
         gateEl.innerHTML = '<div style="color:#6ee7b7">All gate boxes pass</div>';
       } else {
-        gateEl.innerHTML = gates.slice(0, 5).map(g =>
-          '<div class="flex items-start gap-2 py-0.5">' +
-            '<span style="color:' + opsColor(g.status) + ';min-width:38px">' + escapeHtml(String(g.status || '').toUpperCase()) + '</span>' +
-            '<span class="text-gray-500" style="min-width:44px">Box ' + escapeHtml(String(g.box)) + '</span>' +
-            '<span class="text-gray-300" style="flex:1">' + escapeHtml(g.name) + '</span>' +
-          '</div>'
-        ).join('');
+        gateEl.innerHTML = gates.slice(0, 5).map(renderGateBlocker).join('');
       }
     }
 

@@ -10,16 +10,17 @@ ClaudeClaw is operational in paper mode for both configured markets:
 - Dashboard: health endpoint is healthy and the Evidence Path card now includes
   mark-to-market Polymarket paper P&L. Malformed or rate-limited readiness API
   payloads now render as red unavailable state instead of a false green gate
-  pass.
+  pass. The Gate blockers card now shows blocker state, detail, and current /
+  target progress for each open real-money gate.
 
 Real money remains disabled. This is correct.
 
 ## Latest Evidence
 
 - Polymarket Box 2: `0/50` settled trades, `10` open, `23` voided.
-- Polymarket mark-to-market: `$27.78` total paper P&L, all unrealized, on
-  `$479.35` open exposure. Paper equity is `$5,027.78`.
-- Polymarket signal flow: `536` signals and `1` approval in the last 24 hours,
+- Polymarket mark-to-market: `$26.35` total paper P&L, all unrealized, on
+  `$479.35` open exposure. Paper equity is `$5,026.35`.
+- Polymarket signal flow: `535` signals and `1` approval in the last 24 hours,
   approval rate `0.19%`.
 - Resolution pipeline: `2` open positions due within 7 days, `4` due within 30
   days, `0` overdue.
@@ -42,7 +43,7 @@ Real money remains disabled. This is correct.
   because real-money gate boxes remain blocked.
 - `npm run typecheck` - PASS.
 - `npx vitest run src/readiness/evidence.test.ts` - 7/7 PASS.
-- `npm test` - 73 files, 902 tests PASS.
+- `npm test` - 74 files, 907 tests PASS.
 - `npm run build` - PASS.
 - `npx vitest run src/readiness/gate-progress.test.ts` - 15/15 PASS after Box
   1 parser coverage.
@@ -54,6 +55,11 @@ Real money remains disabled. This is correct.
   readiness API returned Box 1 `elapsed_review_ready` and startup
   `blocked`, and the rendered Gate blockers card showed WARN rows for Boxes
   1/2/3/7 instead of a false green pass.
+- `npx vitest run src/dashboard-html.test.ts` - 2/2 PASS after adding detailed
+  gate blocker rendering.
+- Browser dashboard verification after rebuild/restart - the rendered Gate
+  blockers card shows `41/30`, `0/50`, and `8/60` plus blocker details for
+  Boxes 1/2/3 and the pending Box 7 sign-off.
 
 ## Remaining Live-Money Blocks
 
