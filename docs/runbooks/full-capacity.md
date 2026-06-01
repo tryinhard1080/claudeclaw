@@ -87,7 +87,7 @@ Full capacity does not mean real money. It means:
 - Financial Datasets MCP may be missing from the active tool list. This blocks some research context, not trading execution.
 - News sync source freshness may be stale until the Perplexity or equivalent news feed is re-authorized.
 - Polymarket Box 2 remains structurally constrained until resolved trade count improves.
-- TTL shadow data is still evidence-gathering. Active TTL filtering is a separate Tier 3 decision.
+- Active Polymarket TTL filtering is enabled locally after Richard's 2026-06-01 approval. Keep the TTL shadow report running as the comparison and rollback evidence path.
 - Regime-trader Sharpe has only a small sample until the 60-day clock completes.
 
 ## Rollback

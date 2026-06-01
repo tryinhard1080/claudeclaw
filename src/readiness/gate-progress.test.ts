@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   collectGateProgress,
+  summarizeKillSwitchRollbackGate,
   summarizeHaltGate,
   summarizePolymarketResolvedGate,
   summarizeRegimeSharpeGate,
+  summarizeReviewFindingsGate,
 } from './gate-progress.js';
 import {
   buildSignalSourceContext,
@@ -91,6 +93,37 @@ describe('gate progress', () => {
 
     expect(collectGateProgress(mem).map(check => check.box)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     mem.close();
+  });
+
+  it('passes review gate when findings ledger has no unresolved P0/P1 rows', () => {
+    const check = summarizeReviewFindingsGate(`
+| Date | Sprint | Severity | Finding | Status | Commit |
+|---|---|---|---|---|---|
+| 2026-05-12 | full-project review | P1 | auth guard missing | FIXED | abc123 |
+| 2026-05-12 | full-project review | P2 | display mismatch | FILED | abc124 |
+    `);
+
+    expect(check.status).toBe('pass');
+    expect(check.state).toBe('clear');
+  });
+
+  it('fails review gate when a P0/P1 row is not resolved', () => {
+    const check = summarizeReviewFindingsGate(`
+| Date | Sprint | Severity | Finding | Status | Commit |
+|---|---|---|---|---|---|
+| 2026-06-01 | live gate | P1 | unsafe sizing path | OPEN | - |
+    `);
+
+    expect(check.status).toBe('fail');
+    expect(check.current).toBe(1);
+  });
+
+  it('passes kill-switch gate when MISSION marks the drill complete', () => {
+    const check = summarizeKillSwitchRollbackGate(`
+- [x] Documented kill-switch and roll-back procedure tested.
+    `);
+
+    expect(check.status).toBe('pass');
   });
 });
 

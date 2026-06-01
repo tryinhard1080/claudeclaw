@@ -1,4 +1,6 @@
 import type Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export type ReadinessStatus = 'pass' | 'warn' | 'fail';
 
@@ -19,6 +21,12 @@ interface SharpeGateRow {
   created_at: number;
 }
 
+export interface GateProgressOptions {
+  projectRoot?: string;
+  reviewFindingsText?: string | null;
+  missionText?: string | null;
+}
+
 function tableExists(db: Database.Database, name: string): boolean {
   const row = db.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
@@ -35,6 +43,14 @@ function readKv(db: Database.Database, key: string): string | null {
   if (!tableExists(db, 'poly_kv')) return null;
   const row = db.prepare('SELECT value FROM poly_kv WHERE key=?').get(key) as { value: string } | undefined;
   return row?.value ?? null;
+}
+
+function readProjectText(projectRoot: string, relativePath: string): string | null {
+  try {
+    return readFileSync(join(projectRoot, relativePath), 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 export function summarizePolymarketResolvedGate(db: Database.Database): GateProgressCheck {
@@ -129,7 +145,64 @@ export function summarizeHaltGate(db: Database.Database): GateProgressCheck {
   };
 }
 
-export function collectGateProgress(db: Database.Database): GateProgressCheck[] {
+export function summarizeReviewFindingsGate(findingsText: string | null | undefined): GateProgressCheck {
+  if (!findingsText) {
+    return {
+      box: 5,
+      name: 'P0/P1 review findings',
+      status: 'warn',
+      state: 'artifact_missing',
+      detail: 'docs/codex-review/findings.md not readable',
+    };
+  }
+
+  const rows = findingsText
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /^\|\s*\d{4}-\d{2}-\d{2}\s*\|/.test(line));
+  const blocking = rows.filter(line => {
+    const cols = line.split('|').map(col => col.trim());
+    const severity = cols[3] || '';
+    const status = (cols[5] || '').toLowerCase();
+    if (!/^P[01]\b/.test(severity)) return false;
+    return !/(fixed|closed|resolved)/.test(status);
+  });
+
+  return {
+    box: 5,
+    name: 'P0/P1 review findings',
+    status: blocking.length === 0 ? 'pass' : 'fail',
+    state: blocking.length === 0 ? 'clear' : 'blocking_findings',
+    detail: blocking.length === 0
+      ? 'review ledger shows zero unresolved P0/P1 findings'
+      : `${blocking.length} unresolved P0/P1 finding(s) in docs/codex-review/findings.md`,
+    current: blocking.length,
+    target: 0,
+  };
+}
+
+export function summarizeKillSwitchRollbackGate(missionText: string | null | undefined): GateProgressCheck {
+  const checked = Boolean(missionText?.match(/-\s*\[x\]\s+Documented kill-switch and roll-back procedure tested/i));
+  return {
+    box: 6,
+    name: 'Kill switch and rollback drill',
+    status: checked ? 'pass' : 'warn',
+    state: checked ? 'mission_checked' : 'mission_review_required',
+    detail: checked
+      ? 'MISSION.md marks kill-switch and rollback procedure tested'
+      : 'read MISSION.md and drill logs for latest tested status',
+  };
+}
+
+export function collectGateProgress(db: Database.Database, options: GateProgressOptions = {}): GateProgressCheck[] {
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const reviewFindingsText = options.reviewFindingsText !== undefined
+    ? options.reviewFindingsText
+    : readProjectText(projectRoot, 'docs/codex-review/findings.md');
+  const missionText = options.missionText !== undefined
+    ? options.missionText
+    : readProjectText(projectRoot, 'MISSION.md');
+
   return [
     {
       box: 1,
@@ -142,20 +215,8 @@ export function collectGateProgress(db: Database.Database): GateProgressCheck[] 
     summarizePolymarketResolvedGate(db),
     summarizeRegimeSharpeGate(db),
     summarizeHaltGate(db),
-    {
-      box: 5,
-      name: 'P0/P1 review findings',
-      status: 'warn',
-      state: 'manual_review_required',
-      detail: 'requires latest Codex or Claude review artifact confirmation',
-    },
-    {
-      box: 6,
-      name: 'Kill switch and rollback drill',
-      status: 'warn',
-      state: 'mission_review_required',
-      detail: 'read MISSION.md and drill logs for latest tested status',
-    },
+    summarizeReviewFindingsGate(reviewFindingsText),
+    summarizeKillSwitchRollbackGate(missionText),
     {
       box: 7,
       name: 'Operator sign-off',
@@ -165,4 +226,3 @@ export function collectGateProgress(db: Database.Database): GateProgressCheck[] 
     },
   ];
 }
-
