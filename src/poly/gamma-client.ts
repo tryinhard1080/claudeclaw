@@ -2,6 +2,8 @@ import { logger } from '../logger.js';
 import { GammaMarketSchema, type GammaMarket, type Market } from './types.js';
 
 const BASE = 'https://gamma-api.polymarket.com';
+const GAMMA_MARKETS_PAGE_LIMIT = 100;
+const DEFAULT_MARKET_DISCOVERY_PAGES = 10;
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
@@ -66,31 +68,48 @@ export function normalizeMarket(
 }
 
 /**
- * Fetch all active markets from Gamma API using parallel page requests.
+ * Fetch a bounded active-market discovery window from Gamma API.
  *
- * With ~48k markets the old 500-item sequential loop took 400-600s (97 pages
- * × ~5s each). This version batches `concurrency` pages per round and uses
- * a larger default page size, cutting that to ~7 rounds × ~5s ≈ 35s.
- *
- * Pages within a batch are fetched concurrently. The batch loop stops as soon
- * as any page returns fewer items than the page size (end of results). Pages
- * requested beyond the last real page come back empty and are discarded.
+ * Live Gamma responses cap `/markets` list pages at 100 rows even when a
+ * larger limit is requested. Requesting 2000 rows made the scanner stop after
+ * the first 100 markets. The default now walks ten 100-row pages ordered by
+ * live 24h volume, which feeds the downstream selector a liquid candidate
+ * universe without turning each scan into a full historical crawl.
  */
-export async function fetchActiveMarkets(pageSize = 2000, concurrency = 4): Promise<Market[]> {
+export async function fetchActiveMarkets(
+  pageSize = GAMMA_MARKETS_PAGE_LIMIT,
+  concurrency = 4,
+  maxPages = DEFAULT_MARKET_DISCOVERY_PAGES,
+): Promise<Market[]> {
+  const safePageSize = Math.min(
+    GAMMA_MARKETS_PAGE_LIMIT,
+    Math.max(1, Math.floor(pageSize)),
+  );
+  const safeConcurrency = Math.max(1, Math.floor(concurrency));
+  const safeMaxPages = Math.max(1, Math.floor(maxPages));
   const rawPages: unknown[][] = [];
-  let offset = 0;
+  let nextPage = 0;
   let exhausted = false;
 
-  while (!exhausted) {
+  while (!exhausted && nextPage < safeMaxPages) {
     const offsets: number[] = [];
-    for (let i = 0; i < concurrency; i++) {
-      offsets.push(offset + i * pageSize);
+    for (let i = 0; i < safeConcurrency && nextPage < safeMaxPages; i++) {
+      offsets.push(nextPage * safePageSize);
+      nextPage++;
     }
 
     const pages = await Promise.all(
-      offsets.map(o =>
-        getJson(`${BASE}/markets?active=true&closed=false&limit=${pageSize}&offset=${o}`),
-      ),
+      offsets.map(o => {
+        const params = new URLSearchParams({
+          active: 'true',
+          closed: 'false',
+          order: 'volume24hr',
+          ascending: 'false',
+          limit: String(safePageSize),
+          offset: String(o),
+        });
+        return getJson(`${BASE}/markets?${params.toString()}`);
+      }),
     );
 
     for (const page of pages) {
@@ -99,13 +118,11 @@ export async function fetchActiveMarkets(pageSize = 2000, concurrency = 4): Prom
         break;
       }
       rawPages.push(page);
-      if (page.length < pageSize) {
+      if (page.length < safePageSize) {
         exhausted = true;
         break;
       }
     }
-
-    offset += concurrency * pageSize;
   }
 
   const out: Market[] = [];

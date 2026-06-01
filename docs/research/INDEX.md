@@ -14,6 +14,7 @@ can find the newest source of truth without spelunking the whole folder.
 - [`sprint-2026-05-24-polymarket-us-readonly.md`](./sprint-2026-05-24-polymarket-us-readonly.md) - Polymarket US public read-only adapter research and guardrails.
 - [`sprint-2026-05-24-adversarial-data-tests.md`](./sprint-2026-05-24-adversarial-data-tests.md) - Must-reject adversarial data fixtures for gates and news context.
 - [`sprint-s2-ttl-filter-latest.md`](./sprint-s2-ttl-filter-latest.md) - Latest generated TTL shadow report from `npm run poly:ttl:report`.
+- [`sprint-2026-06-01-gamma-market-discovery-cap.md`](./sprint-2026-06-01-gamma-market-discovery-cap.md) - Live Gamma `/markets` cap fix: bounded 100-row volume-sorted discovery so Polymarket paper candidates are not starved by the first page.
 - [`finceptterminal-fit.md`](./finceptterminal-fit.md) - FinceptTerminal architecture fit assessment. Blueprint only; no code import due license and scope constraints.
 - [`sprint-weather-shadow.md`](./sprint-weather-shadow.md) - Weather Goat shadow-evaluator research and implementation notes.
 - [`atlas-self-improving-trading-agents.md`](./atlas-self-improving-trading-agents.md) - Atlas and self-improving trading-agent comparison; use as blueprint material only.

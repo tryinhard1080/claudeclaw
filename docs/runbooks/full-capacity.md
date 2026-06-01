@@ -109,7 +109,7 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   excess return, separate from regime days.
 - `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
 - `npm run readiness:evidence:cron` reports `already registered` or creates one active daily shell task for `scripts/readiness-evidence.ts --record --history 14`.
-- `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled.
+- `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled. After the Gamma discovery-cap fix, latest market count should not be stuck near the old first-page cap of `100`; if it is, check `src/poly/gamma-client.ts` and the latest `fetchActiveMarkets` live probe.
 - `npm run typecheck` passes after edits.
 - `npm test` passes after code or config changes that can affect behavior.
 - Any WARN row has a named owner, next action, and gate impact.
@@ -133,7 +133,9 @@ Full capacity does not mean real money. It means:
 - Polymarket Box 2 remains structurally constrained until resolved trade count
   improves. Use `npm run readiness:evidence` and the dashboard Evidence Path
   card to track settled count, current open-book capacity, additional resolved
-  trades needed, near-term capacity, due open positions, and signal flow.
+  trades needed, near-term capacity, due open positions, and signal flow. If
+  candidate velocity falls again, first verify Gamma discovery is still seeing
+  roughly a 1000-market volume-sorted window rather than one capped page.
 - Active Polymarket TTL filtering is enabled locally after Richard's 2026-06-01 approval. Keep the TTL shadow report running as the comparison and rollback evidence path.
 - Regime-trader Sharpe has only a small sample until the 60-day clock completes.
 

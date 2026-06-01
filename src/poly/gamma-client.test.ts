@@ -152,12 +152,19 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
     return Array.from({ length: count }, (_, i) => mkRawMarket(`m${start + i}`));
   }
 
-  // Parses out limit and offset from a Gamma URL.
-  function parseLimitOffset(url: string): { limit: number; offset: number } {
+  // Parses out discovery params from a Gamma URL.
+  function parseDiscoveryParams(url: string): {
+    limit: number;
+    offset: number;
+    order: string | null;
+    ascending: string | null;
+  } {
     const u = new URL(url);
     return {
       limit: Number(u.searchParams.get('limit')),
       offset: Number(u.searchParams.get('offset')),
+      order: u.searchParams.get('order'),
+      ascending: u.searchParams.get('ascending'),
     };
   }
 
@@ -170,19 +177,43 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
   });
 
   it('plumbs pageSize into limit= and starts offset=0', async () => {
-    const calls: { limit: number; offset: number }[] = [];
+    const calls: ReturnType<typeof parseDiscoveryParams>[] = [];
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input);
-      calls.push(parseLimitOffset(url));
+      calls.push(parseDiscoveryParams(url));
       // Return one partial page so we exit after the first batch.
-      const { offset, limit } = parseLimitOffset(url);
+      const { offset, limit } = parseDiscoveryParams(url);
       const items = offset === 0 ? mkPage(0, limit - 1) : [];
       return new Response(JSON.stringify(items), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
 
     await fetchActiveMarkets(10, 1);
-    expect(calls[0]).toEqual({ limit: 10, offset: 0 });
+    expect(calls[0]).toEqual({
+      limit: 10,
+      offset: 0,
+      order: 'volume24hr',
+      ascending: 'false',
+    });
+  });
+
+  it('caps requests at the live Gamma markets page limit', async () => {
+    const calls: ReturnType<typeof parseDiscoveryParams>[] = [];
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const params = parseDiscoveryParams(String(input));
+      calls.push(params);
+      return new Response(JSON.stringify(mkPage(params.offset, params.limit)), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchActiveMarkets(500, 1, 1);
+    expect(calls).toEqual([{
+      limit: 100,
+      offset: 0,
+      order: 'volume24hr',
+      ascending: 'false',
+    }]);
+    expect(result).toHaveLength(100);
   });
 
   it('issues `concurrency` parallel requests per batch', async () => {
@@ -194,7 +225,7 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
       // Tiny delay to ensure all peers in the batch are observably in-flight.
       await new Promise(r => setTimeout(r, 5));
       inflight--;
-      const { offset, limit } = parseLimitOffset(String(input));
+      const { offset, limit } = parseDiscoveryParams(String(input));
       // First batch (offsets 0,10,20,30): full pages. Then the next batch
       // returns a partial page on its first offset to terminate cleanly.
       if (offset < 40) return new Response(JSON.stringify(mkPage(offset, limit)), { status: 200 });
@@ -209,7 +240,7 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
   it('advances offset by concurrency * pageSize between batches', async () => {
     const offsets: number[] = [];
     const fetchMock = vi.fn(async (input: string | URL) => {
-      const { offset, limit } = parseLimitOffset(String(input));
+      const { offset, limit } = parseDiscoveryParams(String(input));
       offsets.push(offset);
       // Two full batches, then a partial page in the third batch's first slot.
       if (offset < 20) return new Response(JSON.stringify(mkPage(offset, limit)), { status: 200 });
@@ -228,7 +259,7 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
     let totalCalls = 0;
     const fetchMock = vi.fn(async (input: string | URL) => {
       totalCalls++;
-      const { offset, limit } = parseLimitOffset(String(input));
+      const { offset, limit } = parseDiscoveryParams(String(input));
       // Batch 1: page at offset 0 is full, page at offset 10 is empty.
       if (offset === 0) return new Response(JSON.stringify(mkPage(0, limit)), { status: 200 });
       return new Response(JSON.stringify([]), { status: 200 });
@@ -244,7 +275,7 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
     let totalCalls = 0;
     const fetchMock = vi.fn(async (input: string | URL) => {
       totalCalls++;
-      const { offset, limit } = parseLimitOffset(String(input));
+      const { offset, limit } = parseDiscoveryParams(String(input));
       // Batch 1: offset 0 full, offset 10 partial (3 items). Should stop.
       if (offset === 0) return new Response(JSON.stringify(mkPage(0, limit)), { status: 200 });
       if (offset === 10) return new Response(JSON.stringify(mkPage(10, 3)), { status: 200 });
@@ -259,7 +290,7 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
 
   it('preserves first-to-last order across batches', async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
-      const { offset, limit } = parseLimitOffset(String(input));
+      const { offset, limit } = parseDiscoveryParams(String(input));
       if (offset < 20) return new Response(JSON.stringify(mkPage(offset, limit)), { status: 200 });
       if (offset === 20) return new Response(JSON.stringify(mkPage(offset, 5)), { status: 200 });
       return new Response(JSON.stringify([]), { status: 200 });
@@ -272,9 +303,23 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
     );
   });
 
+  it('stops at maxPages without issuing requests beyond the discovery window', async () => {
+    const offsets: number[] = [];
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const { offset, limit } = parseDiscoveryParams(String(input));
+      offsets.push(offset);
+      return new Response(JSON.stringify(mkPage(offset, limit)), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchActiveMarkets(10, 2, 3);
+    expect(offsets.sort((a, b) => a - b)).toEqual([0, 10, 20]);
+    expect(result).toHaveLength(30);
+  });
+
   it('rejects when any page in a batch fails (Promise.all behavior)', async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
-      const { offset } = parseLimitOffset(String(input));
+      const { offset } = parseDiscoveryParams(String(input));
       if (offset === 10) {
         // Surface a non-OK response → getJson throws.
         return new Response('boom', { status: 500 });
