@@ -325,10 +325,11 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evidence Path</h3>
       <span id="evidence-status" class="pill">-</span>
     </div>
-    <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+    <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 mb-3">
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-settled">-</div><div class="stat-label">Poly settled</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-due">-</div><div class="stat-label">Due 30d</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-sync">-</div><div class="stat-label">Equity sync</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-equity-edge">-</div><div class="stat-label">Equity edge</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-regime-days">-</div><div class="stat-label">Regime days</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-ttl-pass">-</div><div class="stat-label">TTL pass</div></div>
     </div>
@@ -2290,6 +2291,7 @@ function renderEvidencePath(evidence) {
 
   const poly = evidence.polymarket || {};
   const equitySync = evidence.equitySync || null;
+  const equityBenchmark = evidence.equityBenchmark || null;
   const regime = evidence.regimeSharpe || {};
   const ttl = evidence.ttlFilter || {};
 
@@ -2304,6 +2306,14 @@ function renderEvidencePath(evidence) {
     syncEl.textContent = equitySync
       ? (equitySync.freshCount ?? 0) + '/' + (equitySync.expectedCount ?? 0)
       : '-';
+  }
+
+  const edgeEl = document.getElementById('evidence-equity-edge');
+  if (edgeEl) {
+    edgeEl.textContent = equityBenchmark
+      ? fmtSignedPct(equityBenchmark.minExcessReturn, 2)
+      : '-';
+    edgeEl.style.color = equityBenchmark && equityBenchmark.allOutperforming ? '#6ee7b7' : '#fbbf24';
   }
 
   const regimeEl = document.getElementById('evidence-regime-days');
@@ -2322,6 +2332,10 @@ function renderEvidencePath(evidence) {
       ? ' / equity sync ' + (equitySync.freshCount ?? 0) + '/' + (equitySync.expectedCount ?? 0) +
         ' max age ' + (equitySync.maxAgeSec === null || equitySync.maxAgeSec === undefined ? '-' : fmtAgo(equitySync.maxAgeSec))
       : '';
+    const equityBenchmarkText = equityBenchmark
+      ? ' / equity edge ' + fmtSignedPct(equityBenchmark.minExcessReturn, 2) +
+        ' vs ' + (equityBenchmark.benchmark || 'benchmark')
+      : '';
     const history = evidence.history || [];
     let historyText = 'history no snapshots';
     if (history.length > 0) {
@@ -2336,7 +2350,8 @@ function renderEvidencePath(evidence) {
         ' / pnl ' + fmtUsd(last.polyTotalPnlUsd ?? 0) +
         (pnlDelta !== 0 ? ' (' + (pnlDelta > 0 ? '+' : '') + fmtUsd(Math.abs(pnlDelta)) + ')' : '') +
         ' / regime ' + (last.regimeMinDays ?? 0) + '/' + (last.regimeTargetDays ?? 60) + 'd' +
-        (regimeDelta !== 0 ? ' (' + (regimeDelta > 0 ? '+' : '') + regimeDelta + ')' : '');
+        (regimeDelta !== 0 ? ' (' + (regimeDelta > 0 ? '+' : '') + regimeDelta + ')' : '') +
+        ' / edge ' + fmtSignedPct(last.equityBenchmarkMinExcessReturn ?? null, 2);
     }
     const incomplete = (evidence.metrics || [])
       .filter(m => m.status !== 'pass')
@@ -2351,6 +2366,7 @@ function renderEvidencePath(evidence) {
       ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
       ' / nearest end ' + nearest +
       equitySyncText +
+      equityBenchmarkText +
       ' / ttl tick ' + ttlAge +
       ' / ' + historyText +
       (incomplete ? ' / tracking ' + incomplete : '');

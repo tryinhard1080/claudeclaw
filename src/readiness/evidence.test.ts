@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectEquityBenchmarkEvidence,
   collectEquitySyncEvidence,
   collectOperationalEvidence,
   collectPolymarketEvidence,
@@ -166,17 +167,56 @@ describe('operational evidence', () => {
     mem.close();
   });
 
+  it('compares equity curve returns against the benchmark track', () => {
+    const mem = db();
+    mem.exec(`
+      CREATE TABLE equity_benchmark_snapshots (
+        benchmark TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        equity REAL NOT NULL,
+        daily_return REAL
+      );
+      CREATE TABLE regime_sharpe_snapshots (
+        instance TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        equity REAL NOT NULL,
+        daily_return REAL
+      );
+      INSERT INTO equity_benchmark_snapshots(benchmark, snapshot_date, equity, daily_return) VALUES
+        ('SPY', '2026-05-30', 100000, NULL),
+        ('SPY', '2026-05-31', 103000, 0.03);
+      INSERT INTO regime_sharpe_snapshots(instance, snapshot_date, equity, daily_return) VALUES
+        ('spy-aggressive', '2026-05-30', 100000, NULL),
+        ('spy-aggressive', '2026-05-31', 106000, 0.06),
+        ('spy-conservative', '2026-05-30', 100000, NULL),
+        ('spy-conservative', '2026-05-31', 104000, 0.04);
+    `);
+
+    const evidence = collectEquityBenchmarkEvidence(mem);
+
+    expect(evidence.status).toBe('pass');
+    expect(evidence.benchmark).toBe('SPY');
+    expect(evidence.instances).toHaveLength(2);
+    expect(evidence.allOutperforming).toBe(true);
+    expect(evidence.minExcessReturn).toBeCloseTo(0.01, 6);
+    expect(evidence.instances.find(row => row.instance === 'spy-aggressive')?.excessReturn).toBeCloseTo(0.03, 6);
+    mem.close();
+  });
+
   it('normalizes millisecond regime Sharpe snapshot timestamps to seconds', () => {
     const mem = db();
     mem.exec(`
       CREATE TABLE regime_sharpe_snapshots (
         instance TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        equity REAL NOT NULL,
+        daily_return REAL,
         n_days INTEGER NOT NULL,
         rolling_sharpe_60d REAL,
         created_at INTEGER NOT NULL
       );
-      INSERT INTO regime_sharpe_snapshots(instance, n_days, rolling_sharpe_60d, created_at) VALUES
-        ('spy-aggressive', 8, 1.2, ${NOW * 1000 + 123});
+      INSERT INTO regime_sharpe_snapshots(instance, snapshot_date, equity, daily_return, n_days, rolling_sharpe_60d, created_at) VALUES
+        ('spy-aggressive', '2026-05-31', 100000, NULL, 8, 1.2, ${NOW * 1000 + 123});
     `);
 
     const evidence = collectRegimeSharpeEvidence(mem);
@@ -225,9 +265,18 @@ describe('operational evidence', () => {
       CREATE TABLE poly_signals (created_at INTEGER NOT NULL, approved INTEGER NOT NULL);
       CREATE TABLE regime_sharpe_snapshots (
         instance TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        equity REAL NOT NULL,
+        daily_return REAL,
         n_days INTEGER NOT NULL,
         rolling_sharpe_60d REAL,
         created_at INTEGER NOT NULL
+      );
+      CREATE TABLE equity_benchmark_snapshots (
+        benchmark TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        equity REAL NOT NULL,
+        daily_return REAL
       );
       CREATE TABLE poly_ttl_shadow_ticks (
         scan_tick_at INTEGER NOT NULL,
@@ -242,12 +291,17 @@ describe('operational evidence', () => {
         (${NOW - 100}, 'open-soon', 'open', 50, NULL);
       INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 86400});
       INSERT INTO poly_signals(created_at, approved) VALUES (${NOW - 90}, 1);
-      INSERT INTO regime_sharpe_snapshots(instance, n_days, rolling_sharpe_60d, created_at) VALUES
-        ('spy-aggressive', 8, 1.2, ${NOW - 30});
+      INSERT INTO regime_sharpe_snapshots(instance, snapshot_date, equity, daily_return, n_days, rolling_sharpe_60d, created_at) VALUES
+        ('spy-aggressive', '2026-05-30', 100000, NULL, 7, 1.1, ${NOW - 86400}),
+        ('spy-aggressive', '2026-05-31', 104000, 0.04, 8, 1.2, ${NOW - 30});
+      INSERT INTO equity_benchmark_snapshots(benchmark, snapshot_date, equity, daily_return) VALUES
+        ('SPY', '2026-05-30', 100000, NULL),
+        ('SPY', '2026-05-31', 101000, 0.01);
       INSERT INTO poly_ttl_shadow_ticks VALUES (${NOW - 30}, 8, 1, 18, 130, 1, 30);
     `);
 
     const payload = collectOperationalEvidence(mem, NOW, {
+      collectEquityBenchmark: true,
       equitySync: {
         instances: [
           {
@@ -287,6 +341,8 @@ describe('operational evidence', () => {
     expect(payload.status).toBe('warn');
     expect(payload.metrics.map(metric => metric.key)).toContain('polymarket_resolution_pipeline');
     expect(payload.metrics.find(metric => metric.key === 'equity_state_sync')?.status).toBe('pass');
+    expect(payload.metrics.find(metric => metric.key === 'equity_benchmark_edge')?.status).toBe('pass');
+    expect(payload.equityBenchmark?.minExcessReturn).toBeCloseTo(0.03, 6);
     expect(payload.metrics.find(metric => metric.key === 'polymarket_mark_to_market')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'regime_sharpe_track')?.current).toBe(8);
@@ -319,9 +375,18 @@ describe('operational evidence', () => {
       CREATE TABLE poly_signals (created_at INTEGER NOT NULL, approved INTEGER NOT NULL);
       CREATE TABLE regime_sharpe_snapshots (
         instance TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        equity REAL NOT NULL,
+        daily_return REAL,
         n_days INTEGER NOT NULL,
         rolling_sharpe_60d REAL,
         created_at INTEGER NOT NULL
+      );
+      CREATE TABLE equity_benchmark_snapshots (
+        benchmark TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        equity REAL NOT NULL,
+        daily_return REAL
       );
       CREATE TABLE poly_ttl_shadow_ticks (
         scan_tick_at INTEGER NOT NULL,
@@ -336,16 +401,20 @@ describe('operational evidence', () => {
         (${NOW - 100}, 'open-soon', 'open', 50, NULL);
       INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 86400});
       INSERT INTO poly_signals(created_at, approved) VALUES (${NOW - 90}, 1);
-      INSERT INTO regime_sharpe_snapshots(instance, n_days, rolling_sharpe_60d, created_at) VALUES
-        ('spy-aggressive', 8, 1.2, ${NOW - 30});
+      INSERT INTO regime_sharpe_snapshots(instance, snapshot_date, equity, daily_return, n_days, rolling_sharpe_60d, created_at) VALUES
+        ('spy-aggressive', '2026-05-30', 100000, NULL, 7, 1.1, ${NOW - 86400}),
+        ('spy-aggressive', '2026-05-31', 104000, 0.04, 8, 1.2, ${NOW - 30});
+      INSERT INTO equity_benchmark_snapshots(benchmark, snapshot_date, equity, daily_return) VALUES
+        ('SPY', '2026-05-30', 100000, NULL),
+        ('SPY', '2026-05-31', 101000, 0.01);
       INSERT INTO poly_ttl_shadow_ticks VALUES (${NOW - 30}, 8, 1, 18, 130, 1, 30);
     `);
 
-    const firstPayload = collectOperationalEvidence(mem, NOW);
+    const firstPayload = collectOperationalEvidence(mem, NOW, { collectEquityBenchmark: true });
     const firstYmd = recordOperationalEvidenceSnapshot(mem, firstPayload);
-    const secondPayload = collectOperationalEvidence(mem, NOW + 60);
+    const secondPayload = collectOperationalEvidence(mem, NOW + 60, { collectEquityBenchmark: true });
     const secondYmd = recordOperationalEvidenceSnapshot(mem, secondPayload);
-    recordOperationalEvidenceSnapshot(mem, collectOperationalEvidence(mem, NOW + 86400));
+    recordOperationalEvidenceSnapshot(mem, collectOperationalEvidence(mem, NOW + 86400, { collectEquityBenchmark: true }));
 
     const history = readOperationalEvidenceHistory(mem, 10);
 
@@ -359,6 +428,9 @@ describe('operational evidence', () => {
     expect(history[0]!.polyApprovalRate24h).toBe(1);
     expect(history[0]!.equitySyncFreshCount).toBe(0);
     expect(history[0]!.equitySyncExpectedCount).toBe(0);
+    expect(history[0]!.equityBenchmarkMinExcessReturn).toBeCloseTo(0.03, 6);
+    expect(history[0]!.equityBenchmarkAllOutperforming).toBe(true);
+    expect(history[0]!.equityBenchmarkInstanceCount).toBe(1);
     expect(history[0]!.regimeMinDays).toBe(8);
     expect(history[1]!.snapshotYmd).not.toBe(firstYmd);
     mem.close();

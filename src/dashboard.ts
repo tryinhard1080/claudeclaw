@@ -572,7 +572,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const db = getDb();
     const nowSec = Math.floor(Date.now() / 1000);
     return c.json({
-      ...collectOperationalEvidence(db, nowSec, { collectEquitySync: true }),
+      ...collectOperationalEvidence(db, nowSec, {
+        collectEquitySync: true,
+        collectEquityBenchmark: true,
+      }),
       history: readOperationalEvidenceHistory(db, 30),
     });
   });

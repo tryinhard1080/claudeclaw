@@ -17,16 +17,17 @@ ClaudeClaw is operational in paper mode for both configured markets:
   actions. Dashboard chat quick actions are trading-scoped: `Poly Status`,
   `Poly P&L`, `Trade Status`, and `Trade Sharpe`. Personal-assistant shortcuts
   such as Todo and Gmail are not present. The Evidence Path card now separates
-  equity live-sync freshness from the daily post-close Sharpe sample.
+  equity live-sync freshness from the daily post-close Sharpe sample and shows
+  current equity benchmark edge versus buy-and-hold.
 
 Real money remains disabled. This is correct.
 
 ## Latest Evidence
 
 - Polymarket Box 2: `0/50` settled trades, `11` open, `23` voided.
-- Polymarket mark-to-market: `$26.19` total paper P&L, all unrealized, on
-  `$529.35` open exposure. Paper equity is `$5,026.19`.
-- Polymarket signal flow: `538` signals and `2` approvals in the last 24 hours,
+- Polymarket mark-to-market: `$26.27` total paper P&L, all unrealized, on
+  `$529.35` open exposure. Paper equity is `$5,026.27`.
+- Polymarket signal flow: `531` signals and `2` approvals in the last 24 hours,
   approval rate `0.37%`.
 - Resolution pipeline: `2` open positions due within 7 days, `5` due within 30
   days, `0` overdue.
@@ -38,6 +39,9 @@ Real money remains disabled. This is correct.
 - Equity live sync: `2/2` regime-trader state files fresh and open-full during
   the active session, latest checked at roughly `3m` max state age. This proves
   the live bridge is synced now; it does not close the daily Sharpe sample gate.
+- Equity benchmark evidence: both regime-trader instances currently outperform
+  the `spy-buy-hold` benchmark on paper, with latest excess return around
+  `+0.79%` for `spy-aggressive` and `+0.80%` for `spy-conservative`.
 - TTL evidence: latest active candidate set `4/9` inside the 1-30 day TTL band.
 - Box 1 paper clock: `elapsed_review_ready`, `41/30` days since 2026-04-21,
   target 2026-05-21, A1 ACK present, MISSION checkbox still open.
@@ -88,6 +92,9 @@ Real money remains disabled. This is correct.
 - `npm run readiness:evidence` - PASS/WARN as expected; adds `Equity state
   sync` PASS with `2/2` fresh/open-full instances while keeping Regime Box 3
   WARN at `8/60`.
+- `npm run readiness:evidence` - PASS/WARN as expected after adding equity
+  benchmark evidence; `Equity benchmark` PASS shows `spy-aggressive
+  excess=+0.79%` and `spy-conservative excess=+0.80%`.
 - `npm run readiness:evidence:record` - refreshed the 2026-06-01 readiness
   evidence snapshot; snapshot history now shows `equitySync=2/2`.
 - `npm test` - 75 files, 916 tests PASS after equity live-sync evidence.
@@ -99,6 +106,11 @@ Real money remains disabled. This is correct.
   Datasets MCP connected; Polymarket scans fresh; both regime-trader instances
   `open_full`; `Equity state sync` PASS at `2/2`; `0` system blockers; live
   startup remains blocked by Boxes 1/2/3/7 by design.
+- Post-restart `npm run capacity:status` after equity benchmark evidence -
+  operational systems PASS; Financial Datasets MCP connected; Polymarket scans
+  fresh at `2m`; both regime-trader instances `open_full`; `Equity benchmark`
+  PASS with `+0.79%` minimum excess return; `0` system blockers; live startup
+  remains blocked by Boxes 1/2/3/7 by design.
 - `npm test` - 75 files, 913 tests PASS after rebuild and sequential rerun.
 - `npm run build` - PASS.
 - `pm2 restart claudeclaw-main --update-env` - PASS; `claudeclaw-main` online.

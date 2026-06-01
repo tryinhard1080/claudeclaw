@@ -90,12 +90,15 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   include personal-assistant shortcuts such as Todo or Gmail.
 - `npm run readiness:evidence` reports Polymarket settlement progress,
   mark-to-market paper P&L, near-term resolution pipeline, the open-trade
-  resolution queue, equity live-sync freshness, TTL filter evidence, and regime
-  Sharpe sample depth. Equity live-sync freshness proves current regime-trader
-  state sync; regime Sharpe remains a separate daily post-close sample gate.
+  resolution queue, equity live-sync freshness, equity benchmark edge, TTL
+  filter evidence, and regime Sharpe sample depth. Equity live-sync freshness
+  proves current regime-trader state sync; equity benchmark edge compares
+  paper return against buy-and-hold; regime Sharpe remains a separate daily
+  post-close sample gate.
 - The dashboard Evidence Path card should show the same open-trade resolution
   queue so Richard can see which paper positions can move Box 2 next. It should
-  also show equity sync as fresh instance count, separate from regime days.
+  also show equity sync as fresh instance count and equity edge as percent
+  excess return, separate from regime days.
 - `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
 - `npm run readiness:evidence:cron` reports `already registered` or creates one active daily shell task for `scripts/readiness-evidence.ts --record --history 14`.
 - `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled.

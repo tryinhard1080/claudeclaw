@@ -17,9 +17,15 @@ function fmtStatus(status: ReadinessStatus): string {
   return status.toUpperCase().padEnd(4);
 }
 
-function fmtPct(value: number | null | undefined): string {
+function fmtPct(value: number | null | undefined, digits = 1): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '-';
-  return `${(value * 100).toFixed(1)}%`;
+  return `${(value * 100).toFixed(digits)}%`;
+}
+
+function fmtSignedPct(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
+  const pct = value * 100;
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(digits)}%`;
 }
 
 function fmtUsd(value: number): string {
@@ -75,6 +81,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
       `pnl=${fmtUsd(row.polyTotalPnlUsd)}  ` +
       `due30=${row.polyDueNext30Days}/${row.polyOpenTrades}  ` +
       `equitySync=${row.equitySyncFreshCount}/${row.equitySyncExpectedCount}  ` +
+      `edge=${fmtSignedPct(row.equityBenchmarkMinExcessReturn, 2)}  ` +
       `regime=${row.regimeMinDays}/${row.regimeTargetDays}d  ` +
       `ttl=${fmtPct(row.ttlPassRate)}`,
     );
@@ -82,7 +89,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
 }
 
 function printEvidence(payload: OperationalEvidencePayload, history: OperationalEvidenceHistoryPoint[] = []): void {
-  const { polymarket, equitySync, regimeSharpe, ttlFilter } = payload;
+  const { polymarket, equitySync, equityBenchmark, regimeSharpe, ttlFilter } = payload;
 
   console.log('Operational Evidence');
   console.log('--------------------');
@@ -148,6 +155,27 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   }
 
   console.log();
+  console.log('Equity Benchmark Evidence');
+  console.log('-------------------------');
+  if (!equityBenchmark) {
+    console.log('Equity benchmark not collected');
+  } else if (equityBenchmark.instances.length === 0) {
+    console.log(equityBenchmark.summary);
+  } else {
+    console.log(`Benchmark                ${equityBenchmark.benchmark ?? '-'}`);
+    console.log(`Min excess return        ${fmtSignedPct(equityBenchmark.minExcessReturn, 2)}`);
+    console.log(`All outperforming        ${equityBenchmark.allOutperforming ? 'yes' : 'no'}`);
+    for (const row of equityBenchmark.instances) {
+      console.log(
+        `${row.instance.padEnd(18)} ${row.nDays}d  ` +
+        `strategy=${fmtPct(row.strategyReturn, 2)}  ` +
+        `benchmark=${fmtPct(row.benchmarkReturn, 2)}  ` +
+        `excess=${fmtSignedPct(row.excessReturn, 2)}`,
+      );
+    }
+  }
+
+  console.log();
   console.log('Equity Regime Evidence');
   console.log('----------------------');
   if (regimeSharpe.instances.length === 0) {
@@ -182,7 +210,10 @@ export function main(): number {
   try {
     db.pragma('busy_timeout = 5000');
     if (shouldRecord) db.pragma('journal_mode = WAL');
-    const payload = collectOperationalEvidence(db, Math.floor(Date.now() / 1000), { collectEquitySync: true });
+    const payload = collectOperationalEvidence(db, Math.floor(Date.now() / 1000), {
+      collectEquitySync: true,
+      collectEquityBenchmark: true,
+    });
     if (shouldRecord) {
       const ymd = recordOperationalEvidenceSnapshot(db, payload);
       console.log(`Recorded readiness evidence snapshot: ${ymd}`);

@@ -54,6 +54,15 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("max age");
   });
 
+  it('renders equity benchmark edge inside the readiness evidence path', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("evidence-equity-edge");
+    expect(html).toContain("evidence.equityBenchmark");
+    expect(html).toContain("equity edge");
+    expect(html).toContain("equityBenchmarkMinExcessReturn");
+  });
+
   it('keeps chat quick actions trading scoped', () => {
     const html = getDashboardHtml('token', 'chat');
 

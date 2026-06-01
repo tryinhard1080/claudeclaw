@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { POLY_PAPER_CAPITAL, REGIME_TRADER_INSTANCES, REGIME_TRADER_PATH } from '../config.js';
+import { compareEquityBenchmark, type EquityCurvePoint } from '../trading/equity-benchmark.js';
 import type { ReadinessStatus } from './gate-progress.js';
 
 export interface ReadinessEvidenceMetric {
@@ -120,6 +121,24 @@ export interface EquitySyncOptions {
   readState?: (instance: string, statePath: string) => { raw: string; mtimeMs: number };
 }
 
+export interface EquityBenchmarkInstanceEvidence {
+  instance: string;
+  benchmark: string;
+  strategyReturn: number | null;
+  benchmarkReturn: number | null;
+  excessReturn: number | null;
+  nDays: number;
+}
+
+export interface EquityBenchmarkEvidence {
+  instances: EquityBenchmarkInstanceEvidence[];
+  benchmark: string | null;
+  minExcessReturn: number | null;
+  allOutperforming: boolean;
+  status: ReadinessStatus;
+  summary: string;
+}
+
 export interface TtlFilterEvidence {
   latestAt: number | null;
   ageSec: number | null;
@@ -137,6 +156,7 @@ export interface OperationalEvidencePayload {
   status: ReadinessStatus;
   polymarket: PolymarketEvidence;
   equitySync: EquitySyncEvidence | null;
+  equityBenchmark: EquityBenchmarkEvidence | null;
   regimeSharpe: RegimeSharpeEvidence;
   ttlFilter: TtlFilterEvidence;
   metrics: ReadinessEvidenceMetric[];
@@ -144,7 +164,9 @@ export interface OperationalEvidencePayload {
 
 export interface OperationalEvidenceOptions {
   collectEquitySync?: boolean;
+  collectEquityBenchmark?: boolean;
   equitySync?: EquitySyncEvidence | null;
+  equityBenchmark?: EquityBenchmarkEvidence | null;
   equitySyncOptions?: EquitySyncOptions;
 }
 
@@ -167,6 +189,9 @@ export interface OperationalEvidenceHistoryPoint {
   equitySyncFreshCount: number;
   equitySyncExpectedCount: number;
   equitySyncMaxAgeSec: number | null;
+  equityBenchmarkMinExcessReturn: number | null;
+  equityBenchmarkAllOutperforming: boolean;
+  equityBenchmarkInstanceCount: number;
   regimeMinDays: number;
   regimeTargetDays: number;
   regimeAllInstancesPositive: boolean;
@@ -190,6 +215,20 @@ interface TtlRow {
   avg_ttl_filtered: number | null;
   band_min_days: number | null;
   band_max_days: number | null;
+}
+
+interface EquityBenchmarkRow {
+  benchmark: string;
+  snapshot_date: string;
+  equity: number;
+  daily_return: number | null;
+}
+
+interface RegimeCurveRow {
+  instance: string;
+  snapshot_date: string;
+  equity: number;
+  daily_return: number | null;
 }
 
 const SETTLED_TARGET = 50;
@@ -253,6 +292,12 @@ function snapshotYmd(capturedAt: number): string {
 
 function normalizeEpochSec(value: number): number {
   return value > 10_000_000_000 ? Math.floor(value / 1000) : value;
+}
+
+function compactPct(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'n/a';
+  const pct = value * 100;
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
 }
 
 function optionalColumn(
@@ -629,6 +674,112 @@ export function collectEquitySyncEvidence(
   };
 }
 
+function asEquityCurvePoints(
+  rows: ReadonlyArray<{ snapshot_date: string; equity: number; daily_return: number | null }>,
+): EquityCurvePoint[] {
+  return rows.map(row => ({
+    date: row.snapshot_date,
+    equity: row.equity,
+    dailyReturn: row.daily_return,
+  }));
+}
+
+export function collectEquityBenchmarkEvidence(db: Database.Database): EquityBenchmarkEvidence {
+  if (!tableExists(db, 'equity_benchmark_snapshots')) {
+    return {
+      instances: [],
+      benchmark: null,
+      minExcessReturn: null,
+      allOutperforming: false,
+      status: 'warn',
+      summary: 'equity_benchmark_snapshots missing',
+    };
+  }
+  if (!tableExists(db, 'regime_sharpe_snapshots')) {
+    return {
+      instances: [],
+      benchmark: null,
+      minExcessReturn: null,
+      allOutperforming: false,
+      status: 'warn',
+      summary: 'regime_sharpe_snapshots missing',
+    };
+  }
+
+  const benchmarkRows = db.prepare(`
+    SELECT benchmark, snapshot_date, equity, daily_return
+      FROM equity_benchmark_snapshots
+     ORDER BY benchmark ASC, snapshot_date ASC
+  `).all() as EquityBenchmarkRow[];
+  if (benchmarkRows.length === 0) {
+    return {
+      instances: [],
+      benchmark: null,
+      minExcessReturn: null,
+      allOutperforming: false,
+      status: 'warn',
+      summary: 'benchmark table empty',
+    };
+  }
+
+  const benchmarkName = benchmarkRows[0]!.benchmark;
+  const selectedBenchmarkRows = benchmarkRows.filter(row => row.benchmark === benchmarkName);
+  const regimeRows = db.prepare(`
+    SELECT instance, snapshot_date, equity, daily_return
+      FROM regime_sharpe_snapshots
+     ORDER BY instance ASC, snapshot_date ASC
+  `).all() as RegimeCurveRow[];
+  const instanceNames = [...new Set(regimeRows.map(row => row.instance))].sort();
+  if (instanceNames.length === 0) {
+    return {
+      instances: [],
+      benchmark: benchmarkName,
+      minExcessReturn: null,
+      allOutperforming: false,
+      status: 'warn',
+      summary: `no regime snapshots to compare with ${benchmarkName}`,
+    };
+  }
+
+  const instances = instanceNames.map<EquityBenchmarkInstanceEvidence>(instance => {
+    const strategyRows = regimeRows.filter(row => row.instance === instance);
+    const comparison = compareEquityBenchmark({
+      instance,
+      benchmark: benchmarkName,
+      strategyPoints: asEquityCurvePoints(strategyRows),
+      benchmarkPoints: asEquityCurvePoints(selectedBenchmarkRows),
+    });
+
+    return {
+      instance,
+      benchmark: benchmarkName,
+      strategyReturn: comparison.strategy.cumulativeReturn,
+      benchmarkReturn: comparison.benchmarkStats.cumulativeReturn,
+      excessReturn: comparison.excessCumulativeReturn,
+      nDays: comparison.strategy.nDays,
+    };
+  });
+
+  const excessValues = instances
+    .map(row => row.excessReturn)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const minExcessReturn = excessValues.length > 0 ? Math.min(...excessValues) : null;
+  const allOutperforming = instances.length > 0
+    && instances.every(row => row.excessReturn !== null && row.excessReturn > 0);
+  const summary = instances
+    .map(row => `${row.instance} excess=${compactPct(row.excessReturn)}`)
+    .join('; ');
+
+  return {
+    instances,
+    benchmark: benchmarkName,
+    minExcessReturn,
+    allOutperforming,
+    status: allOutperforming ? 'pass' : 'warn',
+    summary: summary || `no comparable equity benchmark evidence for ${benchmarkName}`,
+  };
+}
+
 export function collectTtlFilterEvidence(db: Database.Database, nowSec: number): TtlFilterEvidence {
   if (!tableExists(db, 'poly_ttl_shadow_ticks')) {
     return {
@@ -682,6 +833,7 @@ export function collectTtlFilterEvidence(db: Database.Database, nowSec: number):
 function buildMetrics(
   polymarket: PolymarketEvidence,
   equitySync: EquitySyncEvidence | null,
+  equityBenchmark: EquityBenchmarkEvidence | null,
   regimeSharpe: RegimeSharpeEvidence,
   ttlFilter: TtlFilterEvidence,
 ): ReadinessEvidenceMetric[] {
@@ -765,6 +917,20 @@ function buildMetrics(
     });
   }
 
+  if (equityBenchmark) {
+    metrics.push({
+      key: 'equity_benchmark_edge',
+      name: 'Equity benchmark',
+      status: equityBenchmark.status,
+      state: equityBenchmark.allOutperforming
+        ? 'outperforming'
+        : (equityBenchmark.instances.length > 0 ? 'incomplete_or_lagging' : 'missing'),
+      detail: equityBenchmark.summary,
+      current: equityBenchmark.minExcessReturn ?? undefined,
+      progressPct: equityBenchmark.minExcessReturn,
+    });
+  }
+
   metrics.push(
     {
       key: 'regime_sharpe_track',
@@ -796,15 +962,21 @@ export function collectOperationalEvidence(
     : options.collectEquitySync
       ? collectEquitySyncEvidence(nowSec, options.equitySyncOptions)
       : null;
+  const equityBenchmark = options.equityBenchmark !== undefined
+    ? options.equityBenchmark
+    : options.collectEquityBenchmark
+      ? collectEquityBenchmarkEvidence(db)
+      : null;
   const regimeSharpe = collectRegimeSharpeEvidence(db);
   const ttlFilter = collectTtlFilterEvidence(db, nowSec);
-  const metrics = buildMetrics(polymarket, equitySync, regimeSharpe, ttlFilter);
+  const metrics = buildMetrics(polymarket, equitySync, equityBenchmark, regimeSharpe, ttlFilter);
 
   return {
     generatedAt: nowSec,
     status: worstStatus(metrics),
     polymarket,
     equitySync,
+    equityBenchmark,
     regimeSharpe,
     ttlFilter,
     metrics,
@@ -832,6 +1004,9 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
       equity_sync_fresh_count       INTEGER NOT NULL DEFAULT 0,
       equity_sync_expected_count    INTEGER NOT NULL DEFAULT 0,
       equity_sync_max_age_sec       INTEGER,
+      equity_benchmark_min_excess_return REAL,
+      equity_benchmark_all_outperforming INTEGER NOT NULL DEFAULT 0,
+      equity_benchmark_instance_count INTEGER NOT NULL DEFAULT 0,
       regime_min_days               INTEGER NOT NULL,
       regime_target_days            INTEGER NOT NULL,
       regime_all_instances_positive INTEGER NOT NULL,
@@ -851,6 +1026,9 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_fresh_count', 'equity_sync_fresh_count INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_expected_count', 'equity_sync_expected_count INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_sync_max_age_sec', 'equity_sync_max_age_sec INTEGER');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_benchmark_min_excess_return', 'equity_benchmark_min_excess_return REAL');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_benchmark_all_outperforming', 'equity_benchmark_all_outperforming INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_benchmark_instance_count', 'equity_benchmark_instance_count INTEGER NOT NULL DEFAULT 0');
 }
 
 export function recordOperationalEvidenceSnapshot(
@@ -868,10 +1046,12 @@ export function recordOperationalEvidenceSnapshot(
       poly_open_trades, poly_voided_trades, poly_due_next_7d,
       poly_due_next_30d, poly_overdue_open_trades,
       equity_sync_fresh_count, equity_sync_expected_count, equity_sync_max_age_sec,
+      equity_benchmark_min_excess_return, equity_benchmark_all_outperforming,
+      equity_benchmark_instance_count,
       regime_min_days, regime_target_days, regime_all_instances_positive,
       ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
       payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(snapshot_ymd) DO UPDATE SET
       captured_at = excluded.captured_at,
       status = excluded.status,
@@ -890,6 +1070,9 @@ export function recordOperationalEvidenceSnapshot(
       equity_sync_fresh_count = excluded.equity_sync_fresh_count,
       equity_sync_expected_count = excluded.equity_sync_expected_count,
       equity_sync_max_age_sec = excluded.equity_sync_max_age_sec,
+      equity_benchmark_min_excess_return = excluded.equity_benchmark_min_excess_return,
+      equity_benchmark_all_outperforming = excluded.equity_benchmark_all_outperforming,
+      equity_benchmark_instance_count = excluded.equity_benchmark_instance_count,
       regime_min_days = excluded.regime_min_days,
       regime_target_days = excluded.regime_target_days,
       regime_all_instances_positive = excluded.regime_all_instances_positive,
@@ -916,6 +1099,9 @@ export function recordOperationalEvidenceSnapshot(
     payload.equitySync?.freshCount ?? 0,
     payload.equitySync?.expectedCount ?? 0,
     payload.equitySync?.maxAgeSec ?? null,
+    payload.equityBenchmark?.minExcessReturn ?? null,
+    payload.equityBenchmark?.allOutperforming ? 1 : 0,
+    payload.equityBenchmark?.instances.length ?? 0,
     payload.regimeSharpe.minDays,
     payload.regimeSharpe.targetDays,
     payload.regimeSharpe.allInstancesPositive ? 1 : 0,
@@ -949,6 +1135,9 @@ export function readOperationalEvidenceHistory(
            ${optional('equity_sync_fresh_count', '0')} AS equity_sync_fresh_count,
            ${optional('equity_sync_expected_count', '0')} AS equity_sync_expected_count,
            ${optional('equity_sync_max_age_sec', 'NULL')} AS equity_sync_max_age_sec,
+           ${optional('equity_benchmark_min_excess_return', 'NULL')} AS equity_benchmark_min_excess_return,
+           ${optional('equity_benchmark_all_outperforming', '0')} AS equity_benchmark_all_outperforming,
+           ${optional('equity_benchmark_instance_count', '0')} AS equity_benchmark_instance_count,
            regime_min_days, regime_target_days, regime_all_instances_positive,
            ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate
       FROM readiness_evidence_snapshots
@@ -973,6 +1162,9 @@ export function readOperationalEvidenceHistory(
     equity_sync_fresh_count: number;
     equity_sync_expected_count: number;
     equity_sync_max_age_sec: number | null;
+    equity_benchmark_min_excess_return: number | null;
+    equity_benchmark_all_outperforming: number;
+    equity_benchmark_instance_count: number;
     regime_min_days: number;
     regime_target_days: number;
     regime_all_instances_positive: number;
@@ -1000,6 +1192,9 @@ export function readOperationalEvidenceHistory(
     equitySyncFreshCount: row.equity_sync_fresh_count,
     equitySyncExpectedCount: row.equity_sync_expected_count,
     equitySyncMaxAgeSec: row.equity_sync_max_age_sec,
+    equityBenchmarkMinExcessReturn: row.equity_benchmark_min_excess_return,
+    equityBenchmarkAllOutperforming: row.equity_benchmark_all_outperforming === 1,
+    equityBenchmarkInstanceCount: row.equity_benchmark_instance_count,
     regimeMinDays: row.regime_min_days,
     regimeTargetDays: row.regime_target_days,
     regimeAllInstancesPositive: row.regime_all_instances_positive === 1,
