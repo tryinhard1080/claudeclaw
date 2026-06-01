@@ -70,6 +70,26 @@ export interface OperationalEvidencePayload {
   metrics: ReadinessEvidenceMetric[];
 }
 
+export interface OperationalEvidenceHistoryPoint {
+  snapshotYmd: string;
+  capturedAt: number;
+  status: ReadinessStatus;
+  polySettledTrades: number;
+  polyTargetSettledTrades: number;
+  polyRealizedPnlUsd: number;
+  polyOpenTrades: number;
+  polyVoidedTrades: number;
+  polyDueNext7Days: number;
+  polyDueNext30Days: number;
+  polyOverdueOpenTrades: number;
+  regimeMinDays: number;
+  regimeTargetDays: number;
+  regimeAllInstancesPositive: boolean;
+  ttlCandidatesTotal: number;
+  ttlCandidatesTtlPass: number;
+  ttlPassRate: number | null;
+}
+
 interface SharpeRow {
   instance: string;
   n_days: number;
@@ -121,6 +141,14 @@ function worstStatus(metrics: readonly ReadinessEvidenceMetric[]): ReadinessStat
   return metrics.reduce<ReadinessStatus>((worst, metric) => (
     rank(metric.status) > rank(worst) ? metric.status : worst
   ), 'pass');
+}
+
+function snapshotYmd(capturedAt: number): string {
+  return new Date(capturedAt * 1000).toISOString().slice(0, 10);
+}
+
+function normalizeEpochSec(value: number): number {
+  return value > 10_000_000_000 ? Math.floor(value / 1000) : value;
 }
 
 export function collectPolymarketEvidence(db: Database.Database, nowSec: number): PolymarketEvidence {
@@ -230,7 +258,7 @@ export function collectRegimeSharpeEvidence(db: Database.Database): RegimeSharpe
     instance: row.instance,
     nDays: row.n_days,
     rollingSharpe60d: row.rolling_sharpe_60d,
-    createdAt: row.created_at,
+    createdAt: normalizeEpochSec(row.created_at),
   }));
   const minDays = instances.length === 0 ? 0 : Math.min(...instances.map(row => row.nDays));
   const allInstancesPositive = instances.length > 0
@@ -389,4 +417,145 @@ export function collectOperationalEvidence(
     ttlFilter,
     metrics,
   };
+}
+
+export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS readiness_evidence_snapshots (
+      snapshot_ymd                  TEXT PRIMARY KEY,
+      captured_at                   INTEGER NOT NULL,
+      status                        TEXT NOT NULL,
+      poly_settled_trades           INTEGER NOT NULL,
+      poly_target_settled_trades    INTEGER NOT NULL,
+      poly_realized_pnl_usd         REAL NOT NULL,
+      poly_open_trades              INTEGER NOT NULL,
+      poly_voided_trades            INTEGER NOT NULL,
+      poly_due_next_7d              INTEGER NOT NULL,
+      poly_due_next_30d             INTEGER NOT NULL,
+      poly_overdue_open_trades      INTEGER NOT NULL,
+      regime_min_days               INTEGER NOT NULL,
+      regime_target_days            INTEGER NOT NULL,
+      regime_all_instances_positive INTEGER NOT NULL,
+      ttl_candidates_total          INTEGER NOT NULL,
+      ttl_candidates_ttl_pass       INTEGER NOT NULL,
+      ttl_pass_rate                 REAL,
+      payload_json                  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_readiness_evidence_captured_at
+      ON readiness_evidence_snapshots(captured_at DESC);
+  `);
+}
+
+export function recordOperationalEvidenceSnapshot(
+  db: Database.Database,
+  payload: OperationalEvidencePayload,
+): string {
+  ensureOperationalEvidenceSnapshotsTable(db);
+  const ymd = snapshotYmd(payload.generatedAt);
+  db.prepare(`
+    INSERT INTO readiness_evidence_snapshots (
+      snapshot_ymd, captured_at, status,
+      poly_settled_trades, poly_target_settled_trades, poly_realized_pnl_usd,
+      poly_open_trades, poly_voided_trades, poly_due_next_7d,
+      poly_due_next_30d, poly_overdue_open_trades,
+      regime_min_days, regime_target_days, regime_all_instances_positive,
+      ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
+      payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(snapshot_ymd) DO UPDATE SET
+      captured_at = excluded.captured_at,
+      status = excluded.status,
+      poly_settled_trades = excluded.poly_settled_trades,
+      poly_target_settled_trades = excluded.poly_target_settled_trades,
+      poly_realized_pnl_usd = excluded.poly_realized_pnl_usd,
+      poly_open_trades = excluded.poly_open_trades,
+      poly_voided_trades = excluded.poly_voided_trades,
+      poly_due_next_7d = excluded.poly_due_next_7d,
+      poly_due_next_30d = excluded.poly_due_next_30d,
+      poly_overdue_open_trades = excluded.poly_overdue_open_trades,
+      regime_min_days = excluded.regime_min_days,
+      regime_target_days = excluded.regime_target_days,
+      regime_all_instances_positive = excluded.regime_all_instances_positive,
+      ttl_candidates_total = excluded.ttl_candidates_total,
+      ttl_candidates_ttl_pass = excluded.ttl_candidates_ttl_pass,
+      ttl_pass_rate = excluded.ttl_pass_rate,
+      payload_json = excluded.payload_json
+  `).run(
+    ymd,
+    payload.generatedAt,
+    payload.status,
+    payload.polymarket.settledTrades,
+    payload.polymarket.targetSettledTrades,
+    payload.polymarket.realizedPnlUsd,
+    payload.polymarket.openTrades,
+    payload.polymarket.voidedTrades,
+    payload.polymarket.dueNext7Days,
+    payload.polymarket.dueNext30Days,
+    payload.polymarket.overdueOpenTrades,
+    payload.regimeSharpe.minDays,
+    payload.regimeSharpe.targetDays,
+    payload.regimeSharpe.allInstancesPositive ? 1 : 0,
+    payload.ttlFilter.candidatesTotal,
+    payload.ttlFilter.candidatesTtlPass,
+    payload.ttlFilter.passRate,
+    JSON.stringify(payload),
+  );
+  return ymd;
+}
+
+export function readOperationalEvidenceHistory(
+  db: Database.Database,
+  limit = 30,
+): OperationalEvidenceHistoryPoint[] {
+  if (!tableExists(db, 'readiness_evidence_snapshots')) return [];
+  const safeLimit = Math.max(1, Math.min(365, Math.floor(limit)));
+  const rows = db.prepare(`
+    SELECT snapshot_ymd, captured_at, status,
+           poly_settled_trades, poly_target_settled_trades,
+           poly_realized_pnl_usd, poly_open_trades, poly_voided_trades,
+           poly_due_next_7d, poly_due_next_30d, poly_overdue_open_trades,
+           regime_min_days, regime_target_days, regime_all_instances_positive,
+           ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate
+      FROM readiness_evidence_snapshots
+     ORDER BY captured_at DESC
+     LIMIT ?
+  `).all(safeLimit) as Array<{
+    snapshot_ymd: string;
+    captured_at: number;
+    status: ReadinessStatus;
+    poly_settled_trades: number;
+    poly_target_settled_trades: number;
+    poly_realized_pnl_usd: number;
+    poly_open_trades: number;
+    poly_voided_trades: number;
+    poly_due_next_7d: number;
+    poly_due_next_30d: number;
+    poly_overdue_open_trades: number;
+    regime_min_days: number;
+    regime_target_days: number;
+    regime_all_instances_positive: number;
+    ttl_candidates_total: number;
+    ttl_candidates_ttl_pass: number;
+    ttl_pass_rate: number | null;
+  }>;
+
+  return rows.reverse().map(row => ({
+    snapshotYmd: row.snapshot_ymd,
+    capturedAt: row.captured_at,
+    status: row.status,
+    polySettledTrades: row.poly_settled_trades,
+    polyTargetSettledTrades: row.poly_target_settled_trades,
+    polyRealizedPnlUsd: row.poly_realized_pnl_usd,
+    polyOpenTrades: row.poly_open_trades,
+    polyVoidedTrades: row.poly_voided_trades,
+    polyDueNext7Days: row.poly_due_next_7d,
+    polyDueNext30Days: row.poly_due_next_30d,
+    polyOverdueOpenTrades: row.poly_overdue_open_trades,
+    regimeMinDays: row.regime_min_days,
+    regimeTargetDays: row.regime_target_days,
+    regimeAllInstancesPositive: row.regime_all_instances_positive === 1,
+    ttlCandidatesTotal: row.ttl_candidates_total,
+    ttlCandidatesTtlPass: row.ttl_candidates_ttl_pass,
+    ttlPassRate: row.ttl_pass_rate,
+  }));
 }

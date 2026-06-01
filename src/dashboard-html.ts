@@ -2174,6 +2174,19 @@ function renderEvidencePath(evidence) {
       ? new Date(poly.nearestOpenEndAt * 1000).toLocaleDateString()
       : '-';
     const ttlAge = ttl.ageSec === null || ttl.ageSec === undefined ? '-' : fmtAgo(ttl.ageSec);
+    const history = evidence.history || [];
+    let historyText = 'history no snapshots';
+    if (history.length > 0) {
+      const first = history[0] || {};
+      const last = history[history.length - 1] || first;
+      const polyDelta = (last.polySettledTrades ?? 0) - (first.polySettledTrades ?? 0);
+      const regimeDelta = (last.regimeMinDays ?? 0) - (first.regimeMinDays ?? 0);
+      historyText = 'history ' + history.length + 'd' +
+        ' / poly ' + (last.polySettledTrades ?? 0) + '/' + (last.polyTargetSettledTrades ?? 50) +
+        (polyDelta !== 0 ? ' (' + (polyDelta > 0 ? '+' : '') + polyDelta + ')' : '') +
+        ' / regime ' + (last.regimeMinDays ?? 0) + '/' + (last.regimeTargetDays ?? 60) + 'd' +
+        (regimeDelta !== 0 ? ' (' + (regimeDelta > 0 ? '+' : '') + regimeDelta + ')' : '');
+    }
     const incomplete = (evidence.metrics || [])
       .filter(m => m.status !== 'pass')
       .map(m => m.name + ': ' + m.state)
@@ -2184,6 +2197,7 @@ function renderEvidencePath(evidence) {
       ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
       ' / nearest end ' + nearest +
       ' / ttl tick ' + ttlAge +
+      ' / ' + historyText +
       (incomplete ? ' / tracking ' + incomplete : '');
     detailEl.style.color = status === 'fail' ? '#f87171' : '#9ca3af';
   }

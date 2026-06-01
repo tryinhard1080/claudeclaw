@@ -6,6 +6,8 @@ import {
   collectPolymarketEvidence,
   collectRegimeSharpeEvidence,
   collectTtlFilterEvidence,
+  readOperationalEvidenceHistory,
+  recordOperationalEvidenceSnapshot,
 } from './evidence.js';
 
 const NOW = 1_800_000_000;
@@ -75,7 +77,7 @@ describe('operational evidence', () => {
       );
       INSERT INTO regime_sharpe_snapshots(instance, n_days, rolling_sharpe_60d, created_at) VALUES
         ('spy-aggressive', 10, 0.7, 1),
-        ('spy-aggressive', 12, 1.1, 2),
+        ('spy-aggressive', 12, 1.1, 2000),
         ('spy-conservative', 11, 0.9, 2);
     `);
 
@@ -83,8 +85,28 @@ describe('operational evidence', () => {
 
     expect(evidence.instances).toHaveLength(2);
     expect(evidence.minDays).toBe(11);
+    expect(evidence.instances.find(row => row.instance === 'spy-aggressive')?.createdAt).toBe(2000);
     expect(evidence.allInstancesPositive).toBe(true);
     expect(evidence.allInstancesComplete).toBe(false);
+    mem.close();
+  });
+
+  it('normalizes millisecond regime Sharpe snapshot timestamps to seconds', () => {
+    const mem = db();
+    mem.exec(`
+      CREATE TABLE regime_sharpe_snapshots (
+        instance TEXT NOT NULL,
+        n_days INTEGER NOT NULL,
+        rolling_sharpe_60d REAL,
+        created_at INTEGER NOT NULL
+      );
+      INSERT INTO regime_sharpe_snapshots(instance, n_days, rolling_sharpe_60d, created_at) VALUES
+        ('spy-aggressive', 8, 1.2, ${NOW * 1000 + 123});
+    `);
+
+    const evidence = collectRegimeSharpeEvidence(mem);
+
+    expect(evidence.instances[0]!.createdAt).toBe(NOW);
     mem.close();
   });
 
@@ -168,6 +190,60 @@ describe('operational evidence', () => {
     expect(payload.regimeSharpe.instances).toEqual([]);
     expect(payload.ttlFilter.latestAt).toBeNull();
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('fail');
+    mem.close();
+  });
+
+  it('records one upserted evidence snapshot per UTC day and reads history oldest first', () => {
+    const mem = db();
+    mem.exec(`
+      CREATE TABLE poly_paper_trades (
+        created_at INTEGER NOT NULL,
+        market_slug TEXT NOT NULL,
+        status TEXT NOT NULL,
+        size_usd REAL,
+        realized_pnl REAL
+      );
+      CREATE TABLE poly_markets (slug TEXT PRIMARY KEY, end_date INTEGER NOT NULL);
+      CREATE TABLE poly_signals (created_at INTEGER NOT NULL, approved INTEGER NOT NULL);
+      CREATE TABLE regime_sharpe_snapshots (
+        instance TEXT NOT NULL,
+        n_days INTEGER NOT NULL,
+        rolling_sharpe_60d REAL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE poly_ttl_shadow_ticks (
+        scan_tick_at INTEGER NOT NULL,
+        candidates_total INTEGER NOT NULL,
+        candidates_ttl_pass INTEGER NOT NULL,
+        avg_ttl_pass REAL,
+        avg_ttl_filtered REAL,
+        band_min_days REAL,
+        band_max_days REAL
+      );
+      INSERT INTO poly_paper_trades(created_at, market_slug, status, size_usd, realized_pnl) VALUES
+        (${NOW - 100}, 'open-soon', 'open', 50, NULL);
+      INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 86400});
+      INSERT INTO poly_signals(created_at, approved) VALUES (${NOW - 90}, 1);
+      INSERT INTO regime_sharpe_snapshots(instance, n_days, rolling_sharpe_60d, created_at) VALUES
+        ('spy-aggressive', 8, 1.2, ${NOW - 30});
+      INSERT INTO poly_ttl_shadow_ticks VALUES (${NOW - 30}, 8, 1, 18, 130, 1, 30);
+    `);
+
+    const firstPayload = collectOperationalEvidence(mem, NOW);
+    const firstYmd = recordOperationalEvidenceSnapshot(mem, firstPayload);
+    const secondPayload = collectOperationalEvidence(mem, NOW + 60);
+    const secondYmd = recordOperationalEvidenceSnapshot(mem, secondPayload);
+    recordOperationalEvidenceSnapshot(mem, collectOperationalEvidence(mem, NOW + 86400));
+
+    const history = readOperationalEvidenceHistory(mem, 10);
+
+    expect(firstYmd).toBe(secondYmd);
+    expect(history).toHaveLength(2);
+    expect(history[0]!.snapshotYmd).toBe(firstYmd);
+    expect(history[0]!.capturedAt).toBe(NOW + 60);
+    expect(history[0]!.polyOpenTrades).toBe(1);
+    expect(history[0]!.regimeMinDays).toBe(8);
+    expect(history[1]!.snapshotYmd).not.toBe(firstYmd);
     mem.close();
   });
 });

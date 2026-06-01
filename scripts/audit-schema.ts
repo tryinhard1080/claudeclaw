@@ -16,6 +16,22 @@ interface AppliedState {
   lastApplied: string | null;
 }
 
+function compareMigrationVersions(a: string, b: string): number {
+  const parse = (version: string) =>
+    version
+      .replace(/^v/, '')
+      .split('.')
+      .map(part => Number.parseInt(part, 10));
+  const left = parse(a);
+  const right = parse(b);
+  const max = Math.max(left.length, right.length);
+  for (let i = 0; i < max; i += 1) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return a.localeCompare(b);
+}
+
 function main(): void {
   const dbPath = path.join(STORE_DIR, 'claudeclaw.db');
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
@@ -41,7 +57,7 @@ function main(): void {
   const registry = JSON.parse(fs.readFileSync(versionPath, 'utf-8')) as {
     migrations: Record<string, string[]>;
   };
-  const versions = Object.keys(registry.migrations).sort();
+  const versions = Object.keys(registry.migrations).sort(compareMigrationVersions);
   const latest = versions[versions.length - 1]!;
   console.log(`Latest:  ${latest}`);
   console.log(`Known:   ${versions.join(', ')}`);
@@ -84,12 +100,17 @@ function main(): void {
   const expectedTables = new Set<string>([
     'scheduled_tasks', 'sessions', 'conversation_log',
     'memories', 'consolidations', 'memories_fts',
+    'memories_fts_config', 'memories_fts_data',
+    'memories_fts_docsize', 'memories_fts_idx',
     'mission_tasks', 'hive_mind', 'inter_agent_tasks',
-    'token_usage', 'pin_attempts', 'audit_log',
+    'token_usage', 'audit_log',
     'poly_markets', 'poly_price_history', 'poly_signals', 'poly_paper_trades',
     'poly_positions', 'poly_eval_cache', 'poly_kv',
     'poly_calibration_snapshots', 'poly_regime_snapshots',
     'research_items', 'poly_scan_runs', 'poly_resolutions',
+    'news_items', 'poly_news_position_alerts', 'poly_ttl_shadow_ticks',
+    'source_freshness', 'regime_sharpe_snapshots',
+    'equity_benchmark_snapshots', 'readiness_evidence_snapshots',
   ]);
   const liveTableNames = new Set(tables.map(t => t.name));
   const unexpected = [...liveTableNames].filter(n => !expectedTables.has(n)).sort();

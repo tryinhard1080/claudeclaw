@@ -22,6 +22,8 @@
     "poly:paper:status": "tsx scripts/poly-paper-readiness.ts",
     "poly:ttl:report": "tsx scripts/poly-ttl-shadow-report.ts --days 14 --out docs/research/sprint-s2-ttl-filter-latest.md",
     "readiness:evidence": "tsx scripts/readiness-evidence.ts",
+    "readiness:evidence:record": "tsx scripts/readiness-evidence.ts --record --history 14",
+    "readiness:evidence:cron": "tsx scripts/register-readiness-evidence-cron.ts",
     "source:freshness:refresh": "tsx scripts/source-freshness-refresh.ts",
     "gate:status": "tsx scripts/gate-progress.ts",
     "capacity:status": "npm run status && npm run trading:status && npm run trading:benchmark && npm run poly:paper:status && npm run source:freshness:refresh && npm run gate:status && npm run readiness:evidence && tsx scripts/poly-ttl-shadow-report.ts",

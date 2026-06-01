@@ -26,6 +26,8 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
    npm run source:freshness:refresh
    npm run trading:benchmark:snapshot
    npm run readiness:evidence
+   npm run readiness:evidence:record
+   npm run readiness:evidence:cron
    npm run capacity:status
    ```
 
@@ -69,6 +71,8 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
 - `npm run trading:benchmark` reports a benchmark row for each regime-trader instance.
 - `npm run gate:status` reports real-money gate progress and source freshness rows.
 - `npm run readiness:evidence` reports Polymarket settlement progress, near-term resolution pipeline, TTL filter evidence, and regime Sharpe sample depth.
+- `npm run readiness:evidence:record` writes or refreshes one daily row in `readiness_evidence_snapshots`; the dashboard Evidence Path card should show snapshot history after the first row exists.
+- `npm run readiness:evidence:cron` reports `already registered` or creates one active daily shell task for `scripts/readiness-evidence.ts --record --history 14`.
 - `npm run poly:paper:status` reports fresh scans, halt flag `0`, and no unsafe feature flags enabled.
 - `npm run typecheck` passes after edits.
 - `npm test` passes after code or config changes that can affect behavior.

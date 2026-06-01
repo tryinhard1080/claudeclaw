@@ -71,7 +71,7 @@ import { collectTradingOpsPayload } from './trading/ops-dashboard.js';
 import { collectGateProgress } from './readiness/gate-progress.js';
 import { collectLiveStartupChecks } from './readiness/live-startup.js';
 import { readSourceFreshnessChecks } from './readiness/source-freshness.js';
-import { collectOperationalEvidence } from './readiness/evidence.js';
+import { collectOperationalEvidence, readOperationalEvidenceHistory } from './readiness/evidence.js';
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -565,7 +565,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   app.get('/api/readiness/evidence', (c) => {
     const db = getDb();
-    return c.json(collectOperationalEvidence(db, Math.floor(Date.now() / 1000)));
+    return c.json({
+      ...collectOperationalEvidence(db, Math.floor(Date.now() / 1000)),
+      history: readOperationalEvidenceHistory(db, 30),
+    });
   });
 
   app.get('/api/poly/pnl/chart', (c) => {

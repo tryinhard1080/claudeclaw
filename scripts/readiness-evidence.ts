@@ -4,7 +4,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { STORE_DIR } from '../src/config.js';
-import { collectOperationalEvidence, type OperationalEvidencePayload } from '../src/readiness/evidence.js';
+import {
+  collectOperationalEvidence,
+  readOperationalEvidenceHistory,
+  recordOperationalEvidenceSnapshot,
+  type OperationalEvidenceHistoryPoint,
+  type OperationalEvidencePayload,
+} from '../src/readiness/evidence.js';
 import type { ReadinessStatus } from '../src/readiness/gate-progress.js';
 
 function fmtStatus(status: ReadinessStatus): string {
@@ -35,7 +41,33 @@ function fmtDate(at: number | null): string {
   return new Date(at * 1000).toISOString().slice(0, 10);
 }
 
-function printEvidence(payload: OperationalEvidencePayload): void {
+function argValue(name: string): string | null {
+  const idx = process.argv.indexOf(name);
+  return idx >= 0 ? process.argv[idx + 1] ?? null : null;
+}
+
+function hasArg(name: string): boolean {
+  return process.argv.includes(name);
+}
+
+function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
+  if (history.length === 0) return;
+
+  console.log();
+  console.log('Snapshot History');
+  console.log('----------------');
+  for (const row of history) {
+    console.log(
+      `${row.snapshotYmd}  status=${row.status.toUpperCase()}  ` +
+      `poly=${row.polySettledTrades}/${row.polyTargetSettledTrades}  ` +
+      `due30=${row.polyDueNext30Days}/${row.polyOpenTrades}  ` +
+      `regime=${row.regimeMinDays}/${row.regimeTargetDays}d  ` +
+      `ttl=${fmtPct(row.ttlPassRate)}`,
+    );
+  }
+}
+
+function printEvidence(payload: OperationalEvidencePayload, history: OperationalEvidenceHistoryPoint[] = []): void {
   const { polymarket, regimeSharpe, ttlFilter } = payload;
 
   console.log('Operational Evidence');
@@ -88,14 +120,27 @@ function printEvidence(payload: OperationalEvidencePayload): void {
     console.log(`Candidates pass / total   ${ttlFilter.candidatesTtlPass}/${ttlFilter.candidatesTotal} (${fmtPct(ttlFilter.passRate)})`);
     console.log(`Avg TTL pass / filtered   ${ttlFilter.avgTtlPass?.toFixed(1) ?? '-'}/${ttlFilter.avgTtlFiltered?.toFixed(1) ?? '-'} days`);
   }
+
+  printHistory(history);
 }
 
 export function main(): number {
   const dbPath = path.join(STORE_DIR, 'claudeclaw.db');
-  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  const shouldRecord = hasArg('--record');
+  const historyArg = argValue('--history');
+  const historyLimit = historyArg ? Math.max(1, Math.min(365, Number(historyArg) || 14)) : 0;
+  const db = new Database(dbPath, { readonly: !shouldRecord, fileMustExist: true });
   try {
     db.pragma('busy_timeout = 5000');
-    printEvidence(collectOperationalEvidence(db));
+    if (shouldRecord) db.pragma('journal_mode = WAL');
+    const payload = collectOperationalEvidence(db);
+    if (shouldRecord) {
+      const ymd = recordOperationalEvidenceSnapshot(db, payload);
+      console.log(`Recorded readiness evidence snapshot: ${ymd}`);
+      console.log();
+    }
+    const history = historyLimit > 0 ? readOperationalEvidenceHistory(db, historyLimit) : [];
+    printEvidence(payload, history);
     return 0;
   } finally {
     db.close();
