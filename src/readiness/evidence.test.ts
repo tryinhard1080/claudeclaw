@@ -5,6 +5,7 @@ import {
   collectEquityBenchmarkEvidence,
   collectEquitySyncEvidence,
   collectMarketDiscoveryEvidence,
+  collectOpenBookQualityEvidence,
   collectOperationalEvidence,
   collectPolymarketEvidence,
   collectRegimeSharpeEvidence,
@@ -291,6 +292,60 @@ describe('operational evidence', () => {
     mem.close();
   });
 
+  it('audits open paper trades against current paper-learning filters', () => {
+    const mem = db();
+    mem.exec(`
+      CREATE TABLE poly_paper_trades (
+        id INTEGER PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        market_slug TEXT NOT NULL,
+        status TEXT NOT NULL,
+        size_usd REAL
+      );
+      CREATE TABLE poly_markets (
+        slug TEXT PRIMARY KEY,
+        condition_id TEXT,
+        question TEXT,
+        category TEXT,
+        outcomes_json TEXT,
+        volume_24h REAL,
+        liquidity REAL,
+        end_date INTEGER NOT NULL,
+        closed INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO poly_paper_trades(id, created_at, market_slug, status, size_usd) VALUES
+        (1, ${NOW - 100}, 'valid-near-term', 'open', 50),
+        (2, ${NOW - 90}, 'long-dated', 'open', 50),
+        (3, ${NOW - 80}, 'prophecy-market', 'open', 50),
+        (4, ${NOW - 70}, 'missing-market', 'open', 50);
+      INSERT INTO poly_markets(slug, condition_id, question, category, outcomes_json, volume_24h, liquidity, end_date, closed) VALUES
+        ('valid-near-term', 'c1', 'Will a sourced event happen by the end date?', 'news', '[]', 5000, 1000, ${NOW + 5 * 86400}, 0),
+        ('long-dated', 'c2', 'Will a sourced event happen next year?', 'news', '[]', 5000, 1000, ${NOW + 90 * 86400}, 0),
+        ('prophecy-market', 'c3', 'Will Jesus Christ return before the end date?', 'culture', '[]', 5000, 1000, ${NOW + 5 * 86400}, 0);
+    `);
+
+    const evidence = collectOpenBookQualityEvidence(mem, NOW, {
+      ttlFilterEnabled: true,
+      minTtlDays: 1,
+      maxTtlDays: 30,
+      marketQualityFilterEnabled: true,
+    });
+
+    expect(evidence.status).toBe('warn');
+    expect(evidence.state).toBe('legacy_filter_exceptions');
+    expect(evidence.openTrades).toBe(4);
+    expect(evidence.evaluatedTrades).toBe(3);
+    expect(evidence.passingTrades).toBe(1);
+    expect(evidence.failingTrades).toBe(2);
+    expect(evidence.missingMetadataTrades).toBe(1);
+    expect(evidence.reasons.map(reason => reason.code).sort()).toEqual([
+      'missing_market_metadata',
+      'ttl_too_long',
+      'untradeable_question',
+    ]);
+    mem.close();
+  });
+
   it('warns when market discovery falls back to the old first-page cap', () => {
     const mem = db();
     mem.exec(`
@@ -354,7 +409,7 @@ describe('operational evidence', () => {
       );
       INSERT INTO poly_paper_trades(created_at, market_slug, status, size_usd, realized_pnl) VALUES
         (${NOW - 100}, 'open-soon', 'open', 50, NULL);
-      INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 86400});
+      INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 2 * 86400});
       INSERT INTO poly_signals(created_at, approved) VALUES (${NOW - 90}, 1);
       INSERT INTO regime_sharpe_snapshots(instance, snapshot_date, equity, daily_return, n_days, rolling_sharpe_60d, created_at) VALUES
         ('spy-aggressive', '2026-05-30', 100000, NULL, 7, 1.1, ${NOW - 86400}),
@@ -428,6 +483,12 @@ describe('operational evidence', () => {
     expect(payload.metrics.find(metric => metric.key === 'equity_benchmark_edge')?.status).toBe('pass');
     expect(payload.equityBenchmark?.minExcessReturn).toBeCloseTo(0.03, 6);
     expect(payload.metrics.find(metric => metric.key === 'polymarket_mark_to_market')?.status).toBe('pass');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_open_book_quality')).toMatchObject({
+      status: 'pass',
+      state: 'all_inside_current_filters',
+      current: 1,
+      target: 1,
+    });
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'polymarket_market_discovery')).toMatchObject({
       status: 'pass',
@@ -499,7 +560,7 @@ describe('operational evidence', () => {
       );
       INSERT INTO poly_paper_trades(created_at, market_slug, status, size_usd, realized_pnl) VALUES
         (${NOW - 100}, 'open-soon', 'open', 50, NULL);
-      INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 86400});
+      INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 2 * 86400});
       INSERT INTO poly_signals(created_at, approved) VALUES (${NOW - 90}, 1);
       INSERT INTO regime_sharpe_snapshots(instance, snapshot_date, equity, daily_return, n_days, rolling_sharpe_60d, created_at) VALUES
         ('spy-aggressive', '2026-05-30', 100000, NULL, 7, 1.1, ${NOW - 86400}),
@@ -544,6 +605,9 @@ describe('operational evidence', () => {
     expect(history[0]!.polyMarketDiscoveryCount).toBe(992);
     expect(history[0]!.polyMarketDiscoveryTarget).toBe(500);
     expect(history[0]!.polyMarketDiscoveryAgeSec).toBe(90);
+    expect(history[0]!.polyQualityPassingOpenTrades).toBe(1);
+    expect(history[0]!.polyQualityFailingOpenTrades).toBe(0);
+    expect(history[0]!.polyQualityMissingMetadataTrades).toBe(0);
     expect(history[1]!.snapshotYmd).not.toBe(firstYmd);
     mem.close();
   });

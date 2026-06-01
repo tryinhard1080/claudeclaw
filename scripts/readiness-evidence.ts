@@ -92,6 +92,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
       `edge=${fmtSignedPct(row.equityBenchmarkMinExcessReturn, 2)}  ` +
       `regime=${row.regimeMinDays}/${row.regimeTargetDays}d  ` +
       `discover=${row.polyMarketDiscoveryCount}/${row.polyMarketDiscoveryTarget}  ` +
+      `quality=${row.polyQualityPassingOpenTrades}/${row.polyOpenTrades}  ` +
       `ttl=${fmtPct(row.ttlPassRate)}`,
     );
   }
@@ -124,6 +125,14 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log(`Total paper P&L           ${fmtUsd(polymarket.totalPnlUsd)} (${fmtPct(polymarket.paperReturnPct)})`);
   console.log(`Paper equity              ${fmtUsd(polymarket.paperEquityUsd)}`);
   console.log(`Open / voided             ${polymarket.openTrades}/${polymarket.voidedTrades}`);
+  console.log(`Open-book quality         ${polymarket.openBookQuality.passingTrades}/${polymarket.openBookQuality.openTrades} pass current filters`);
+  if (polymarket.openBookQuality.reasons.length > 0) {
+    const reasonText = polymarket.openBookQuality.reasons
+      .slice(0, 3)
+      .map(reason => `${reason.code}=${reason.count}${reason.sampleSlug ? ` sample=${reason.sampleSlug}` : ''}`)
+      .join('; ');
+    console.log(`Quality exceptions        ${reasonText}`);
+  }
   console.log(`Box 2 potential settled   ${polymarket.potentialSettledTrades}/${polymarket.targetSettledTrades}`);
   console.log(`Additional resolved need  ${polymarket.additionalSettledTradesNeeded}`);
   console.log(`Open book reaches target  ${polymarket.openPipelineCanReachTarget ? 'yes' : 'no'}`);

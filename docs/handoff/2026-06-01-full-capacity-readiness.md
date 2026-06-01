@@ -23,28 +23,32 @@ ClaudeClaw is operational in paper mode for both configured markets:
   current equity benchmark edge versus buy-and-hold. It also shows Box 2
   pipeline capacity, which separates current settled count from the maximum
   settled count the existing open book could produce. It also shows market
-  discovery depth against the widened post-Gamma-cap target.
+  discovery depth against the widened post-Gamma-cap target and open-book
+  quality against the currently active paper-learning filters.
 
 Real money remains disabled. This is correct.
 
 ## Latest Evidence
 
-- Polymarket Box 2: `0/50` settled trades, `14` open, `23` voided. The
-  current open book can cover at most `14/50` potential settled trades, so at
-  least `36` additional resolved trades are needed after the current book.
+- Polymarket Box 2: `0/50` settled trades, `20` open, `23` voided. The
+  current open book can cover at most `20/50` potential settled trades, so at
+  least `30` additional resolved trades are needed after the current book.
 - Market discovery: latest scan discovered `992/500` target markets, state
-  `healthy`, duration about `292ms`. `poly:paper:status` now includes a
+  `healthy`, duration about `327ms`. `poly:paper:status` now includes a
   `Market discovery depth` check that warns if discovery falls back near the old
   first-page cap.
-- Polymarket mark-to-market: `$26.19` total paper P&L, all unrealized, on
-  `$662.37` open exposure. Paper equity is `$5,026.19`.
-- Polymarket signal flow: `544` signals and `5` approvals in the last 24 hours,
-  approval rate about `0.9%`.
-- Resolution pipeline: `4` open positions due within 7 days, `8` due within 30
+- Open-book quality: `14/20` open paper trades pass today's active
+  paper-learning filters. The `6` exceptions are long-dated legacy positions
+  opened before the 2026-06-01 active TTL/quality filter window.
+- Polymarket mark-to-market: `$14.71` total paper P&L, all unrealized, on
+  `$944.21` open exposure. Paper equity is `$5,014.71`.
+- Polymarket signal flow: `562` signals and `11` approvals in the last 24 hours,
+  approval rate about `2.0%`.
+- Resolution pipeline: `5` open positions due within 7 days, `14` due within 30
   days, `0` overdue.
-- Resolution queue: next paper settlements are trade `#35` due 2026-06-03,
-  trades `#19`, `#23`, and `#37` due 2026-06-07, then trades `#36`, `#28`,
-  `#34`, and `#30` due by 2026-07-01.
+- Resolution queue: next paper settlements are trades `#35` and `#40` due
+  2026-06-03, trades `#19`, `#23`, and `#37` due 2026-06-07, then the current
+  due-30d queue runs through 2026-07-01.
 - Real-money gate audit: `3/7` boxes complete, `2` operator actions, `2`
   sample/time blockers, `0` system blockers, and live-money ready `NO`.
 - Equity live sync: `2/2` regime-trader state files fresh and open-full during

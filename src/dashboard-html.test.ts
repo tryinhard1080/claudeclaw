@@ -70,6 +70,15 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("polyMarketDiscoveryCount");
   });
 
+  it('renders Polymarket open-book quality in the evidence path', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("evidence-book-quality");
+    expect(html).toContain("poly.openBookQuality");
+    expect(html).toContain("book quality");
+    expect(html).toContain("polyQualityPassingOpenTrades");
+  });
+
   it('renders live equity sync evidence separately from daily Sharpe', () => {
     const html = getDashboardHtml('token', 'chat');
 

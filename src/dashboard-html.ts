@@ -325,10 +325,11 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evidence Path</h3>
       <span id="evidence-status" class="pill">-</span>
     </div>
-    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-3">
+    <div class="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-9 gap-2 mb-3">
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-settled">-</div><div class="stat-label">Poly settled</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-pipeline">-</div><div class="stat-label">Box 2 pipe</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-due">-</div><div class="stat-label">Box2 30d</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-book-quality">-</div><div class="stat-label">Quality</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-market-discovery">-</div><div class="stat-label">Discovery</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-sync">-</div><div class="stat-label">Equity sync</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-edge">-</div><div class="stat-label">Equity edge</div></div>
@@ -2297,6 +2298,7 @@ function renderEvidencePath(evidence) {
   const regime = evidence.regimeSharpe || {};
   const ttl = evidence.ttlFilter || {};
   const discovery = evidence.marketDiscovery || {};
+  const bookQuality = poly.openBookQuality || {};
 
   const settledEl = document.getElementById('evidence-poly-settled');
   if (settledEl) settledEl.textContent = (poly.settledTrades ?? 0) + '/' + (poly.targetSettledTrades ?? 50);
@@ -2317,6 +2319,12 @@ function renderEvidencePath(evidence) {
   if (discoveryEl) {
     discoveryEl.textContent = (discovery.marketCount ?? 0) + '/' + (discovery.targetMarketCount ?? 500);
     discoveryEl.style.color = discovery.status === 'pass' ? '#6ee7b7' : '#fbbf24';
+  }
+
+  const qualityEl = document.getElementById('evidence-book-quality');
+  if (qualityEl) {
+    qualityEl.textContent = (bookQuality.passingTrades ?? 0) + '/' + (bookQuality.openTrades ?? 0);
+    qualityEl.style.color = bookQuality.status === 'pass' ? '#6ee7b7' : '#fbbf24';
   }
 
   const syncEl = document.getElementById('evidence-equity-sync');
@@ -2372,6 +2380,9 @@ function renderEvidencePath(evidence) {
     const discoveryText = ' / discovery ' +
       (discovery.marketCount ?? 0) + '/' + (discovery.targetMarketCount ?? 500) +
       ' ' + (discovery.state || 'unknown');
+    const qualityText = ' / book quality ' +
+      (bookQuality.passingTrades ?? 0) + '/' + (bookQuality.openTrades ?? 0) +
+      ' ' + (bookQuality.state || 'unknown');
     const history = evidence.history || [];
     let historyText = 'history no snapshots';
     if (history.length > 0) {
@@ -2391,6 +2402,7 @@ function renderEvidencePath(evidence) {
         ' need ' + (last.polyAdditionalNearTermSettledTradesNeeded ?? '-') +
         ' / vel ' + (last.polyNearTermPaperTradesOpened24h ?? 0) + '/24h' +
         ' / discover ' + (last.polyMarketDiscoveryCount ?? 0) + '/' + (last.polyMarketDiscoveryTarget ?? 500) +
+        ' / quality ' + (last.polyQualityPassingOpenTrades ?? 0) + '/' + (last.polyOpenTrades ?? 0) +
         ' / regime ' + (last.regimeMinDays ?? 0) + '/' + (last.regimeTargetDays ?? 60) + 'd' +
         (regimeDelta !== 0 ? ' (' + (regimeDelta > 0 ? '+' : '') + regimeDelta + ')' : '') +
         ' / edge ' + fmtSignedPct(last.equityBenchmarkMinExcessReturn ?? null, 2);
@@ -2412,6 +2424,7 @@ function renderEvidencePath(evidence) {
       equitySyncText +
       equityBenchmarkText +
       discoveryText +
+      qualityText +
       ' / ttl tick ' + ttlAge +
       ' / ' + historyText +
       (incomplete ? ' / tracking ' + incomplete : '');

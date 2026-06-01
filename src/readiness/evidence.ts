@@ -2,7 +2,17 @@ import type Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-import { POLY_PAPER_CAPITAL, REGIME_TRADER_INSTANCES, REGIME_TRADER_PATH } from '../config.js';
+import {
+  POLY_MARKET_QUALITY_FILTER_ENABLED,
+  POLY_MAX_MARKET_TTL_DAYS,
+  POLY_MIN_MARKET_TTL_DAYS,
+  POLY_PAPER_CAPITAL,
+  POLY_TTL_FILTER_ENABLED,
+  REGIME_TRADER_INSTANCES,
+  REGIME_TRADER_PATH,
+} from '../config.js';
+import { evaluateMarketQuality } from '../poly/market-quality.js';
+import type { Market } from '../poly/types.js';
 import { compareEquityBenchmark, type EquityCurvePoint } from '../trading/equity-benchmark.js';
 import type { ReadinessStatus } from './gate-progress.js';
 
@@ -64,10 +74,42 @@ export interface PolymarketEvidence {
   latestApprovedSignalAt: number | null;
   progressPct: number;
   hasMarketMaturityData: boolean;
+  openBookQuality: PolymarketOpenBookQualityEvidence;
   resolutionQueue: PolymarketResolutionQueueItem[];
 }
 
 export type PolymarketResolutionQueueState = 'overdue' | 'due_7d' | 'due_30d' | 'later' | 'unknown';
+
+export type PolymarketOpenBookQualityState =
+  | 'no_open_trades'
+  | 'all_inside_current_filters'
+  | 'legacy_filter_exceptions'
+  | 'missing_market_metadata';
+
+export interface PolymarketOpenBookQualityReason {
+  code: string;
+  count: number;
+  sampleSlug: string | null;
+  reason: string;
+}
+
+export interface PolymarketOpenBookQualityEvidence {
+  openTrades: number;
+  evaluatedTrades: number;
+  passingTrades: number;
+  failingTrades: number;
+  missingMetadataTrades: number;
+  filtersActive: boolean;
+  ttlFilterEnabled: boolean;
+  marketQualityFilterEnabled: boolean;
+  minTtlDays: number;
+  maxTtlDays: number;
+  passRate: number | null;
+  status: ReadinessStatus;
+  state: PolymarketOpenBookQualityState;
+  reasons: PolymarketOpenBookQualityReason[];
+  summary: string;
+}
 
 export interface PolymarketResolutionQueueItem {
   tradeId: number;
@@ -252,6 +294,9 @@ export interface OperationalEvidenceHistoryPoint {
   polyMarketDiscoveryCount: number;
   polyMarketDiscoveryTarget: number;
   polyMarketDiscoveryAgeSec: number | null;
+  polyQualityPassingOpenTrades: number;
+  polyQualityFailingOpenTrades: number;
+  polyQualityMissingMetadataTrades: number;
 }
 
 interface SharpeRow {
@@ -374,6 +419,218 @@ function optionalColumn(
   return `${columns.has(column) ? `${alias}.${column}` : fallback} AS ${asName}`;
 }
 
+function parseMarketOutcomes(raw: string | null): Market['outcomes'] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((row): row is Market['outcomes'][number] => (
+      row !== null &&
+      typeof row === 'object' &&
+      typeof (row as { label?: unknown }).label === 'string' &&
+      typeof (row as { tokenId?: unknown }).tokenId === 'string' &&
+      typeof (row as { price?: unknown }).price === 'number'
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function emptyOpenBookQuality(openTrades = 0): PolymarketOpenBookQualityEvidence {
+  return {
+    openTrades,
+    evaluatedTrades: 0,
+    passingTrades: 0,
+    failingTrades: 0,
+    missingMetadataTrades: 0,
+    filtersActive: POLY_TTL_FILTER_ENABLED || POLY_MARKET_QUALITY_FILTER_ENABLED,
+    ttlFilterEnabled: POLY_TTL_FILTER_ENABLED,
+    marketQualityFilterEnabled: POLY_MARKET_QUALITY_FILTER_ENABLED,
+    minTtlDays: POLY_MIN_MARKET_TTL_DAYS,
+    maxTtlDays: POLY_MAX_MARKET_TTL_DAYS,
+    passRate: openTrades > 0 ? 0 : null,
+    status: openTrades > 0 ? 'warn' : 'pass',
+    state: openTrades > 0 ? 'missing_market_metadata' : 'no_open_trades',
+    reasons: openTrades > 0
+      ? [{
+          code: 'missing_market_metadata',
+          count: openTrades,
+          sampleSlug: null,
+          reason: 'open trades cannot be audited because market metadata is unavailable',
+        }]
+      : [],
+    summary: openTrades > 0
+      ? `${openTrades} open trades cannot be audited because market metadata is unavailable`
+      : 'no open paper trades to audit',
+  };
+}
+
+function addQualityReason(
+  reasons: Map<string, PolymarketOpenBookQualityReason>,
+  code: string,
+  sampleSlug: string | null,
+  reason: string,
+): void {
+  const existing = reasons.get(code);
+  if (existing) {
+    existing.count += 1;
+    return;
+  }
+  reasons.set(code, { code, count: 1, sampleSlug, reason });
+}
+
+export interface OpenBookQualityOptions {
+  ttlFilterEnabled?: boolean;
+  marketQualityFilterEnabled?: boolean;
+  minTtlDays?: number;
+  maxTtlDays?: number;
+}
+
+export function collectOpenBookQualityEvidence(
+  db: Database.Database,
+  nowSec: number,
+  options: OpenBookQualityOptions = {},
+): PolymarketOpenBookQualityEvidence {
+  if (!tableExists(db, 'poly_paper_trades')) return emptyOpenBookQuality();
+
+  const openTrades = scalar(db, "SELECT COUNT(*) AS value FROM poly_paper_trades WHERE status='open'");
+  if (openTrades === 0) return emptyOpenBookQuality();
+
+  const ttlFilterEnabled = options.ttlFilterEnabled ?? POLY_TTL_FILTER_ENABLED;
+  const marketQualityFilterEnabled = options.marketQualityFilterEnabled ?? POLY_MARKET_QUALITY_FILTER_ENABLED;
+  const minTtlDays = options.minTtlDays ?? POLY_MIN_MARKET_TTL_DAYS;
+  const maxTtlDays = options.maxTtlDays ?? POLY_MAX_MARKET_TTL_DAYS;
+  const filtersActive = ttlFilterEnabled || marketQualityFilterEnabled;
+
+  if (!tableExists(db, 'poly_markets')) {
+    return {
+      ...emptyOpenBookQuality(openTrades),
+      filtersActive,
+      ttlFilterEnabled,
+      marketQualityFilterEnabled,
+      minTtlDays,
+      maxTtlDays,
+    };
+  }
+
+  const marketCols = tableColumns(db, 'poly_markets');
+  const questionExpr = marketCols.has('question') ? 'm.question' : 't.market_slug';
+  const categoryExpr = marketCols.has('category') ? 'm.category' : 'NULL';
+  const conditionExpr = marketCols.has('condition_id') ? 'm.condition_id' : 'm.slug';
+  const outcomesExpr = marketCols.has('outcomes_json') ? 'm.outcomes_json' : 'NULL';
+  const volumeExpr = marketCols.has('volume_24h') ? 'm.volume_24h' : '0';
+  const liquidityExpr = marketCols.has('liquidity') ? 'm.liquidity' : '0';
+  const endExpr = marketCols.has('end_date') ? 'm.end_date' : 'NULL';
+  const closedExpr = marketCols.has('closed') ? 'm.closed' : '0';
+
+  const rows = db.prepare(`
+    SELECT
+      t.market_slug AS trade_slug,
+      m.slug AS market_slug,
+      ${questionExpr} AS question,
+      ${categoryExpr} AS category,
+      ${conditionExpr} AS condition_id,
+      ${outcomesExpr} AS outcomes_json,
+      ${volumeExpr} AS volume_24h,
+      ${liquidityExpr} AS liquidity,
+      ${endExpr} AS end_date,
+      ${closedExpr} AS closed
+    FROM poly_paper_trades t
+    LEFT JOIN poly_markets m ON m.slug = t.market_slug
+    WHERE t.status='open'
+  `).all() as Array<{
+    trade_slug: string;
+    market_slug: string | null;
+    question: string | null;
+    category: string | null;
+    condition_id: string | null;
+    outcomes_json: string | null;
+    volume_24h: number | null;
+    liquidity: number | null;
+    end_date: number | null;
+    closed: number | null;
+  }>;
+
+  let evaluatedTrades = 0;
+  let passingTrades = 0;
+  let failingTrades = 0;
+  let missingMetadataTrades = 0;
+  const reasons = new Map<string, PolymarketOpenBookQualityReason>();
+
+  for (const row of rows) {
+    if (!row.market_slug || !row.end_date || row.end_date <= 0) {
+      missingMetadataTrades += 1;
+      addQualityReason(
+        reasons,
+        'missing_market_metadata',
+        row.trade_slug,
+        'open trade has no current market metadata or end date',
+      );
+      continue;
+    }
+
+    evaluatedTrades += 1;
+    const market: Market = {
+      slug: row.market_slug,
+      conditionId: row.condition_id ?? row.market_slug,
+      question: row.question ?? row.trade_slug,
+      category: row.category ?? undefined,
+      outcomes: parseMarketOutcomes(row.outcomes_json),
+      volume24h: row.volume_24h ?? 0,
+      liquidity: row.liquidity ?? 0,
+      endDate: normalizeEpochSec(row.end_date),
+      closed: row.closed === 1,
+    };
+    const decision = evaluateMarketQuality(market, {
+      nowSec,
+      ttlFilterEnabled,
+      minTtlDays,
+      maxTtlDays,
+      marketQualityFilterEnabled,
+    });
+    if (decision.passed) {
+      passingTrades += 1;
+      continue;
+    }
+    failingTrades += 1;
+    addQualityReason(
+      reasons,
+      decision.code ?? 'current_filter_failed',
+      row.trade_slug,
+      decision.reason ?? 'open trade fails the current paper-learning filters',
+    );
+  }
+
+  const exceptionCount = failingTrades + missingMetadataTrades;
+  const status: ReadinessStatus = exceptionCount > 0 ? 'warn' : 'pass';
+  const state: PolymarketOpenBookQualityState = exceptionCount === 0
+    ? 'all_inside_current_filters'
+    : evaluatedTrades === 0 && missingMetadataTrades > 0
+      ? 'missing_market_metadata'
+      : 'legacy_filter_exceptions';
+  const filtersText = filtersActive
+    ? `active filters ttl=${ttlFilterEnabled ? `${minTtlDays}-${maxTtlDays}d` : 'off'}, quality=${marketQualityFilterEnabled ? 'on' : 'off'}`
+    : 'current filters inactive';
+
+  return {
+    openTrades,
+    evaluatedTrades,
+    passingTrades,
+    failingTrades,
+    missingMetadataTrades,
+    filtersActive,
+    ttlFilterEnabled,
+    marketQualityFilterEnabled,
+    minTtlDays,
+    maxTtlDays,
+    passRate: openTrades > 0 ? passingTrades / openTrades : null,
+    status,
+    state,
+    reasons: Array.from(reasons.values()).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
+    summary: `${passingTrades}/${openTrades} open trades pass today's paper-learning filters; ${exceptionCount} exception(s); ${filtersText}`,
+  };
+}
+
 function queueState(endAt: number | null, nowSec: number): PolymarketResolutionQueueState {
   if (!endAt || endAt <= 0) return 'unknown';
   if (endAt <= nowSec) return 'overdue';
@@ -470,6 +727,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
   const hasSignals = tableExists(db, 'poly_signals');
   const hasPositions = tableExists(db, 'poly_positions');
   const dayAgo = nowSec - DAY_SEC;
+  const openBookQuality = collectOpenBookQualityEvidence(db, nowSec);
 
   if (!hasTrades) {
     return {
@@ -512,6 +770,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
       latestApprovedSignalAt: null,
       progressPct: 0,
       hasMarketMaturityData: hasMarkets,
+      openBookQuality,
       resolutionQueue: [],
     };
   }
@@ -649,6 +908,7 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     latestApprovedSignalAt,
     progressPct: progress(settledTrades, SETTLED_TARGET),
     hasMarketMaturityData: hasMarkets,
+    openBookQuality,
     resolutionQueue,
   };
 }
@@ -1133,6 +1393,16 @@ function buildMetrics(
       progressPct: polymarket.paperReturnPct,
     },
     {
+      key: 'polymarket_open_book_quality',
+      name: 'Open-book quality',
+      status: polymarket.openBookQuality.status,
+      state: polymarket.openBookQuality.state,
+      detail: polymarket.openBookQuality.summary,
+      current: polymarket.openBookQuality.passingTrades,
+      target: polymarket.openBookQuality.openTrades,
+      progressPct: polymarket.openBookQuality.passRate,
+    },
+    {
       key: 'polymarket_signal_flow',
       name: 'Polymarket signal flow',
       status: polymarket.approvedSignals24h > 0 ? 'pass' : (polymarket.signals24h > 0 ? 'warn' : 'fail'),
@@ -1295,6 +1565,9 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
       poly_market_discovery_count   INTEGER NOT NULL DEFAULT 0,
       poly_market_discovery_target  INTEGER NOT NULL DEFAULT 500,
       poly_market_discovery_age_sec INTEGER,
+      poly_quality_passing_open_trades INTEGER NOT NULL DEFAULT 0,
+      poly_quality_failing_open_trades INTEGER NOT NULL DEFAULT 0,
+      poly_quality_missing_metadata_trades INTEGER NOT NULL DEFAULT 0,
       payload_json                  TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_readiness_evidence_captured_at
@@ -1322,6 +1595,9 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_market_discovery_count', 'poly_market_discovery_count INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_market_discovery_target', 'poly_market_discovery_target INTEGER NOT NULL DEFAULT 500');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_market_discovery_age_sec', 'poly_market_discovery_age_sec INTEGER');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_quality_passing_open_trades', 'poly_quality_passing_open_trades INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_quality_failing_open_trades', 'poly_quality_failing_open_trades INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_quality_missing_metadata_trades', 'poly_quality_missing_metadata_trades INTEGER NOT NULL DEFAULT 0');
 }
 
 export function recordOperationalEvidenceSnapshot(
@@ -1349,8 +1625,10 @@ export function recordOperationalEvidenceSnapshot(
       ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
       poly_market_discovery_count, poly_market_discovery_target,
       poly_market_discovery_age_sec,
+      poly_quality_passing_open_trades, poly_quality_failing_open_trades,
+      poly_quality_missing_metadata_trades,
       payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(snapshot_ymd) DO UPDATE SET
       captured_at = excluded.captured_at,
       status = excluded.status,
@@ -1389,6 +1667,9 @@ export function recordOperationalEvidenceSnapshot(
       poly_market_discovery_count = excluded.poly_market_discovery_count,
       poly_market_discovery_target = excluded.poly_market_discovery_target,
       poly_market_discovery_age_sec = excluded.poly_market_discovery_age_sec,
+      poly_quality_passing_open_trades = excluded.poly_quality_passing_open_trades,
+      poly_quality_failing_open_trades = excluded.poly_quality_failing_open_trades,
+      poly_quality_missing_metadata_trades = excluded.poly_quality_missing_metadata_trades,
       payload_json = excluded.payload_json
   `).run(
     ymd,
@@ -1429,6 +1710,9 @@ export function recordOperationalEvidenceSnapshot(
     payload.marketDiscovery.marketCount,
     payload.marketDiscovery.targetMarketCount,
     payload.marketDiscovery.ageSec,
+    payload.polymarket.openBookQuality.passingTrades,
+    payload.polymarket.openBookQuality.failingTrades,
+    payload.polymarket.openBookQuality.missingMetadataTrades,
     JSON.stringify(payload),
   );
   return ymd;
@@ -1471,7 +1755,10 @@ export function readOperationalEvidenceHistory(
            ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
            ${optional('poly_market_discovery_count', '0')} AS poly_market_discovery_count,
            ${optional('poly_market_discovery_target', '500')} AS poly_market_discovery_target,
-           ${optional('poly_market_discovery_age_sec', 'NULL')} AS poly_market_discovery_age_sec
+           ${optional('poly_market_discovery_age_sec', 'NULL')} AS poly_market_discovery_age_sec,
+           ${optional('poly_quality_passing_open_trades', '0')} AS poly_quality_passing_open_trades,
+           ${optional('poly_quality_failing_open_trades', '0')} AS poly_quality_failing_open_trades,
+           ${optional('poly_quality_missing_metadata_trades', '0')} AS poly_quality_missing_metadata_trades
       FROM readiness_evidence_snapshots
      ORDER BY captured_at DESC
      LIMIT ?
@@ -1514,6 +1801,9 @@ export function readOperationalEvidenceHistory(
     poly_market_discovery_count: number;
     poly_market_discovery_target: number;
     poly_market_discovery_age_sec: number | null;
+    poly_quality_passing_open_trades: number;
+    poly_quality_failing_open_trades: number;
+    poly_quality_missing_metadata_trades: number;
   }>;
 
   return rows.reverse().map(row => ({
@@ -1555,5 +1845,8 @@ export function readOperationalEvidenceHistory(
     polyMarketDiscoveryCount: row.poly_market_discovery_count,
     polyMarketDiscoveryTarget: row.poly_market_discovery_target,
     polyMarketDiscoveryAgeSec: row.poly_market_discovery_age_sec,
+    polyQualityPassingOpenTrades: row.poly_quality_passing_open_trades,
+    polyQualityFailingOpenTrades: row.poly_quality_failing_open_trades,
+    polyQualityMissingMetadataTrades: row.poly_quality_missing_metadata_trades,
   }));
 }
