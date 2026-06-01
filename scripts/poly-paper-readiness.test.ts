@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyAdvancedPaperFlag,
   classifyHaltFlag,
+  classifyMarketDiscoveryDepth,
   classifyOpenPaperPositions,
   classifyRecentScanHealth,
 } from './poly-paper-readiness.js';
@@ -28,6 +29,22 @@ describe('classifyOpenPaperPositions', () => {
 
     expect(result.status).toBe('pass');
     expect(result.state).toBe('positions_open');
+  });
+});
+
+describe('classifyMarketDiscoveryDepth', () => {
+  it('passes when discovery is above the widened-market target', () => {
+    const result = classifyMarketDiscoveryDepth(992);
+
+    expect(result.status).toBe('pass');
+    expect(result.state).toBe('widened');
+  });
+
+  it('warns when discovery looks capped at the old first page', () => {
+    const result = classifyMarketDiscoveryDepth(100);
+
+    expect(result.status).toBe('warn');
+    expect(result.state).toBe('first_page_capped');
   });
 });
 

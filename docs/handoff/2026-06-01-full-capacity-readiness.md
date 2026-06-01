@@ -6,7 +6,9 @@ ClaudeClaw is operational in paper mode for both configured markets:
 
 - Equities: regime-trader PM2 instances are online and reporting `open_full`.
 - Polymarket: scanner, signal engine, paper positions, TTL filter tracking, and
-  news/source freshness are live.
+  news/source freshness are live. Market discovery depth is now tracked as a
+  first-class readiness signal so the Gamma first-page cap cannot silently
+  starve candidates again.
 - Dashboard: health endpoint is healthy and the Evidence Path card now includes
   mark-to-market Polymarket paper P&L. Malformed or rate-limited readiness API
   payloads now render as red unavailable state instead of a false green gate
@@ -20,24 +22,29 @@ ClaudeClaw is operational in paper mode for both configured markets:
   equity live-sync freshness from the daily post-close Sharpe sample and shows
   current equity benchmark edge versus buy-and-hold. It also shows Box 2
   pipeline capacity, which separates current settled count from the maximum
-  settled count the existing open book could produce.
+  settled count the existing open book could produce. It also shows market
+  discovery depth against the widened post-Gamma-cap target.
 
 Real money remains disabled. This is correct.
 
 ## Latest Evidence
 
-- Polymarket Box 2: `0/50` settled trades, `11` open, `23` voided. The
-  current open book can cover at most `11/50` potential settled trades, so at
-  least `39` additional resolved trades are needed after the current book.
-- Polymarket mark-to-market: `$26.09` total paper P&L, all unrealized, on
-  `$529.35` open exposure. Paper equity is `$5,026.09`.
-- Polymarket signal flow: `529` signals and `2` approvals in the last 24 hours,
-  approval rate `0.37%`.
-- Resolution pipeline: `2` open positions due within 7 days, `5` due within 30
+- Polymarket Box 2: `0/50` settled trades, `14` open, `23` voided. The
+  current open book can cover at most `14/50` potential settled trades, so at
+  least `36` additional resolved trades are needed after the current book.
+- Market discovery: latest scan discovered `992/500` target markets, state
+  `healthy`, duration about `292ms`. `poly:paper:status` now includes a
+  `Market discovery depth` check that warns if discovery falls back near the old
+  first-page cap.
+- Polymarket mark-to-market: `$26.19` total paper P&L, all unrealized, on
+  `$662.37` open exposure. Paper equity is `$5,026.19`.
+- Polymarket signal flow: `544` signals and `5` approvals in the last 24 hours,
+  approval rate about `0.9%`.
+- Resolution pipeline: `4` open positions due within 7 days, `8` due within 30
   days, `0` overdue.
-- Resolution queue: next paper settlements are trade `#19` and `#23` due
-  2026-06-07, then trades `#28`, `#34`, and `#30` due around
-  2026-06-30/2026-07-01.
+- Resolution queue: next paper settlements are trade `#35` due 2026-06-03,
+  trades `#19`, `#23`, and `#37` due 2026-06-07, then trades `#36`, `#28`,
+  `#34`, and `#30` due by 2026-07-01.
 - Real-money gate audit: `3/7` boxes complete, `2` operator actions, `2`
   sample/time blockers, `0` system blockers, and live-money ready `NO`.
 - Equity live sync: `2/2` regime-trader state files fresh and open-full during

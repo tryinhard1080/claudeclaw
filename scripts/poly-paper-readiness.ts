@@ -12,6 +12,8 @@ import {
 import { getDailyRealizedPnl } from '../src/poly/pnl-tracker.js';
 
 export type PaperReadinessStatus = 'pass' | 'warn' | 'fail';
+const MARKET_DISCOVERY_TARGET = 500;
+const MARKET_DISCOVERY_FIRST_PAGE_CAP = 150;
 
 export interface PaperReadinessCheck {
   name: string;
@@ -83,6 +85,40 @@ export function classifyOpenPaperPositions(openCount: number): PaperReadinessChe
     status: 'warn',
     state: 'none_open',
     detail: 'paper observation has not opened a position yet',
+  };
+}
+
+export function classifyMarketDiscoveryDepth(marketCount: number | null | undefined): PaperReadinessCheck {
+  const count = marketCount ?? 0;
+  if (count <= 0) {
+    return {
+      name: 'Market discovery depth',
+      status: 'fail',
+      state: 'missing',
+      detail: 'latest successful scan has no market count',
+    };
+  }
+  if (count <= MARKET_DISCOVERY_FIRST_PAGE_CAP) {
+    return {
+      name: 'Market discovery depth',
+      status: 'warn',
+      state: 'first_page_capped',
+      detail: `${count} markets; looks like the old first-page Gamma cap`,
+    };
+  }
+  if (count < MARKET_DISCOVERY_TARGET) {
+    return {
+      name: 'Market discovery depth',
+      status: 'warn',
+      state: 'shallow',
+      detail: `${count}/${MARKET_DISCOVERY_TARGET} markets discovered`,
+    };
+  }
+  return {
+    name: 'Market discovery depth',
+    status: 'pass',
+    state: 'widened',
+    detail: `${count}/${MARKET_DISCOVERY_TARGET} markets discovered`,
   };
 }
 
@@ -182,6 +218,7 @@ function main(): void {
 
     const checks = [
       classifyRecentScanHealth(rows, nowSec, POLY_SCAN_INTERVAL_MIN),
+      classifyMarketDiscoveryDepth(latestMarketCount),
       classifyOpenPaperPositions(openPositions),
       classifyHaltFlag(haltFlag),
       classifyAdvancedPaperFlag('POLY_EXIT_ENABLED', POLY_EXIT_ENABLED),

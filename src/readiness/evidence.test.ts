@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectEquityBenchmarkEvidence,
   collectEquitySyncEvidence,
+  collectMarketDiscoveryEvidence,
   collectOperationalEvidence,
   collectPolymarketEvidence,
   collectRegimeSharpeEvidence,
@@ -266,6 +267,49 @@ describe('operational evidence', () => {
     mem.close();
   });
 
+  it('tracks market discovery depth from the latest successful scan', () => {
+    const mem = db();
+    mem.exec(`
+      CREATE TABLE poly_scan_runs (
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER,
+        market_count INTEGER,
+        status TEXT NOT NULL
+      );
+      INSERT INTO poly_scan_runs VALUES
+        (${NOW - 300}, 111, 100, 'ok'),
+        (${NOW - 60}, 356, 992, 'ok');
+    `);
+
+    const evidence = collectMarketDiscoveryEvidence(mem, NOW);
+
+    expect(evidence.status).toBe('pass');
+    expect(evidence.state).toBe('healthy');
+    expect(evidence.marketCount).toBe(992);
+    expect(evidence.targetMarketCount).toBe(500);
+    expect(evidence.durationMs).toBe(356);
+    mem.close();
+  });
+
+  it('warns when market discovery falls back to the old first-page cap', () => {
+    const mem = db();
+    mem.exec(`
+      CREATE TABLE poly_scan_runs (
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER,
+        market_count INTEGER,
+        status TEXT NOT NULL
+      );
+      INSERT INTO poly_scan_runs VALUES (${NOW - 60}, 120, 100, 'ok');
+    `);
+
+    const evidence = collectMarketDiscoveryEvidence(mem, NOW);
+
+    expect(evidence.status).toBe('warn');
+    expect(evidence.state).toBe('first_page_capped');
+    mem.close();
+  });
+
   it('builds dashboard-ready metrics without mutating trading state', () => {
     const mem = db();
     mem.exec(`
@@ -302,6 +346,12 @@ describe('operational evidence', () => {
         band_min_days REAL,
         band_max_days REAL
       );
+      CREATE TABLE poly_scan_runs (
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER,
+        market_count INTEGER,
+        status TEXT NOT NULL
+      );
       INSERT INTO poly_paper_trades(created_at, market_slug, status, size_usd, realized_pnl) VALUES
         (${NOW - 100}, 'open-soon', 'open', 50, NULL);
       INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 86400});
@@ -313,6 +363,7 @@ describe('operational evidence', () => {
         ('SPY', '2026-05-30', 100000, NULL),
         ('SPY', '2026-05-31', 101000, 0.01);
       INSERT INTO poly_ttl_shadow_ticks VALUES (${NOW - 30}, 8, 1, 18, 130, 1, 30);
+      INSERT INTO poly_scan_runs VALUES (${NOW - 30}, 356, 992, 'ok');
     `);
 
     const payload = collectOperationalEvidence(mem, NOW, {
@@ -378,6 +429,12 @@ describe('operational evidence', () => {
     expect(payload.equityBenchmark?.minExcessReturn).toBeCloseTo(0.03, 6);
     expect(payload.metrics.find(metric => metric.key === 'polymarket_mark_to_market')?.status).toBe('pass');
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('pass');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_market_discovery')).toMatchObject({
+      status: 'pass',
+      state: 'healthy',
+      current: 992,
+      target: 500,
+    });
     expect(payload.metrics.find(metric => metric.key === 'regime_sharpe_track')?.current).toBe(8);
     mem.close();
   });
@@ -394,6 +451,7 @@ describe('operational evidence', () => {
     expect(payload.regimeSharpe.instances).toEqual([]);
     expect(payload.ttlFilter.latestAt).toBeNull();
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('fail');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_market_discovery')?.status).toBe('fail');
     mem.close();
   });
 
@@ -433,6 +491,12 @@ describe('operational evidence', () => {
         band_min_days REAL,
         band_max_days REAL
       );
+      CREATE TABLE poly_scan_runs (
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER,
+        market_count INTEGER,
+        status TEXT NOT NULL
+      );
       INSERT INTO poly_paper_trades(created_at, market_slug, status, size_usd, realized_pnl) VALUES
         (${NOW - 100}, 'open-soon', 'open', 50, NULL);
       INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 86400});
@@ -444,6 +508,7 @@ describe('operational evidence', () => {
         ('SPY', '2026-05-30', 100000, NULL),
         ('SPY', '2026-05-31', 101000, 0.01);
       INSERT INTO poly_ttl_shadow_ticks VALUES (${NOW - 30}, 8, 1, 18, 130, 1, 30);
+      INSERT INTO poly_scan_runs VALUES (${NOW - 30}, 356, 992, 'ok');
     `);
 
     const firstPayload = collectOperationalEvidence(mem, NOW, { collectEquityBenchmark: true });
@@ -476,6 +541,9 @@ describe('operational evidence', () => {
     expect(history[0]!.equityBenchmarkAllOutperforming).toBe(true);
     expect(history[0]!.equityBenchmarkInstanceCount).toBe(1);
     expect(history[0]!.regimeMinDays).toBe(8);
+    expect(history[0]!.polyMarketDiscoveryCount).toBe(992);
+    expect(history[0]!.polyMarketDiscoveryTarget).toBe(500);
+    expect(history[0]!.polyMarketDiscoveryAgeSec).toBe(90);
     expect(history[1]!.snapshotYmd).not.toBe(firstYmd);
     mem.close();
   });

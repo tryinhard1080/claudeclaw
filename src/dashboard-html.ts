@@ -325,10 +325,11 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evidence Path</h3>
       <span id="evidence-status" class="pill">-</span>
     </div>
-    <div class="grid grid-cols-2 sm:grid-cols-7 gap-2 mb-3">
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-3">
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-settled">-</div><div class="stat-label">Poly settled</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-pipeline">-</div><div class="stat-label">Box 2 pipe</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-due">-</div><div class="stat-label">Box2 30d</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-market-discovery">-</div><div class="stat-label">Discovery</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-sync">-</div><div class="stat-label">Equity sync</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-equity-edge">-</div><div class="stat-label">Equity edge</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-regime-days">-</div><div class="stat-label">Regime days</div></div>
@@ -2295,6 +2296,7 @@ function renderEvidencePath(evidence) {
   const equityBenchmark = evidence.equityBenchmark || null;
   const regime = evidence.regimeSharpe || {};
   const ttl = evidence.ttlFilter || {};
+  const discovery = evidence.marketDiscovery || {};
 
   const settledEl = document.getElementById('evidence-poly-settled');
   if (settledEl) settledEl.textContent = (poly.settledTrades ?? 0) + '/' + (poly.targetSettledTrades ?? 50);
@@ -2309,6 +2311,12 @@ function renderEvidencePath(evidence) {
   if (dueEl) {
     dueEl.textContent = (poly.nearTermPotentialSettledTrades ?? ((poly.settledTrades ?? 0) + (poly.dueNext30Days ?? 0))) + '/' + (poly.targetSettledTrades ?? 50);
     dueEl.style.color = poly.nearTermPipelineCanReachTarget ? '#6ee7b7' : '#fbbf24';
+  }
+
+  const discoveryEl = document.getElementById('evidence-market-discovery');
+  if (discoveryEl) {
+    discoveryEl.textContent = (discovery.marketCount ?? 0) + '/' + (discovery.targetMarketCount ?? 500);
+    discoveryEl.style.color = discovery.status === 'pass' ? '#6ee7b7' : '#fbbf24';
   }
 
   const syncEl = document.getElementById('evidence-equity-sync');
@@ -2361,6 +2369,9 @@ function renderEvidencePath(evidence) {
       ? ' / equity edge ' + fmtSignedPct(equityBenchmark.minExcessReturn, 2) +
         ' vs ' + (equityBenchmark.benchmark || 'benchmark')
       : '';
+    const discoveryText = ' / discovery ' +
+      (discovery.marketCount ?? 0) + '/' + (discovery.targetMarketCount ?? 500) +
+      ' ' + (discovery.state || 'unknown');
     const history = evidence.history || [];
     let historyText = 'history no snapshots';
     if (history.length > 0) {
@@ -2379,6 +2390,7 @@ function renderEvidencePath(evidence) {
         ' / near30 ' + (last.polyNearTermPotentialSettledTrades ?? ((last.polySettledTrades ?? 0) + (last.polyDueNext30Days ?? 0))) + '/' + (last.polyTargetSettledTrades ?? 50) +
         ' need ' + (last.polyAdditionalNearTermSettledTradesNeeded ?? '-') +
         ' / vel ' + (last.polyNearTermPaperTradesOpened24h ?? 0) + '/24h' +
+        ' / discover ' + (last.polyMarketDiscoveryCount ?? 0) + '/' + (last.polyMarketDiscoveryTarget ?? 500) +
         ' / regime ' + (last.regimeMinDays ?? 0) + '/' + (last.regimeTargetDays ?? 60) + 'd' +
         (regimeDelta !== 0 ? ' (' + (regimeDelta > 0 ? '+' : '') + regimeDelta + ')' : '') +
         ' / edge ' + fmtSignedPct(last.equityBenchmarkMinExcessReturn ?? null, 2);
@@ -2399,6 +2411,7 @@ function renderEvidencePath(evidence) {
       box2VelocityText +
       equitySyncText +
       equityBenchmarkText +
+      discoveryText +
       ' / ttl tick ' + ttlAge +
       ' / ' + historyText +
       (incomplete ? ' / tracking ' + incomplete : '');

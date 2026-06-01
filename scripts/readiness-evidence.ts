@@ -91,13 +91,14 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
       `equitySync=${row.equitySyncFreshCount}/${row.equitySyncExpectedCount}  ` +
       `edge=${fmtSignedPct(row.equityBenchmarkMinExcessReturn, 2)}  ` +
       `regime=${row.regimeMinDays}/${row.regimeTargetDays}d  ` +
+      `discover=${row.polyMarketDiscoveryCount}/${row.polyMarketDiscoveryTarget}  ` +
       `ttl=${fmtPct(row.ttlPassRate)}`,
     );
   }
 }
 
 function printEvidence(payload: OperationalEvidencePayload, history: OperationalEvidenceHistoryPoint[] = []): void {
-  const { polymarket, equitySync, equityBenchmark, regimeSharpe, ttlFilter } = payload;
+  const { polymarket, equitySync, equityBenchmark, regimeSharpe, ttlFilter, marketDiscovery } = payload;
 
   console.log('Operational Evidence');
   console.log('--------------------');
@@ -138,6 +139,15 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log(`Nearest open end date     ${fmtDate(polymarket.nearestOpenEndAt)}`);
   console.log(`Latest paper trade        ${fmtAge(payload.generatedAt, polymarket.latestPaperTradeAt)}`);
   console.log(`Signals / approvals 24h   ${polymarket.signals24h}/${polymarket.approvedSignals24h} (${fmtPct(polymarket.approvalRate24h)})`);
+
+  console.log();
+  console.log('Market Discovery Evidence');
+  console.log('-------------------------');
+  console.log(`Latest scan               ${fmtAge(payload.generatedAt, marketDiscovery.latestAt)}`);
+  console.log(`Markets discovered        ${marketDiscovery.marketCount}/${marketDiscovery.targetMarketCount}`);
+  console.log(`State                     ${marketDiscovery.state}`);
+  console.log(`Duration                  ${marketDiscovery.durationMs === null ? '-' : `${marketDiscovery.durationMs}ms`}`);
+  console.log(`First-page cap threshold  ${marketDiscovery.firstPageCapThreshold}`);
 
   console.log();
   console.log('Resolution Queue');

@@ -61,6 +61,15 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("box2 velocity");
   });
 
+  it('renders Polymarket market-discovery depth in the evidence path', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("evidence-market-discovery");
+    expect(html).toContain("evidence.marketDiscovery");
+    expect(html).toContain("discovery");
+    expect(html).toContain("polyMarketDiscoveryCount");
+  });
+
   it('renders live equity sync evidence separately from daily Sharpe', () => {
     const html = getDashboardHtml('token', 'chat');
 

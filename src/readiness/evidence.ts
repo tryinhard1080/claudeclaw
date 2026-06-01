@@ -173,6 +173,26 @@ export interface TtlFilterEvidence {
   avgTtlFiltered: number | null;
 }
 
+export type MarketDiscoveryState =
+  | 'healthy'
+  | 'first_page_capped'
+  | 'shallow'
+  | 'stale'
+  | 'missing';
+
+export interface MarketDiscoveryEvidence {
+  latestAt: number | null;
+  ageSec: number | null;
+  marketCount: number;
+  targetMarketCount: number;
+  firstPageCapThreshold: number;
+  durationMs: number | null;
+  status: ReadinessStatus;
+  state: MarketDiscoveryState;
+  progressPct: number;
+  summary: string;
+}
+
 export interface OperationalEvidencePayload {
   generatedAt: number;
   status: ReadinessStatus;
@@ -181,6 +201,7 @@ export interface OperationalEvidencePayload {
   equityBenchmark: EquityBenchmarkEvidence | null;
   regimeSharpe: RegimeSharpeEvidence;
   ttlFilter: TtlFilterEvidence;
+  marketDiscovery: MarketDiscoveryEvidence;
   metrics: ReadinessEvidenceMetric[];
 }
 
@@ -228,6 +249,9 @@ export interface OperationalEvidenceHistoryPoint {
   ttlCandidatesTotal: number;
   ttlCandidatesTtlPass: number;
   ttlPassRate: number | null;
+  polyMarketDiscoveryCount: number;
+  polyMarketDiscoveryTarget: number;
+  polyMarketDiscoveryAgeSec: number | null;
 }
 
 interface SharpeRow {
@@ -247,6 +271,13 @@ interface TtlRow {
   band_max_days: number | null;
 }
 
+interface ScanRunRow {
+  started_at: number;
+  duration_ms: number | null;
+  market_count: number | null;
+  status: string;
+}
+
 interface EquityBenchmarkRow {
   benchmark: string;
   snapshot_date: string;
@@ -264,6 +295,9 @@ interface RegimeCurveRow {
 const SETTLED_TARGET = 50;
 const REGIME_DAYS_TARGET = 60;
 const DAY_SEC = 86_400;
+const MARKET_DISCOVERY_TARGET = 500;
+const MARKET_DISCOVERY_FIRST_PAGE_CAP = 150;
+const MARKET_DISCOVERY_FRESH_SEC = 10 * 60;
 const EQUITY_SYNC_FRESH_SEC = 15 * 60;
 const DEFAULT_EQUITY_INSTANCES = ['spy-aggressive', 'spy-conservative'] as const;
 
@@ -937,12 +971,85 @@ export function collectTtlFilterEvidence(db: Database.Database, nowSec: number):
   };
 }
 
+export function collectMarketDiscoveryEvidence(
+  db: Database.Database,
+  nowSec: number,
+): MarketDiscoveryEvidence {
+  if (!tableExists(db, 'poly_scan_runs')) {
+    return {
+      latestAt: null,
+      ageSec: null,
+      marketCount: 0,
+      targetMarketCount: MARKET_DISCOVERY_TARGET,
+      firstPageCapThreshold: MARKET_DISCOVERY_FIRST_PAGE_CAP,
+      durationMs: null,
+      status: 'fail',
+      state: 'missing',
+      progressPct: 0,
+      summary: 'poly_scan_runs table missing',
+    };
+  }
+
+  const row = db.prepare(`
+    SELECT started_at, duration_ms, market_count, status
+      FROM poly_scan_runs
+     WHERE status='ok'
+     ORDER BY started_at DESC
+     LIMIT 1
+  `).get() as ScanRunRow | undefined;
+
+  if (!row) {
+    return {
+      latestAt: null,
+      ageSec: null,
+      marketCount: 0,
+      targetMarketCount: MARKET_DISCOVERY_TARGET,
+      firstPageCapThreshold: MARKET_DISCOVERY_FIRST_PAGE_CAP,
+      durationMs: null,
+      status: 'fail',
+      state: 'missing',
+      progressPct: 0,
+      summary: 'no successful poly_scan_runs row found',
+    };
+  }
+
+  const marketCount = row.market_count ?? 0;
+  const ageSec = Math.max(0, nowSec - row.started_at);
+  let status: ReadinessStatus = 'pass';
+  let state: MarketDiscoveryState = 'healthy';
+
+  if (ageSec > MARKET_DISCOVERY_FRESH_SEC) {
+    status = 'warn';
+    state = 'stale';
+  } else if (marketCount <= MARKET_DISCOVERY_FIRST_PAGE_CAP) {
+    status = 'warn';
+    state = 'first_page_capped';
+  } else if (marketCount < MARKET_DISCOVERY_TARGET) {
+    status = 'warn';
+    state = 'shallow';
+  }
+
+  return {
+    latestAt: row.started_at,
+    ageSec,
+    marketCount,
+    targetMarketCount: MARKET_DISCOVERY_TARGET,
+    firstPageCapThreshold: MARKET_DISCOVERY_FIRST_PAGE_CAP,
+    durationMs: row.duration_ms,
+    status,
+    state,
+    progressPct: progress(marketCount, MARKET_DISCOVERY_TARGET),
+    summary: `${marketCount} markets discovered; target >=${MARKET_DISCOVERY_TARGET}; age ${ageSec}s; duration ${row.duration_ms ?? '-'}ms`,
+  };
+}
+
 function buildMetrics(
   polymarket: PolymarketEvidence,
   equitySync: EquitySyncEvidence | null,
   equityBenchmark: EquityBenchmarkEvidence | null,
   regimeSharpe: RegimeSharpeEvidence,
   ttlFilter: TtlFilterEvidence,
+  marketDiscovery: MarketDiscoveryEvidence,
 ): ReadinessEvidenceMetric[] {
   const hasPaperTrades = polymarket.settledTrades + polymarket.openTrades + polymarket.voidedTrades > 0;
   const resolutionState = !hasPaperTrades
@@ -1034,6 +1141,16 @@ function buildMetrics(
       current: polymarket.approvedSignals24h,
     },
     {
+      key: 'polymarket_market_discovery',
+      name: 'Market discovery',
+      status: marketDiscovery.status,
+      state: marketDiscovery.state,
+      detail: marketDiscovery.summary,
+      current: marketDiscovery.marketCount,
+      target: marketDiscovery.targetMarketCount,
+      progressPct: marketDiscovery.progressPct,
+    },
+    {
       key: 'ttl_filter_tracking',
       name: 'TTL filter tracking',
       status: ttlFilter.latestAt === null ? 'warn' : ((ttlFilter.ageSec ?? Infinity) <= 600 ? 'pass' : 'warn'),
@@ -1114,7 +1231,15 @@ export function collectOperationalEvidence(
       : null;
   const regimeSharpe = collectRegimeSharpeEvidence(db);
   const ttlFilter = collectTtlFilterEvidence(db, nowSec);
-  const metrics = buildMetrics(polymarket, equitySync, equityBenchmark, regimeSharpe, ttlFilter);
+  const marketDiscovery = collectMarketDiscoveryEvidence(db, nowSec);
+  const metrics = buildMetrics(
+    polymarket,
+    equitySync,
+    equityBenchmark,
+    regimeSharpe,
+    ttlFilter,
+    marketDiscovery,
+  );
 
   return {
     generatedAt: nowSec,
@@ -1124,6 +1249,7 @@ export function collectOperationalEvidence(
     equityBenchmark,
     regimeSharpe,
     ttlFilter,
+    marketDiscovery,
     metrics,
   };
 }
@@ -1166,6 +1292,9 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
       ttl_candidates_total          INTEGER NOT NULL,
       ttl_candidates_ttl_pass       INTEGER NOT NULL,
       ttl_pass_rate                 REAL,
+      poly_market_discovery_count   INTEGER NOT NULL DEFAULT 0,
+      poly_market_discovery_target  INTEGER NOT NULL DEFAULT 500,
+      poly_market_discovery_age_sec INTEGER,
       payload_json                  TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_readiness_evidence_captured_at
@@ -1190,6 +1319,9 @@ export function ensureOperationalEvidenceSnapshotsTable(db: Database.Database): 
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_benchmark_min_excess_return', 'equity_benchmark_min_excess_return REAL');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_benchmark_all_outperforming', 'equity_benchmark_all_outperforming INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'equity_benchmark_instance_count', 'equity_benchmark_instance_count INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_market_discovery_count', 'poly_market_discovery_count INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_market_discovery_target', 'poly_market_discovery_target INTEGER NOT NULL DEFAULT 500');
+  addColumnIfMissing(db, 'readiness_evidence_snapshots', cols, 'poly_market_discovery_age_sec', 'poly_market_discovery_age_sec INTEGER');
 }
 
 export function recordOperationalEvidenceSnapshot(
@@ -1215,8 +1347,10 @@ export function recordOperationalEvidenceSnapshot(
       equity_benchmark_instance_count,
       regime_min_days, regime_target_days, regime_all_instances_positive,
       ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
+      poly_market_discovery_count, poly_market_discovery_target,
+      poly_market_discovery_age_sec,
       payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(snapshot_ymd) DO UPDATE SET
       captured_at = excluded.captured_at,
       status = excluded.status,
@@ -1252,6 +1386,9 @@ export function recordOperationalEvidenceSnapshot(
       ttl_candidates_total = excluded.ttl_candidates_total,
       ttl_candidates_ttl_pass = excluded.ttl_candidates_ttl_pass,
       ttl_pass_rate = excluded.ttl_pass_rate,
+      poly_market_discovery_count = excluded.poly_market_discovery_count,
+      poly_market_discovery_target = excluded.poly_market_discovery_target,
+      poly_market_discovery_age_sec = excluded.poly_market_discovery_age_sec,
       payload_json = excluded.payload_json
   `).run(
     ymd,
@@ -1289,6 +1426,9 @@ export function recordOperationalEvidenceSnapshot(
     payload.ttlFilter.candidatesTotal,
     payload.ttlFilter.candidatesTtlPass,
     payload.ttlFilter.passRate,
+    payload.marketDiscovery.marketCount,
+    payload.marketDiscovery.targetMarketCount,
+    payload.marketDiscovery.ageSec,
     JSON.stringify(payload),
   );
   return ymd;
@@ -1328,7 +1468,10 @@ export function readOperationalEvidenceHistory(
            ${optional('equity_benchmark_all_outperforming', '0')} AS equity_benchmark_all_outperforming,
            ${optional('equity_benchmark_instance_count', '0')} AS equity_benchmark_instance_count,
            regime_min_days, regime_target_days, regime_all_instances_positive,
-           ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate
+           ttl_candidates_total, ttl_candidates_ttl_pass, ttl_pass_rate,
+           ${optional('poly_market_discovery_count', '0')} AS poly_market_discovery_count,
+           ${optional('poly_market_discovery_target', '500')} AS poly_market_discovery_target,
+           ${optional('poly_market_discovery_age_sec', 'NULL')} AS poly_market_discovery_age_sec
       FROM readiness_evidence_snapshots
      ORDER BY captured_at DESC
      LIMIT ?
@@ -1368,6 +1511,9 @@ export function readOperationalEvidenceHistory(
     ttl_candidates_total: number;
     ttl_candidates_ttl_pass: number;
     ttl_pass_rate: number | null;
+    poly_market_discovery_count: number;
+    poly_market_discovery_target: number;
+    poly_market_discovery_age_sec: number | null;
   }>;
 
   return rows.reverse().map(row => ({
@@ -1406,5 +1552,8 @@ export function readOperationalEvidenceHistory(
     ttlCandidatesTotal: row.ttl_candidates_total,
     ttlCandidatesTtlPass: row.ttl_candidates_ttl_pass,
     ttlPassRate: row.ttl_pass_rate,
+    polyMarketDiscoveryCount: row.poly_market_discovery_count,
+    polyMarketDiscoveryTarget: row.poly_market_discovery_target,
+    polyMarketDiscoveryAgeSec: row.poly_market_discovery_age_sec,
   }));
 }
