@@ -49,22 +49,51 @@ https://mcp.financialdatasets.ai/api
 Authentication still happens inside Claude Code with `/mcp`. Do not put a
 Financial Datasets key in `.env` for this workflow.
 
-## Full-Capacity Work Queue
+## Full-Capacity Surface
 
-The current full-capacity objective is nine concrete functions:
+The nine requested functions now have repo surfaces. Treat this as the shared
+Claude/Codex inventory, not as a blank work queue:
 
-1. Keep Claude and Codex instruction, skill, and MCP surfaces aligned.
-2. Fix readiness false negatives from stale weekend regime-trader state.
-3. Keep the current repo hardening work commit-ready.
-4. Keep Financial Datasets MCP guidance explicit and advisory-only.
-5. Add live gate-progress and source-freshness tracking.
-6. Keep the TTL shadow report path operational.
-7. Add an equity benchmark surface for regime-trader.
-8. Add a Polymarket US read-only market-data path, with no order methods.
-9. Add adversarial data tests that prove bad data is rejected or treated as data.
+1. Claude/Codex instruction, skill, and MCP alignment:
+   `npm run agent:surface:check`, this file, mirrored readiness skills, and
+   `.mcp.json` / `.codex/config.toml`.
+2. Weekend-aware regime-trader readiness:
+   `closed_stale_open_state` prevents weekend false negatives while stale
+   regular-session state still fails.
+3. Repo hardening and commit-ready posture:
+   readiness runbooks, handoffs, and review ledgers point at trading-only gates.
+4. Financial Datasets MCP guidance:
+   advisory-only shared MCP rules, with no trade trigger or sizing authority.
+5. Live gate-progress and source-freshness tracking:
+   `npm run gate:status`, `npm run gate:audit`, and
+   `npm run source:freshness:refresh`.
+6. TTL shadow report path:
+   `npm run poly:ttl:report` and
+   `docs/research/sprint-s2-ttl-filter-latest.md`.
+7. Equity benchmark surface:
+   `npm run trading:benchmark:snapshot`, `npm run trading:benchmark`, and
+   readiness evidence `equity_benchmark_edge`.
+8. Polymarket US read-only market-data path:
+   `src/poly/polymarket-us-client.ts`, with no order, account, cancel,
+   portfolio, or position methods.
+9. Adversarial data tests:
+   `src/poly/adversarial-data.test.ts` covers malicious headlines, price gaps,
+   duplicate positions, empty asks, wrong dates, and missing settlement sources.
 
 No item above enables real money. Real money still requires every `MISSION.md`
 gate checkbox plus Richard's written operator sign-off.
+
+## Current Live-Money Blockers
+
+As of the latest readiness baseline on 2026-06-01, system blockers are zero.
+The remaining blockers are evidence/operator gates:
+
+- Box 1: elapsed paper-clock evidence is ready, but the `MISSION.md` checkbox
+  still needs operator review.
+- Box 2: Polymarket paper trades are `0/50` settled, with `11/50` potential
+  after the current open book and `39` additional resolved trades still needed.
+- Box 3: regime-trader Sharpe evidence is `8/60` sample days.
+- Box 7: Richard's final written live-money sign-off is still pending.
 
 ## Required Checks
 
