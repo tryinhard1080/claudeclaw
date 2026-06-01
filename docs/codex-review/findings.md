@@ -25,6 +25,7 @@ Tracker for Codex code-review findings across every shipped sprint. This artifac
 | 2026-05-12 | S2 (TTL shadow) | P2 | `src/poly/ttl-filter.ts:136` `recordTtlShadowTick` stored `Date.now()` (ms) as `created_at` instead of unix seconds. No reader queries the column today; zero functional impact in shadow mode. Existing rows: none (fix landed before first scanner-block activation post-restart). | FIXED same-session | `<S2 hotfix>` |
 | 2026-05-12 | S2 (TTL shadow) | P3 | `src/poly/ttl-filter.ts:119` `ensureTable` called per-tick. Consistent with `news-intersection.ts` pattern; SQLite `IF NOT EXISTS` is a fast catalog lookup. | NOTE (no action) | — |
 | 2026-06-01 | operational goal gate evidence | N/A | Gate evidence review for Box 5 and Box 6 machine-readable status. No `risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, monetary cap, halt, or live-money flag changes. | CLOSED 2026-06-01 - zero P0/P1 | `pending` |
+| 2026-06-01 | real-money gate audit | N/A | Added read-only gate-audit classifier and CLI. No `risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, monetary cap, halt, or live-money flag changes. | CLOSED 2026-06-01 - zero P0/P1 | `pending` |
 
 See per-sprint review notes:
 
@@ -34,5 +35,6 @@ See per-sprint review notes:
 - `2026-05-12-full-project-review.md` — third pass; full-project review via `feature-dev:code-reviewer` agent because codex CLI 0.130.0 has a stdin-`-` regression. 1 P1 + 1 P2 found, both FIXED same day in `dc8f926`.
 - `2026-05-12-sprint-s2-review.md` — fourth pass (Sprint S2 ship trigger). Same agent path. 0 P0 / 0 P1 / 1 P2 (FIXED same-session) / 1 P3 (no action).
 - `2026-06-01-operational-goal-gate-review.md` - operational goal gate evidence review. 0 P0 / 0 P1.
+- `2026-06-01-gate-audit-review.md` - real-money gate audit review. 0 P0 / 0 P1.
 
 _(Last codex pass: 2026-06-01 operational goal gate evidence review. Re-run triggers: any subsequent edit to a TRUST Tier-3 surface (`risk-gates.ts`, `paper-broker.ts`, `pnl-tracker.ts`, `strategy-engine.ts`); any live-money flag change; any monetary cap change; OR codex CLI stdin repair that allows a formal full-project codex run.)_

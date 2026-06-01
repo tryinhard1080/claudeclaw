@@ -28,6 +28,7 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
    npm run readiness:evidence
    npm run readiness:evidence:record
    npm run readiness:evidence:cron
+   npm run gate:audit
    npm run capacity:status
    ```
 
@@ -77,6 +78,10 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   Box 1 should show either `clock_running`, `elapsed_review_ready`, or
   `mission_checked`; `elapsed_review_ready` is evidence for review, not live
   authorization.
+- `npm run gate:audit` classifies every open real-money gate as operator action,
+  sample/time blocker, or system blocker. `system_blocker` count must be `0`
+  before any live-money review, and `Live-money ready` must stay `NO` until all
+  MISSION boxes pass. This audit also runs inside `npm run capacity:status`.
 - The dashboard Gate blockers card should show each open gate's state, detail,
   and current / target progress when those numbers exist.
 - `npm run readiness:evidence` reports Polymarket settlement progress,

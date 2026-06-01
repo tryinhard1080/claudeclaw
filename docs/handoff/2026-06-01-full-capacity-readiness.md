@@ -18,15 +18,18 @@ Real money remains disabled. This is correct.
 
 ## Latest Evidence
 
-- Polymarket Box 2: `0/50` settled trades, `10` open, `23` voided.
+- Polymarket Box 2: `0/50` settled trades, `11` open, `23` voided.
 - Polymarket mark-to-market: `$26.35` total paper P&L, all unrealized, on
-  `$479.35` open exposure. Paper equity is `$5,026.35`.
-- Polymarket signal flow: `535` signals and `1` approval in the last 24 hours,
-  approval rate `0.19%`.
-- Resolution pipeline: `2` open positions due within 7 days, `4` due within 30
+  `$529.35` open exposure. Paper equity is `$5,026.35`.
+- Polymarket signal flow: `539` signals and `2` approvals in the last 24 hours,
+  approval rate `0.37%`.
+- Resolution pipeline: `2` open positions due within 7 days, `5` due within 30
   days, `0` overdue.
 - Resolution queue: next paper settlements are trade `#19` and `#23` due
-  2026-06-07, then trades `#28` and `#30` due around 2026-06-30/2026-07-01.
+  2026-06-07, then trades `#28`, `#34`, and `#30` due around
+  2026-06-30/2026-07-01.
+- Real-money gate audit: `3/7` boxes complete, `2` operator actions, `2`
+  sample/time blockers, `0` system blockers, and live-money ready `NO`.
 - TTL evidence: latest active candidate set `4/9` inside the 1-30 day TTL band.
 - Box 1 paper clock: `elapsed_review_ready`, `41/30` days since 2026-04-21,
   target 2026-05-21, A1 ACK present, MISSION checkbox still open.
@@ -63,10 +66,15 @@ Real money remains disabled. This is correct.
 - Browser dashboard verification after rebuild/restart - the rendered Gate
   blockers card shows `41/30`, `0/50`, and `8/60` plus blocker details for
   Boxes 1/2/3 and the pending Box 7 sign-off.
+- `npx vitest run src/readiness/gate-audit.test.ts` - 3/3 PASS after adding
+  the real-money gate audit classifier.
+- `npm run gate:audit` - PASS/WARN as expected: no system blockers; operator
+  actions are Box 1 paper-clock review and Box 7 final sign-off; sample/time
+  blockers are Box 2 settlement count/P&L and Box 3 60-day Sharpe sample.
 - `npx vitest run src/readiness/evidence.test.ts src/dashboard-html.test.ts` -
   10/10 PASS after adding the read-only resolution queue.
 - `npm run readiness:evidence` - PASS/WARN as expected and prints the live
-  resolution queue ordered by next end date.
+  `11`-row resolution queue ordered by next end date.
 - `npm run capacity:status` after rebuild/restart - operational systems PASS;
   live startup remains FAIL by design because Boxes 1/2/3/7 remain blocked.
 - Dashboard DOM verification - Evidence Path rendered the `10`-row resolution
@@ -81,5 +89,9 @@ Real money remains disabled. This is correct.
 - Box 2: Polymarket still has `0/50` settled trades with positive realized P&L.
 - Box 3: regime-trader has `8/60` days toward the Sharpe sample.
 - Box 7: Richard's final written live-money sign-off is still pending.
+
+`npm run gate:audit` is the quickest operator-action view for the remaining
+live-money blockers. It is read-only and does not change caps, halts, flags, or
+broker/risk-gate behavior.
 
 Do not enable real-money trading, change monetary caps, or weaken risk gates.
