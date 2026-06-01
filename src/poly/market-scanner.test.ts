@@ -5,9 +5,11 @@ import {
   capturePrices,
   pruneOldPrices,
   scanWrite,
+  recordPolymarketSignalSourceFreshness,
 } from './market-scanner.js';
 import { getPriceApproxHoursAgo } from './price-history.js';
 import type { Market } from './types.js';
+import { buildSignalSourceContext } from '../readiness/source-freshness.js';
 
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
@@ -238,5 +240,36 @@ describe('scanWrite (atomic upsert + capture + prune)', () => {
     // Price rollback: stale row still present (prune did not commit)
     const oldRow = db.prepare(`SELECT 1 FROM poly_price_history WHERE token_id='old-token'`).get();
     expect(oldRow).toBeDefined();
+  });
+
+  it('refreshes required signal sources after a successful scan write', () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const markets = [
+      mkMarket({
+        slug: 'm-source-freshness',
+        outcomes: [
+          { label: 'Yes', tokenId: 'tok-source-yes', price: 0.55 },
+          { label: 'No', tokenId: 'tok-source-no', price: 0.45 },
+        ],
+      }),
+    ];
+
+    scanWrite(db, markets, markets, 24);
+    recordPolymarketSignalSourceFreshness(db, nowSec, 600);
+
+    const context = buildSignalSourceContext(db, nowSec + 10);
+    expect(context.allRequiredFresh).toBe(true);
+    expect(context.sources).toEqual([
+      expect.objectContaining({
+        name: 'polymarket-gamma-scan',
+        status: 'pass',
+        usedBySignal: true,
+      }),
+      expect.objectContaining({
+        name: 'polymarket-price-history',
+        status: 'pass',
+        usedBySignal: true,
+      }),
+    ]);
   });
 });

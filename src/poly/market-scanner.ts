@@ -19,6 +19,7 @@ import type { Market } from './types.js';
 import { recordScanRun } from './drift.js';
 import { selectPriceCaptureCandidates } from './strategy-engine.js';
 import { partitionByTtl, summarizeTick, recordTtlShadowTick } from './ttl-filter.js';
+import { recordSourceFreshness } from '../readiness/source-freshness.js';
 
 // Diagnostic instrumentation for the 2026-04-20 scanner hang bug. Writes
 // directly to process.stdout (bypassing pino's worker thread) so it produces
@@ -99,8 +100,9 @@ export class MarketScanner extends EventEmitter {
       // StrategyEngine would actually evaluate. Cut writes from ~100k/tick
       // to ~40/tick (2500x reduction). Selection logic shared with the
       // engine via selectPriceCaptureCandidates.
+      const nowSec = Math.floor(Date.now() / 1000);
       const shadowCandidates = selectPriceCaptureCandidates(markets, {
-        nowSec: Math.floor(Date.now() / 1000),
+        nowSec,
         minVolumeUsd: this.minVolumeUsd,
         minTtrHours: this.minTtrHours,
         minYesPrice: this.minYesPrice,
@@ -108,7 +110,7 @@ export class MarketScanner extends EventEmitter {
         topN: this.topN,
       });
       const candidates = selectPriceCaptureCandidates(markets, {
-        nowSec: Math.floor(Date.now() / 1000),
+        nowSec,
         minVolumeUsd: this.minVolumeUsd,
         minTtrHours: this.minTtrHours,
         minYesPrice: this.minYesPrice,
@@ -125,6 +127,7 @@ export class MarketScanner extends EventEmitter {
       // gives the checkpointer a single clean cut point, and prevents the
       // pre-fix scenario where prune failed mid-scan but captures succeeded.
       scanWrite(this.db, markets, candidates, this.retentionHours);
+      recordPolymarketSignalSourceFreshness(this.db, nowSec, Math.ceil(this.intervalMs / 1000) * 2);
       scanTrace('post-db');
 
       // Sprint S2 TTL shadow: partition candidates by TTL band and persist
@@ -237,6 +240,27 @@ export function scanWrite(
     pruneStmt.run(cutoff);
   });
   tx();
+}
+
+export function recordPolymarketSignalSourceFreshness(
+  db: Database.Database,
+  fetchedAt: number,
+  staleAfterSec: number,
+): void {
+  recordSourceFreshness(db, {
+    sourceName: 'polymarket-gamma-scan',
+    fetchedAt,
+    success: true,
+    staleAfterSec,
+    usedBySignal: true,
+  });
+  recordSourceFreshness(db, {
+    sourceName: 'polymarket-price-history',
+    fetchedAt,
+    success: true,
+    staleAfterSec,
+    usedBySignal: true,
+  });
 }
 
 export function upsertMarkets(db: Database.Database, markets: Market[]): void {
