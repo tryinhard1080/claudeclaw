@@ -69,6 +69,7 @@ import { composeDriftReport } from './poly/drift.js';
 import { collectEquityDashboardPayload } from './trading/equity-dashboard.js';
 import { collectTradingOpsPayload } from './trading/ops-dashboard.js';
 import { collectGateProgress } from './readiness/gate-progress.js';
+import { collectGateAudit } from './readiness/gate-audit.js';
 import { collectLiveStartupChecks } from './readiness/live-startup.js';
 import { readSourceFreshnessChecks } from './readiness/source-freshness.js';
 import { collectOperationalEvidence, readOperationalEvidenceHistory } from './readiness/evidence.js';
@@ -557,9 +558,11 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   app.get('/api/readiness/live', (c) => {
     const db = getDb();
     const nowSec = Math.floor(Date.now() / 1000);
+    const gates = collectGateProgress(db);
     return c.json({
       generatedAt: nowSec,
-      gates: collectGateProgress(db),
+      gates,
+      gateAudit: collectGateAudit(gates, nowSec),
       sources: readSourceFreshnessChecks(db, nowSec),
       liveStartup: collectLiveStartupChecks(db, nowSec),
     });

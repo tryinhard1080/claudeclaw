@@ -12,7 +12,9 @@ ClaudeClaw is operational in paper mode for both configured markets:
   payloads now render as red unavailable state instead of a false green gate
   pass. The Gate blockers card now shows blocker state, detail, and current /
   target progress for each open real-money gate. The Evidence Path card now
-  also shows the live Polymarket resolution queue for open paper trades.
+  also shows the live Polymarket resolution queue for open paper trades. The
+  Live Readiness card now includes the real-money gate audit summary and next
+  actions.
 
 Real money remains disabled. This is correct.
 
@@ -71,6 +73,14 @@ Real money remains disabled. This is correct.
 - `npm run gate:audit` - PASS/WARN as expected: no system blockers; operator
   actions are Box 1 paper-clock review and Box 7 final sign-off; sample/time
   blockers are Box 2 settlement count/P&L and Box 3 60-day Sharpe sample.
+- `npx vitest run src/dashboard-html.test.ts src/readiness/gate-audit.test.ts`
+  - 7/7 PASS after adding the dashboard gate-audit rendering guard.
+- Authenticated `/api/readiness/live` after rebuild/restart - returned
+  `gateAudit.status=warn`, `3/7` complete, `2` operator actions, `2`
+  sample/time blockers, `0` system blockers, and `liveMoneyReady=false`.
+- Headless Chrome dashboard render after rebuild/restart - Live Readiness card
+  showed the Gate audit panel with `3/7 complete`, `NO live ready`, `2
+  operator`, `2 sample/time`, `0 system`, and the Box 1/2/3/7 next actions.
 - `npx vitest run src/readiness/evidence.test.ts src/dashboard-html.test.ts` -
   10/10 PASS after adding the read-only resolution queue.
 - `npm run readiness:evidence` - PASS/WARN as expected and prints the live
@@ -90,8 +100,8 @@ Real money remains disabled. This is correct.
 - Box 3: regime-trader has `8/60` days toward the Sharpe sample.
 - Box 7: Richard's final written live-money sign-off is still pending.
 
-`npm run gate:audit` is the quickest operator-action view for the remaining
-live-money blockers. It is read-only and does not change caps, halts, flags, or
-broker/risk-gate behavior.
+`npm run gate:audit` and the dashboard Gate audit panel are the quickest
+operator-action view for the remaining live-money blockers. They are read-only
+and do not change caps, halts, flags, or broker/risk-gate behavior.
 
 Do not enable real-money trading, change monetary caps, or weaken risk gates.

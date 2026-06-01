@@ -84,6 +84,8 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   MISSION boxes pass. This audit also runs inside `npm run capacity:status`.
 - The dashboard Gate blockers card should show each open gate's state, detail,
   and current / target progress when those numbers exist.
+- The dashboard Live Readiness card should show the Gate audit counts and the
+  next action for each open non-complete gate.
 - `npm run readiness:evidence` reports Polymarket settlement progress,
   mark-to-market paper P&L, near-term resolution pipeline, the open-trade
   resolution queue, TTL filter evidence, and regime Sharpe sample depth.

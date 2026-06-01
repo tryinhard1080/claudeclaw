@@ -303,7 +303,12 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <span id="live-readiness-status" class="pill">-</span>
     </div>
     <div id="live-readiness-detail" class="text-xs text-gray-500 mb-3">Loading...</div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+      <div>
+        <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Gate audit</div>
+        <div id="live-audit-summary" class="text-gray-400">Loading...</div>
+        <div id="live-audit-list" class="text-gray-500 mt-1"></div>
+      </div>
       <div>
         <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Gate blockers</div>
         <div id="live-gates-list" class="text-gray-400">Loading...</div>
@@ -2183,6 +2188,52 @@ function renderGateBlocker(g) {
       '</div>' +
     '</div>';
 }
+function renderGateAudit(audit) {
+  if (!audit || !Array.isArray(audit.items)) {
+    return {
+      summary: '<div style="color:#f87171">Gate audit unavailable</div>',
+      list: '',
+    };
+  }
+
+  const system = Number(audit.systemBlockerCount || 0);
+  const operator = Number(audit.operatorActionCount || 0);
+  const sample = Number(audit.sampleOrTimeCount || 0);
+  const complete = Number(audit.completeCount || 0);
+  const total = Number(audit.totalCount || 0);
+  const color = system > 0 ? '#f87171' : (audit.liveMoneyReady ? '#6ee7b7' : '#fbbf24');
+  const readyText = audit.liveMoneyReady ? 'YES' : 'NO';
+  const summary =
+    '<div class="grid grid-cols-2 gap-1">' +
+      '<div><span style="color:' + color + ';font-weight:700">' + complete + '/' + total + '</span><span class="text-gray-600"> complete</span></div>' +
+      '<div><span style="color:' + color + ';font-weight:700">' + readyText + '</span><span class="text-gray-600"> live ready</span></div>' +
+      '<div><span style="color:#fbbf24;font-weight:700">' + operator + '</span><span class="text-gray-600"> operator</span></div>' +
+      '<div><span style="color:#9ca3af;font-weight:700">' + sample + '</span><span class="text-gray-600"> sample/time</span></div>' +
+      '<div><span style="color:' + (system > 0 ? '#f87171' : '#6ee7b7') + ';font-weight:700">' + system + '</span><span class="text-gray-600"> system</span></div>' +
+    '</div>';
+
+  const rows = audit.items
+    .filter(item => item.category !== 'complete')
+    .slice(0, 4)
+    .map(item => {
+      const category = String(item.category || '').replace(/_/g, ' ');
+      const rowColor = item.category === 'system_blocker'
+        ? '#f87171'
+        : (item.category === 'operator_action' ? '#fbbf24' : '#9ca3af');
+      return '<div class="py-1" style="border-top:1px solid #222">' +
+        '<div class="flex items-start gap-2">' +
+          '<span style="color:' + rowColor + ';min-width:72px;text-transform:uppercase;font-size:10px">' + escapeHtml(category) + '</span>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div class="text-gray-300">Box ' + escapeHtml(String(item.box)) + ' ' + escapeHtml(item.name || '') + '</div>' +
+            '<div class="text-gray-500 leading-snug">' + escapeHtml(item.action || '') + '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    })
+    .join('');
+
+  return { summary, list: rows || '<div class="text-gray-500 mt-1">No open audit items</div>' };
+}
 function setOpsText(id, check) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -2491,6 +2542,7 @@ async function loadLiveReadiness() {
     ]);
     if (!payload || payload.error || !Array.isArray(payload.gates) || payload.gates.length === 0 ||
         !payload.liveStartup || !Array.isArray(payload.liveStartup.checks) ||
+        !payload.gateAudit || !Array.isArray(payload.gateAudit.items) ||
         !Array.isArray(payload.sources)) {
       throw new Error(payload && payload.error ? payload.error : 'invalid readiness live payload');
     }
@@ -2514,6 +2566,16 @@ async function loadLiveReadiness() {
         .join(' / ');
       detailEl.textContent = flagSummary || 'No live flag data';
       detailEl.style.color = status === 'fail' ? '#f87171' : '#9ca3af';
+    }
+
+    const auditRendered = renderGateAudit(payload.gateAudit);
+    const auditSummaryEl = document.getElementById('live-audit-summary');
+    if (auditSummaryEl) {
+      auditSummaryEl.innerHTML = auditRendered.summary;
+    }
+    const auditListEl = document.getElementById('live-audit-list');
+    if (auditListEl) {
+      auditListEl.innerHTML = auditRendered.list;
     }
 
     const gateEl = document.getElementById('live-gates-list');
@@ -2557,6 +2619,14 @@ async function loadLiveReadiness() {
     const gateEl = document.getElementById('live-gates-list');
     if (gateEl) {
       gateEl.innerHTML = '<div style="color:#f87171">Gate data unavailable</div>';
+    }
+    const auditSummaryEl = document.getElementById('live-audit-summary');
+    if (auditSummaryEl) {
+      auditSummaryEl.innerHTML = '<div style="color:#f87171">Gate audit unavailable</div>';
+    }
+    const auditListEl = document.getElementById('live-audit-list');
+    if (auditListEl) {
+      auditListEl.innerHTML = '';
     }
     const sourceEl = document.getElementById('live-sources-list');
     if (sourceEl) {
