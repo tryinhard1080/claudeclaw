@@ -55,14 +55,85 @@ export function classifyResolution(
 export type MarketFetcher = (slug: string) => Promise<Market | null>;
 
 /**
- * Default market fetcher: queries Gamma's list endpoint filtered by slug
- * (no `closed=` filter, so resolved markets are visible). Resolution only
- * becomes a 1/0 outcomePrice vector AFTER closed=1, so we always want fresh
- * data here. `db` is intentionally unused — kept in the signature so callers
- * can swap in a cache-backed fetcher without changing construction sites.
+ * Sprint 29 — reconstruct a `Market` from a `poly_resolutions` cache row.
+ *
+ * The cache is populated by the resolution-fetch cron (see
+ * `scripts/fetch-resolutions.ts`) and stores the last-observed outcomes vector
+ * plus a `closed` flag. When Polymarket delists a market shortly after
+ * settlement (~30-60 min after resolution), `fetchMarketBySlug` starts
+ * returning null even though the market DID resolve. The cache retains the
+ * final `price=1.0`/`price=0.0` vector we need for classification.
+ *
+ * Only the fields `classifyResolution` reads are populated:
+ *   - slug (identity)
+ *   - closed (from cache)
+ *   - outcomes[].price + tokenId (from outcomes_json)
+ *
+ * All other Market fields get placeholder values. Do not use the return of
+ * this function for anything other than resolution classification.
+ *
+ * Returns null when no cache row exists for the slug.
  */
-export function makeDefaultMarketFetcher(_db: Database.Database): MarketFetcher {
-  return async (slug: string) => fetchMarketBySlug(slug);
+export function readMarketFromCache(
+  db: Database.Database,
+  slug: string,
+): Market | null {
+  const row = db.prepare(
+    `SELECT closed, outcomes_json FROM poly_resolutions WHERE slug = ?`,
+  ).get(slug) as { closed: number; outcomes_json: string } | undefined;
+  if (!row) return null;
+
+  let parsed: Array<{ label: string; tokenId: string; price: number }>;
+  try {
+    parsed = JSON.parse(row.outcomes_json) as Array<{ label: string; tokenId: string; price: number }>;
+  } catch (err) {
+    logger.warn({ slug, err: String(err) }, 'poly_resolutions outcomes_json parse failed');
+    return null;
+  }
+
+  return {
+    slug,
+    conditionId: '', // not persisted on the cache row; unused by classifyResolution
+    question: '',   // ditto
+    outcomes: parsed.map(o => ({ label: o.label, tokenId: o.tokenId, price: o.price })),
+    volume24h: 0,
+    liquidity: 0,
+    endDate: 0,
+    closed: row.closed === 1,
+  };
+}
+
+export interface DefaultMarketFetcherOptions {
+  /**
+   * Live-fetch override, for testing. Defaults to gamma-client's
+   * `fetchMarketBySlug`. Production callers should NOT pass this — it's
+   * the injection seam for unit tests that need to simulate a delisted
+   * (live=null) response without touching the network.
+   */
+  liveFetch?: (slug: string) => Promise<Market | null>;
+}
+
+/**
+ * Default market fetcher — Sprint 29 cache-aware chain:
+ *   1. Live Gamma via `fetchMarketBySlug` (preferred).
+ *   2. On null, fall back to `poly_resolutions` cache (readMarketFromCache).
+ *   3. On both null, return null (caller will void-as-delisted downstream).
+ *
+ * The pre-Sprint-29 body returned `fetchMarketBySlug(slug)` only, which meant
+ * every market Polymarket delisted post-settlement voided the position with
+ * `voided_reason='delisted'` — a 100% miss on real wins/losses. The `_db`
+ * parameter was pre-baked for this fix; Sprint 29 wired it up.
+ */
+export function makeDefaultMarketFetcher(
+  db: Database.Database,
+  opts: DefaultMarketFetcherOptions = {},
+): MarketFetcher {
+  const liveFetch = opts.liveFetch ?? fetchMarketBySlug;
+  return async (slug: string): Promise<Market | null> => {
+    const live = await liveFetch(slug);
+    if (live !== null) return live;
+    return readMarketFromCache(db, slug);
+  };
 }
 
 type OpenTradeRow = {
@@ -241,7 +312,13 @@ export class PnlTracker extends EventEmitter {
   }
 }
 
-function realizedFor(status: ResolutionStatus, shares: number, entryPrice: number): number {
+/**
+ * Sprint 29 — exported for backfill script reuse (single source of truth for
+ * paper-broker payout arithmetic). Called both from `runOnce` at trade
+ * resolution and from `scripts/backfill-voided-resolutions.ts` when we
+ * re-classify a previously-voided trade against the cache.
+ */
+export function realizedFor(status: ResolutionStatus, shares: number, entryPrice: number): number {
   if (status === 'won') return shares * (1 - entryPrice);
   if (status === 'lost') return -shares * entryPrice;
   return 0; // voided

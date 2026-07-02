@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DateTime } from 'luxon';
 import Database from 'better-sqlite3';
-import { PnlTracker, classifyResolution, getDailyRealizedPnl, type MarketFetcher } from './pnl-tracker.js';
+import {
+  PnlTracker, classifyResolution, getDailyRealizedPnl,
+  readMarketFromCache, makeDefaultMarketFetcher, realizedFor,
+  type MarketFetcher,
+} from './pnl-tracker.js';
 import type { Market } from './types.js';
 import { POLY_TIMEZONE } from '../config.js';
 
@@ -32,6 +36,13 @@ function freshDb(): Database.Database {
       current_price REAL NOT NULL,
       unrealized_pnl REAL NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE poly_resolutions (
+      slug TEXT PRIMARY KEY,
+      closed INTEGER NOT NULL,
+      outcomes_json TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      resolved_at INTEGER
     );
   `);
   return db;
@@ -73,6 +84,144 @@ function mkMarket(
     closed: over.closed ?? false,
   };
 }
+
+function seedResolutionCache(
+  db: Database.Database,
+  over: Partial<{ slug: string; closed: boolean; yesPrice: number; noPrice: number; yesTokenId: string; noTokenId: string }> = {},
+): void {
+  const slug = over.slug ?? 'slug-a';
+  const closed = over.closed ?? true;
+  const yesPrice = over.yesPrice ?? 1;
+  const noPrice = over.noPrice ?? 0;
+  const outcomes = [
+    { label: 'Yes', tokenId: over.yesTokenId ?? 'tok-yes', price: yesPrice },
+    { label: 'No', tokenId: over.noTokenId ?? 'tok-no', price: noPrice },
+  ];
+  db.prepare(`INSERT INTO poly_resolutions (slug, closed, outcomes_json, fetched_at, resolved_at)
+    VALUES (?, ?, ?, ?, ?)`).run(
+    slug, closed ? 1 : 0, JSON.stringify(outcomes),
+    Math.floor(Date.now() / 1000), closed ? Math.floor(Date.now() / 1000) : null,
+  );
+}
+
+describe('readMarketFromCache (Sprint 29)', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = freshDb(); });
+
+  it('reconstructs a closed Market from poly_resolutions row with winning outcome', () => {
+    seedResolutionCache(db, { slug: 'slug-a', closed: true, yesPrice: 1, noPrice: 0 });
+    const m = readMarketFromCache(db, 'slug-a');
+    expect(m).not.toBeNull();
+    expect(m!.closed).toBe(true);
+    expect(m!.outcomes).toHaveLength(2);
+    const yes = m!.outcomes.find(o => o.tokenId === 'tok-yes');
+    expect(yes!.price).toBe(1);
+  });
+
+  it('returns null when no cache row exists', () => {
+    expect(readMarketFromCache(db, 'nonexistent-slug')).toBeNull();
+  });
+
+  it('returns Market with closed=false when cache row has closed=0 (do not fake resolution)', () => {
+    seedResolutionCache(db, { slug: 'slug-a', closed: false, yesPrice: 0.5, noPrice: 0.5 });
+    const m = readMarketFromCache(db, 'slug-a');
+    expect(m).not.toBeNull();
+    expect(m!.closed).toBe(false);
+  });
+
+  it('preserves the slug on the reconstructed Market', () => {
+    seedResolutionCache(db, { slug: 'weird-slug-123-abc', closed: true, yesPrice: 0, noPrice: 1 });
+    const m = readMarketFromCache(db, 'weird-slug-123-abc');
+    expect(m!.slug).toBe('weird-slug-123-abc');
+  });
+});
+
+describe('makeDefaultMarketFetcher (Sprint 29 — cache-aware chain)', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = freshDb(); });
+
+  it('live-hit → returns live Market, does not consult cache', async () => {
+    // Cache says YES won, live says NO won — live must win.
+    seedResolutionCache(db, { slug: 'slug-a', closed: true, yesPrice: 1, noPrice: 0 });
+    const liveMarket = mkMarket({ closed: true, yesPrice: 0, noPrice: 1 });
+    const fetcher = makeDefaultMarketFetcher(db, { liveFetch: async () => liveMarket });
+    const out = await fetcher('slug-a');
+    expect(out).not.toBeNull();
+    expect(out!.outcomes.find(o => o.tokenId === 'tok-no')!.price).toBe(1);
+  });
+
+  it('live-null + cache-hit-closed-won → returns reconstructed cached Market', async () => {
+    seedResolutionCache(db, { slug: 'slug-a', closed: true, yesPrice: 1, noPrice: 0 });
+    const fetcher = makeDefaultMarketFetcher(db, { liveFetch: async () => null });
+    const out = await fetcher('slug-a');
+    expect(out).not.toBeNull();
+    expect(out!.closed).toBe(true);
+    expect(out!.outcomes.find(o => o.tokenId === 'tok-yes')!.price).toBe(1);
+  });
+
+  it('live-null + cache-miss → returns null (still delisted-voidable)', async () => {
+    const fetcher = makeDefaultMarketFetcher(db, { liveFetch: async () => null });
+    expect(await fetcher('nonexistent')).toBeNull();
+  });
+
+  it('live-null + cache-hit-closed=0 → returns synthetic open Market (no false resolve)', async () => {
+    seedResolutionCache(db, { slug: 'slug-a', closed: false, yesPrice: 0.4, noPrice: 0.6 });
+    const fetcher = makeDefaultMarketFetcher(db, { liveFetch: async () => null });
+    const out = await fetcher('slug-a');
+    expect(out).not.toBeNull();
+    expect(out!.closed).toBe(false);
+  });
+});
+
+describe('pnl-tracker with cache fallback (Sprint 29 integration)', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = freshDb(); });
+
+  it('recovers a won trade from cache when live Gamma delisted the market', async () => {
+    const id = seedOpenTrade(db, { slug: 'slug-a', tokenId: 'tok-yes', entry: 0.4, shares: 100 });
+    seedResolutionCache(db, { slug: 'slug-a', closed: true, yesPrice: 1, noPrice: 0 });
+    const fetcher = makeDefaultMarketFetcher(db, { liveFetch: async () => null });
+    const t = new PnlTracker(db, fetcher, async () => 1);
+    await t.runOnce();
+    const row = db.prepare(`SELECT status, realized_pnl FROM poly_paper_trades WHERE id=?`).get(id) as { status: string; realized_pnl: number };
+    expect(row.status).toBe('won');
+    expect(row.realized_pnl).toBeCloseTo(100 * (1 - 0.4), 6);
+  });
+
+  it('recovers a lost trade from cache when live Gamma delisted the market', async () => {
+    const id = seedOpenTrade(db, { slug: 'slug-a', tokenId: 'tok-yes', entry: 0.4, shares: 100 });
+    seedResolutionCache(db, { slug: 'slug-a', closed: true, yesPrice: 0, noPrice: 1 });
+    const fetcher = makeDefaultMarketFetcher(db, { liveFetch: async () => null });
+    const t = new PnlTracker(db, fetcher, async () => 0);
+    await t.runOnce();
+    const row = db.prepare(`SELECT status, realized_pnl FROM poly_paper_trades WHERE id=?`).get(id) as { status: string; realized_pnl: number };
+    expect(row.status).toBe('lost');
+    expect(row.realized_pnl).toBeCloseTo(-100 * 0.4, 6);
+  });
+
+  it('still voids-delisted when both live AND cache miss', async () => {
+    const id = seedOpenTrade(db, { slug: 'slug-a', tokenId: 'tok-yes', entry: 0.4, shares: 100 });
+    // No cache seed — this trade truly is orphaned.
+    const fetcher = makeDefaultMarketFetcher(db, { liveFetch: async () => null });
+    const t = new PnlTracker(db, fetcher, async () => 0);
+    await t.runOnce();
+    const row = db.prepare(`SELECT status, voided_reason FROM poly_paper_trades WHERE id=?`).get(id) as { status: string; voided_reason: string };
+    expect(row.status).toBe('voided');
+    expect(row.voided_reason).toBe('delisted');
+  });
+});
+
+describe('realizedFor (Sprint 29 — exported for backfill script reuse)', () => {
+  it('won: shares * (1 - entryPrice)', () => {
+    expect(realizedFor('won', 100, 0.4)).toBeCloseTo(60, 6);
+  });
+  it('lost: -shares * entryPrice', () => {
+    expect(realizedFor('lost', 100, 0.4)).toBeCloseTo(-40, 6);
+  });
+  it('voided: 0', () => {
+    expect(realizedFor('voided', 100, 0.4)).toBe(0);
+  });
+});
 
 describe('classifyResolution', () => {
   it('open when market not closed', () => {
