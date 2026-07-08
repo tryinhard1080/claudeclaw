@@ -68,14 +68,16 @@ export function simulateOutcome(
   const entryPrice = signal.marketPrice;
   const shares = entryPrice > 0 ? sizeUsd / entryPrice : 0;
 
+  if (resolution === null) {
+    return { status: 'open', shares, realizedPnl: 0 };
+  }
+
   // classifyResolution needs a Market-shaped input; synthesize one.
-  const market: Market | null = resolution
-    ? {
-        slug: resolution.slug, conditionId: '', question: '',
-        outcomes: resolution.outcomes, volume24h: 0, liquidity: 0,
-        endDate: 0, closed: resolution.closed,
-      }
-    : null;
+  const market: Market = {
+    slug: resolution.slug, conditionId: '', question: '',
+    outcomes: resolution.outcomes, volume24h: 0, liquidity: 0,
+    endDate: 0, closed: resolution.closed,
+  };
   const cls = classifyResolution(market, signal.outcomeTokenId);
 
   if (cls.status === 'won') return { status: 'won', shares, realizedPnl: shares * (1 - entryPrice) };
@@ -91,7 +93,9 @@ export interface BacktestReport {
   approvedCount: number;
   rejectedForEdge: number;
   skippedForZeroSize: number;
+  /** Won + lost only. Open and voided outcomes are not performance evidence. */
   resolvedCount: number;
+  openCount: number;
   winCount: number;
   lostCount: number;
   voidedCount: number;
@@ -111,7 +115,7 @@ export interface RunBacktestArgs {
 export function runBacktest(a: RunBacktestArgs): BacktestReport {
   const { signals, resolutions, params } = a;
   let approved = 0, rejectedEdge = 0, skippedZero = 0;
-  let resolved = 0, won = 0, lost = 0, voided = 0;
+  let resolved = 0, open = 0, won = 0, lost = 0, voided = 0;
   let totalPnl = 0, totalDeployed = 0;
   const brierSamples: Array<{ p: number; o: 0 | 1 }> = [];
 
@@ -128,13 +132,14 @@ export function runBacktest(a: RunBacktestArgs): BacktestReport {
 
     const res = resolutions.get(s.marketSlug) ?? null;
     const out = simulateOutcome(s, res, size);
-    if (out.status === 'open') continue;
+    if (out.status === 'open') { open++; continue; }
+    if (out.status === 'voided') { voided++; continue; }
+
     resolved++;
     totalDeployed += size;
     totalPnl += out.realizedPnl;
     if (out.status === 'won') { won++; brierSamples.push({ p: s.estimatedProb, o: 1 }); }
-    else if (out.status === 'lost') { lost++; brierSamples.push({ p: s.estimatedProb, o: 0 }); }
-    else voided++;
+    else { lost++; brierSamples.push({ p: s.estimatedProb, o: 0 }); }
   }
 
   const brier = brierSamples.length > 0
@@ -145,7 +150,7 @@ export function runBacktest(a: RunBacktestArgs): BacktestReport {
     minEdgePct: params.minEdgePct, kellyFraction: params.kellyFraction,
     signalCount: signals.length,
     approvedCount: approved, rejectedForEdge: rejectedEdge, skippedForZeroSize: skippedZero,
-    resolvedCount: resolved, winCount: won, lostCount: lost, voidedCount: voided,
+    resolvedCount: resolved, openCount: open, winCount: won, lostCount: lost, voidedCount: voided,
     winRate: (won + lost) > 0 ? won / (won + lost) : 0,
     totalPnl, totalDeployed,
     roiPct: totalDeployed > 0 ? (totalPnl / totalDeployed) * 100 : 0,

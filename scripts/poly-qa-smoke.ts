@@ -26,6 +26,7 @@ async function main() {
 
   // 0. Fresh DB + schema from migration.
   step(0, 'Fresh DB + v1.2.0 schema');
+  fs.mkdirSync(path.dirname(TMP_DB), { recursive: true });
   if (fs.existsSync(TMP_DB)) fs.unlinkSync(TMP_DB);
   const db = new Database(TMP_DB);
   db.exec(`

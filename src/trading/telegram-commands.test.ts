@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { renderSharpe } from './telegram-commands.js';
+import { formatInstanceStatus, renderSharpe } from './telegram-commands.js';
+import type { InstanceState } from './types.js';
 
 function bootDb(opts: { withTable?: boolean } = {}): Database.Database {
   const db = new Database(':memory:');
@@ -234,5 +235,45 @@ describe('renderSharpe', () => {
     expect(aggIdx).toBeGreaterThan(-1);
     expect(consIdx).toBeGreaterThan(-1);
     expect(aggIdx).toBeLessThan(consIdx);
+  });
+});
+
+describe('formatInstanceStatus', () => {
+  it('renders live regime-trader label shape', () => {
+    const state: InstanceState = {
+      mode: 'paper',
+      market_open: true,
+      execution_enabled: true,
+      equity: 105_000,
+      cash: 90_000,
+      buying_power: 180_000,
+      regime: {
+        label: 'WEAK_BULL',
+        confidence: 1,
+        vol_rank: 0.3333,
+      },
+      risk: {
+        daily_dd_pct: 0.001,
+        peak_dd_pct: 0.002,
+        leverage: 1,
+        circuit_breakers: {},
+      },
+      positions: [],
+      recent_signals: [{
+        time: '2026-06-17T13:35:00Z',
+        symbol: 'SPY',
+        regime: 'WEAK_BULL',
+        confidence: 1,
+        vol_rank: 0.3333,
+        target_allocation: 0.7,
+        approved_allocation: 0.15,
+        action: 'modified',
+      }],
+    };
+
+    const text = formatInstanceStatus('spy-aggressive', state, false);
+
+    expect(text).toContain('Regime: WEAK_BULL');
+    expect(text).toContain('Equity: $105,000.00');
   });
 });

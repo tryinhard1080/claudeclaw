@@ -11,6 +11,7 @@ Operational runbooks for ClaudeClaw - each document describes a specific drill, 
 - [`market-open-drill.md`](market-open-drill.md) - Monday market-open verification for PM2, state files, Telegram commands, and dashboard health.
 - [`polymarket-paper-readiness.md`](polymarket-paper-readiness.md) - Acceptance gate for scanner, paper positions, halt state, and advanced paper toggles.
 - [`financial-datasets-mcp.md`](financial-datasets-mcp.md) - OAuth and permitted-use workflow for Financial Datasets MCP research context.
+- [`broker-plumbing-drill.md`](broker-plumbing-drill.md) - Plan-only dollars-and-cents broker connectivity drill, separate from autonomous live trading.
 - [`weather-shadow-ops.md`](weather-shadow-ops.md) - Weather Goat shadow evaluation monitoring and promotion gate.
 - [`trading-feature-flags.md`](trading-feature-flags.md) - Controlled Polymarket feature-flag profiles and live-capital no-go rule.
 - [`trading-drill-log.md`](trading-drill-log.md) - Dated evidence from halt/resume, restore, bloat, and readiness drills.

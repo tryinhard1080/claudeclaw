@@ -5,7 +5,20 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
+import {
+  AGENT_ID,
+  ALLOWED_CHAT_ID,
+  DASHBOARD_PORT,
+  DASHBOARD_TOKEN,
+  PROJECT_ROOT,
+  STORE_DIR,
+  CONTEXT_LIMIT,
+  agentDefaultModel,
+  POLY_PAPER_CAPITAL,
+  POLY_MAX_TRADE_USD,
+  POLY_MAX_OPEN_POSITIONS,
+  POLY_MAX_DEPLOYED_PCT,
+} from './config.js';
 import { buildRuntimeContext, renderContextForDashboard } from './context-builder.js';
 import crypto from 'crypto';
 import {
@@ -66,6 +79,7 @@ import { buildPositionsLivePayload } from './poly/positions-view.js';
 import { buildPnlBars, type DailyPnlPoint } from './dashboard-charts.js';
 import { latestSnapshot as latestCalibrationSnapshot, fetchResolvedSamples, calibrationCurve } from './poly/calibration.js';
 import { composeDriftReport } from './poly/drift.js';
+import { buildPaperLimitSummary } from './poly/paper-limits.js';
 import { collectEquityDashboardPayload } from './trading/equity-dashboard.js';
 import { collectTradingOpsPayload } from './trading/ops-dashboard.js';
 import { collectGateProgress } from './readiness/gate-progress.js';
@@ -73,6 +87,7 @@ import { collectGateAudit } from './readiness/gate-audit.js';
 import { collectLiveStartupChecks } from './readiness/live-startup.js';
 import { readSourceFreshnessChecks } from './readiness/source-freshness.js';
 import { collectOperationalEvidence, readOperationalEvidenceHistory } from './readiness/evidence.js';
+import { collectOpenMtmDiagnostics } from './readiness/poly-open-mtm-diagnostics.js';
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -414,6 +429,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const trades = db.prepare(`SELECT status, COUNT(*) AS n FROM poly_paper_trades GROUP BY status`).all() as Array<{ status: string; n: number }>;
     const tradesByStatus: Record<string, number> = {};
     for (const t of trades) tradesByStatus[t.status] = t.n;
+    const openTradeCount = tradesByStatus.open ?? 0;
 
     const resolutions = db.prepare(`SELECT COUNT(*) AS n FROM poly_resolutions`).get() as { n: number };
 
@@ -453,6 +469,16 @@ export function startDashboard(botApi?: Api<RawApi>): void {
         : null,
       realizedPnlUsd: realized.total,
       openExposureUsd: openExposure.total,
+      limits: buildPaperLimitSummary({
+        openTradeCount,
+        openExposureUsd: openExposure.total,
+        config: {
+          paperCapitalUsd: POLY_PAPER_CAPITAL,
+          maxTradeUsd: POLY_MAX_TRADE_USD,
+          maxOpenPositions: POLY_MAX_OPEN_POSITIONS,
+          maxDeployedPct: POLY_MAX_DEPLOYED_PCT,
+        },
+      }),
       dbSizeBytes,
       walSizeBytes,
       backupLastSuccessAt,
@@ -576,6 +602,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
         collectEquitySync: true,
         collectEquityBenchmark: true,
       }),
+      openMtmDiagnostics: collectOpenMtmDiagnostics(db, { nowSec }),
       history: readOperationalEvidenceHistory(db, 30),
     });
   });

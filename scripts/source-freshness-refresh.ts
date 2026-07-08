@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { POLY_SCAN_INTERVAL_MIN, STORE_DIR } from '../src/config.js';
+import { isRefusalResponse, isToolErrorResponse } from '../src/poly/news-sync.js';
 import { recordSourceFreshness } from '../src/readiness/source-freshness.js';
 
 function tableExists(db: Database.Database, name: string): boolean {
@@ -89,7 +90,7 @@ function refreshTtlShadow(db: Database.Database, nowSec: number): void {
   });
 }
 
-function refreshNewsSync(db: Database.Database, nowSec: number): void {
+export function refreshNewsSync(db: Database.Database, nowSec: number): void {
   if (!tableExists(db, 'news_items')) {
     recordSourceFreshness(db, {
       sourceName: 'news-sync',
@@ -102,17 +103,29 @@ function refreshNewsSync(db: Database.Database, nowSec: number): void {
     return;
   }
   const row = db.prepare(`
-    SELECT fetched_at, status
+    SELECT fetched_at, status, summary
       FROM news_items
      ORDER BY fetched_at DESC
      LIMIT 1
-  `).get() as { fetched_at: number; status: string } | undefined;
+  `).get() as { fetched_at: number; status: string; summary: string } | undefined;
+  const unusableReason = row?.summary && isToolErrorResponse(row.summary)
+    ? 'tool-error'
+    : row?.summary && isRefusalResponse(row.summary)
+      ? 'refusal'
+      : null;
+  const success = row?.status === 'ok' && unusableReason === null;
   recordSourceFreshness(db, {
     sourceName: 'news-sync',
     fetchedAt: row?.fetched_at ?? nowSec,
-    success: row?.status === 'ok',
+    success,
     staleAfterSec: 3 * 60 * 60,
-    lastError: row ? `latest status=${row.status}` : 'no news rows',
+    lastError: !row
+      ? 'no news rows'
+      : unusableReason
+        ? `latest news row unusable=${unusableReason}`
+        : row.status === 'ok'
+          ? null
+          : `latest status=${row.status}`,
     usedBySignal: false,
   });
 }
@@ -143,4 +156,3 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
     process.exitCode = 1;
   }
 }
-

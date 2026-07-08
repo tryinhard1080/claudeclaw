@@ -94,7 +94,7 @@ Default paper sizing and scan controls:
 ```dotenv
 POLY_PAPER_CAPITAL=5000
 POLY_MAX_TRADE_USD=50
-POLY_MAX_OPEN_POSITIONS=10
+POLY_MAX_OPEN_POSITIONS=30
 POLY_MAX_DEPLOYED_PCT=0.5
 POLY_MIN_EDGE_PCT=8
 POLY_MIN_TTR_HOURS=24
@@ -111,7 +111,7 @@ POLY_MIN_MARKET_PRICE=0.15
 POLY_MAX_MARKET_PRICE=0.85
 ```
 
-Changing risk, sizing, and strategy thresholds is a Tier 3 decision when it materially changes exposure or trade behavior.
+Changing risk, sizing, and strategy thresholds is a Tier 3 decision when it materially changes exposure or trade behavior. The 30-slot Polymarket setting is a paper-learning cap; max trade size and max deployed percentage still define the dollar exposure ceiling.
 
 ## Live-Capital No-Go Rule
 

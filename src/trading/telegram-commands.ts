@@ -8,7 +8,7 @@ import type { StatePoller } from './state-poller.js';
 import type { InstanceController } from './instance-control.js';
 import type { TradingAlertManager } from './alerts.js';
 import type { InstanceState, RegimeLabel } from './types.js';
-import { isFullRegimeState } from './state-schema.js';
+import { getRegimeLabel, getRegimeTargetAllocation, isFullRegimeState } from './state-schema.js';
 import { summarizeSharpe, type SharpeSnapshot } from './sharpe.js';
 
 const REGIME_EMOJI: Record<RegimeLabel, string> = {
@@ -29,7 +29,7 @@ function formatPct(n: number): string {
   return (n * 100).toFixed(2) + '%';
 }
 
-function formatInstanceStatus(name: string, state: InstanceState, halted: boolean): string {
+export function formatInstanceStatus(name: string, state: InstanceState, halted: boolean): string {
   if (!isFullRegimeState(state)) {
     const lines = [
       `⚪ ${name} (${state.mode})${halted ? ' [HALTED]' : ''}`,
@@ -43,10 +43,11 @@ function formatInstanceStatus(name: string, state: InstanceState, halted: boolea
     return lines.join('\n');
   }
 
-  const emoji = REGIME_EMOJI[state.regime.regime] || '⚪';
+  const regime = getRegimeLabel(state) ?? 'UNKNOWN';
+  const emoji = REGIME_EMOJI[regime as RegimeLabel] || '⚪';
   const lines = [
     `${emoji} ${name} (${state.mode})${halted ? ' [HALTED]' : ''}`,
-    `  Regime: ${state.regime.regime} (conf: ${state.regime.confidence.toFixed(2)})`,
+    `  Regime: ${regime} (conf: ${state.regime.confidence.toFixed(2)})`,
     `  Equity: ${formatEquity(state.equity)}`,
     `  Cash: ${formatEquity(state.cash)}`,
     `  Drawdown: daily ${formatPct(state.risk.daily_dd_pct)}, peak ${formatPct(state.risk.peak_dd_pct)}`,
@@ -113,11 +114,13 @@ export function registerTradingCommands(
               lines.push('');
               continue;
             }
-            const emoji = REGIME_EMOJI[state.regime.regime] || '⚪';
-            lines.push(`${emoji} ${name}: ${state.regime.regime}`);
+            const regime = getRegimeLabel(state) ?? 'UNKNOWN';
+            const emoji = REGIME_EMOJI[regime as RegimeLabel] || '⚪';
+            lines.push(`${emoji} ${name}: ${regime}`);
             lines.push(`  Confidence: ${state.regime.confidence.toFixed(4)}`);
             lines.push(`  Vol Rank: ${state.regime.vol_rank.toFixed(2)}`);
-            lines.push(`  Target Alloc: ${formatPct(state.regime.target_allocation)}`);
+            const targetAllocation = getRegimeTargetAllocation(state);
+            lines.push(`  Target Alloc: ${targetAllocation === null ? 'n/a' : formatPct(targetAllocation)}`);
             lines.push(`  Market: ${state.market_open ? 'OPEN' : 'CLOSED'}`);
             lines.push('');
           }
@@ -190,7 +193,7 @@ export function registerTradingCommands(
             const state = poller.getState(name);
             if (!state) continue;
             totalEquity += state.equity;
-            const unrealizedPnl = (state.positions ?? []).reduce((sum, p) => sum + p.unrealized_pnl, 0);
+            const unrealizedPnl = (state.positions ?? []).reduce((sum, p) => sum + (p.unrealized_pnl ?? p.unrealized_pl ?? 0), 0);
             lines.push(`${name}:`);
             lines.push(`  Equity: ${formatEquity(state.equity)}`);
             lines.push(`  Unrealized P&L: ${formatEquity(unrealizedPnl)}`);

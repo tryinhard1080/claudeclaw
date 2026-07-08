@@ -5,6 +5,7 @@ import path from 'path';
 import {
   POLY_MARKET_QUALITY_FILTER_ENABLED,
   POLY_MAX_MARKET_TTL_DAYS,
+  POLY_MAX_OPEN_POSITIONS,
   POLY_MIN_MARKET_TTL_DAYS,
   POLY_PAPER_CAPITAL,
   POLY_TTL_FILTER_ENABLED,
@@ -16,6 +17,7 @@ import type { Market } from '../poly/types.js';
 import { compareEquityBenchmark, type EquityCurvePoint } from '../trading/equity-benchmark.js';
 import { summarizeRegimeState, type MinimalRegimeState } from '../trading/ops-status.js';
 import type { ReadinessStatus } from './gate-progress.js';
+import { collectPnlHeartbeat, type PnlHeartbeatSummary } from './poly-pnl-heartbeat.js';
 
 export interface ReadinessEvidenceMetric {
   key: string;
@@ -30,6 +32,7 @@ export interface ReadinessEvidenceMetric {
 
 export type PolymarketNearTermVelocityState =
   | 'complete'
+  | 'activity_filled_waiting_for_settlements'
   | 'near_term_on_pace'
   | 'near_term_below_pace'
   | 'no_near_term_trade_velocity'
@@ -55,6 +58,9 @@ export interface PolymarketEvidence {
   paperEquityUsd: number;
   paperReturnPct: number | null;
   openTrades: number;
+  maxOpenTrades: number;
+  openTradeSlotsAvailable: number;
+  openTradeSlotUtilizationPct: number | null;
   voidedTrades: number;
   openExposureUsd: number;
   openPnlPct: number | null;
@@ -304,6 +310,7 @@ export interface OperationalEvidencePayload {
   regimeSharpe: RegimeSharpeEvidence;
   ttlFilter: TtlFilterEvidence;
   marketDiscovery: MarketDiscoveryEvidence;
+  pnlHeartbeat: PnlHeartbeatSummary;
   metrics: ReadinessEvidenceMetric[];
 }
 
@@ -469,6 +476,13 @@ function compactPct(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return 'n/a';
   const pct = value * 100;
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+}
+
+function compactAgeSec(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'n/a';
+  if (value < 60) return `${Math.floor(value)}s`;
+  if (value < 3600) return `${Math.floor(value / 60)}m`;
+  return `${Math.floor(value / 3600)}h${Math.floor((value % 3600) / 60).toString().padStart(2, '0')}m`;
 }
 
 function optionalColumn(
@@ -1145,6 +1159,9 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
       paperEquityUsd: POLY_PAPER_CAPITAL,
       paperReturnPct: 0,
       openTrades: 0,
+      maxOpenTrades: POLY_MAX_OPEN_POSITIONS,
+      openTradeSlotsAvailable: POLY_MAX_OPEN_POSITIONS,
+      openTradeSlotUtilizationPct: 0,
       voidedTrades: 0,
       openExposureUsd: 0,
       openPnlPct: null,
@@ -1184,6 +1201,9 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
   const settledTrades = scalar(db, "SELECT COUNT(*) AS value FROM poly_paper_trades WHERE status IN ('won','lost')");
   const realizedPnlUsd = scalar(db, "SELECT COALESCE(SUM(realized_pnl), 0) AS value FROM poly_paper_trades WHERE status IN ('won','lost')");
   const openTrades = scalar(db, "SELECT COUNT(*) AS value FROM poly_paper_trades WHERE status='open'");
+  const maxOpenTrades = POLY_MAX_OPEN_POSITIONS;
+  const openTradeSlotsAvailable = Math.max(0, maxOpenTrades - openTrades);
+  const openTradeSlotUtilizationPct = maxOpenTrades > 0 ? openTrades / maxOpenTrades : null;
   const voidedTrades = scalar(db, "SELECT COUNT(*) AS value FROM poly_paper_trades WHERE status='voided'");
   const openExposureUsd = scalar(db, "SELECT COALESCE(SUM(size_usd), 0) AS value FROM poly_paper_trades WHERE status='open'");
   const unrealizedPnlUsd = hasPositions
@@ -1252,15 +1272,18 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
   const nearTermPipelineFillEtaAt = nearTermPipelineFillDaysAt24hRate === null
     ? null
     : nowSec + nearTermPipelineFillDaysAt24hRate * DAY_SEC;
+  const box2Complete = settledTrades >= SETTLED_TARGET && realizedPnlUsd > 0;
   const nearTermVelocityState: PolymarketNearTermVelocityState = !hasMarkets
     ? 'missing_maturity_data'
-    : additionalNearTermSettledTradesNeeded === 0
+    : box2Complete
       ? 'complete'
+      : additionalNearTermSettledTradesNeeded === 0
+        ? 'activity_filled_waiting_for_settlements'
       : nearTermPaperTradesOpened24h === 0
-        ? 'no_near_term_trade_velocity'
-        : nearTermPaperTradesOpened24h >= dailyNearTermTradeTarget30d
-          ? 'near_term_on_pace'
-          : 'near_term_below_pace';
+          ? 'no_near_term_trade_velocity'
+          : nearTermPaperTradesOpened24h >= dailyNearTermTradeTarget30d
+            ? 'near_term_on_pace'
+            : 'near_term_below_pace';
 
   const signals24h = hasSignals
     ? scalar(db, 'SELECT COUNT(*) AS value FROM poly_signals WHERE created_at >= ?', [dayAgo])
@@ -1286,6 +1309,9 @@ export function collectPolymarketEvidence(db: Database.Database, nowSec: number)
     paperEquityUsd,
     paperReturnPct: paperCapitalUsd > 0 ? totalPnlUsd / paperCapitalUsd : null,
     openTrades,
+    maxOpenTrades,
+    openTradeSlotsAvailable,
+    openTradeSlotUtilizationPct,
     voidedTrades,
     openExposureUsd,
     openPnlPct: openExposureUsd > 0 ? unrealizedPnlUsd / openExposureUsd : null,
@@ -1377,6 +1403,21 @@ function defaultReadEquityState(_instance: string, statePath: string): { raw: st
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasRegimeEvidence(parsed: Record<string, unknown>): boolean {
+  if (parsed.regime !== null && parsed.regime !== undefined) return true;
+  if (isNonEmptyString(parsed.last_regime)) return true;
+  if (!Array.isArray(parsed.recent_signals)) return false;
+  return parsed.recent_signals.some(signal => isRecord(signal) && isNonEmptyString(signal.regime));
+}
+
 function equitySyncStateFromRegimeSummary(state: string): EquitySyncState {
   switch (state) {
     case 'open_full':
@@ -1445,7 +1486,7 @@ export function collectEquitySyncEvidence(
       const ageSec = Math.max(0, nowSec - syncedAt);
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       const marketOpen = typeof parsed.market_open === 'boolean' ? parsed.market_open : null;
-      const hasRegime = parsed.regime !== null && parsed.regime !== undefined;
+      const hasRegime = hasRegimeEvidence(parsed);
       const hasRisk = parsed.risk !== null && parsed.risk !== undefined;
       const equity = typeof parsed.equity === 'number' && Number.isFinite(parsed.equity)
         ? parsed.equity
@@ -1747,6 +1788,7 @@ function buildMetrics(
   regimeSharpe: RegimeSharpeEvidence,
   ttlFilter: TtlFilterEvidence,
   marketDiscovery: MarketDiscoveryEvidence,
+  pnlHeartbeat: PnlHeartbeatSummary,
 ): ReadinessEvidenceMetric[] {
   const hasPaperTrades = polymarket.settledTrades + polymarket.openTrades + polymarket.voidedTrades > 0;
   const resolutionState = !hasPaperTrades
@@ -1762,6 +1804,10 @@ function buildMetrics(
   const worstOpenTrade = openPnl.worstOpenTradeId === null || openPnl.worstOpenTradePnlUsd === null
     ? 'worst open n/a'
     : `worst open #${openPnl.worstOpenTradeId} ${openPnl.worstOpenTradePnlUsd.toFixed(2)} (${compactPct(openPnl.worstOpenTradePnlPct)}) ${openPnl.worstOpenTradeSlug ?? ''}`.trim();
+  const heartbeatWindowMin = Math.round(pnlHeartbeat.maxAgeSec / 60);
+  const heartbeatIssues = pnlHeartbeat.schemaIssues.length > 0
+    ? `; schema ${pnlHeartbeat.schemaIssues.join('; ')}`
+    : '';
 
   const metrics: ReadinessEvidenceMetric[] = [
     {
@@ -1805,12 +1851,28 @@ function buildMetrics(
         ? 'pass'
         : 'warn',
       state: polymarket.nearTermVelocityState,
-      detail: `near-term opened ${polymarket.nearTermPaperTradesOpened24h}/24h; needs ${polymarket.dailyNearTermTradeTarget30d.toFixed(1)}/day for 30d path; ${polymarket.nearTermPipelineFillDaysAt24hRate === null ? 'ETA unavailable at current rate' : `ETA ${polymarket.nearTermPipelineFillDaysAt24hRate}d at current rate`}; all learning trades ${polymarket.paperTradesOpened24h}/24h`,
+      detail: `near-term opened ${polymarket.nearTermPaperTradesOpened24h}/24h; needs ${polymarket.dailyNearTermTradeTarget30d.toFixed(1)}/day for 30d path; ${polymarket.nearTermPipelineFillDaysAt24hRate === null ? 'ETA unavailable at current rate' : `ETA ${polymarket.nearTermPipelineFillDaysAt24hRate}d at current rate`}; all learning trades ${polymarket.paperTradesOpened24h}/24h; settled ${polymarket.settledTrades}/${SETTLED_TARGET}; realized P&L ${polymarket.realizedPnlUsd.toFixed(2)}`,
       current: polymarket.nearTermPaperTradesOpened24h,
       target: Math.max(1, Math.ceil(polymarket.dailyNearTermTradeTarget30d)),
       progressPct: polymarket.dailyNearTermTradeTarget30d > 0
         ? progress(polymarket.nearTermPaperTradesOpened24h, polymarket.dailyNearTermTradeTarget30d)
         : 1,
+    },
+    {
+      key: 'polymarket_paper_slot_pressure',
+      name: 'Paper slot pressure',
+      status: polymarket.openTradeSlotsAvailable > 0 || polymarket.settledTrades >= SETTLED_TARGET
+        ? 'pass'
+        : 'warn',
+      state: polymarket.openTradeSlotsAvailable > 0
+        ? 'slots_available'
+        : polymarket.settledTrades >= SETTLED_TARGET
+          ? 'sample_slots_no_longer_binding'
+          : 'slots_full_waiting_for_settlements',
+      detail: `${polymarket.openTrades}/${polymarket.maxOpenTrades} paper slots used; ${polymarket.openTradeSlotsAvailable} available; settled ${polymarket.settledTrades}/${SETTLED_TARGET}; next activity depends on slot turnover from settlements or exits inside existing gates`,
+      current: polymarket.openTrades,
+      target: Math.max(1, polymarket.maxOpenTrades),
+      progressPct: polymarket.openTradeSlotUtilizationPct,
     },
     {
       key: 'polymarket_resolution_pipeline',
@@ -1832,6 +1894,21 @@ function buildMetrics(
       detail: `total P&L ${polymarket.totalPnlUsd.toFixed(2)}; unrealized ${polymarket.unrealizedPnlUsd.toFixed(2)}; equity ${polymarket.paperEquityUsd.toFixed(2)}; winners/losers/flat ${openPnl.openWinningTrades}/${openPnl.openLosingTrades}/${openPnl.openFlatTrades}; gross win/loss ${openPnl.grossOpenProfitUsd.toFixed(2)}/${openPnl.grossOpenLossUsd.toFixed(2)}; ${worstOpenTrade}; approval ${polymarket.approvalRate24h === null ? 'n/a' : `${(polymarket.approvalRate24h * 100).toFixed(2)}%`}`,
       current: polymarket.totalPnlUsd,
       progressPct: polymarket.paperReturnPct,
+    },
+    {
+      key: 'polymarket_pnl_heartbeat',
+      name: 'P&L heartbeat',
+      status: pnlHeartbeat.status,
+      state: pnlHeartbeat.state,
+      detail: `${pnlHeartbeat.freshPositionRows}/${pnlHeartbeat.openTrades} open positions marked <=${heartbeatWindowMin}m; ` +
+        `position rows ${pnlHeartbeat.positionRows}/${pnlHeartbeat.openTrades}; ` +
+        `stale/missing ${pnlHeartbeat.stalePositionRows}/${pnlHeartbeat.missingPositionRows}; ` +
+        `latest ${compactAgeSec(pnlHeartbeat.newestPositionAgeSec)} ago${heartbeatIssues}`,
+      current: pnlHeartbeat.freshPositionRows,
+      target: Math.max(1, pnlHeartbeat.openTrades),
+      progressPct: pnlHeartbeat.openTrades > 0
+        ? progress(pnlHeartbeat.freshPositionRows, pnlHeartbeat.openTrades)
+        : 1,
     },
     {
       key: 'polymarket_open_book_quality',
@@ -1962,6 +2039,7 @@ export function collectOperationalEvidence(
   const regimeSharpe = collectRegimeSharpeEvidence(db);
   const ttlFilter = collectTtlFilterEvidence(db, nowSec);
   const marketDiscovery = collectMarketDiscoveryEvidence(db, nowSec);
+  const pnlHeartbeat = collectPnlHeartbeat(db, { nowSec });
   const metrics = buildMetrics(
     polymarket,
     equitySync,
@@ -1969,6 +2047,7 @@ export function collectOperationalEvidence(
     regimeSharpe,
     ttlFilter,
     marketDiscovery,
+    pnlHeartbeat,
   );
 
   return {
@@ -1980,6 +2059,7 @@ export function collectOperationalEvidence(
     regimeSharpe,
     ttlFilter,
     marketDiscovery,
+    pnlHeartbeat,
     metrics,
   };
 }

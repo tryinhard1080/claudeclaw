@@ -6,6 +6,7 @@ import {
   pruneOldPrices,
   scanWrite,
   recordPolymarketSignalSourceFreshness,
+  recordTtlShadowSourceFreshness,
 } from './market-scanner.js';
 import { getPriceApproxHoursAgo } from './price-history.js';
 import type { Market } from './types.js';
@@ -271,5 +272,28 @@ describe('scanWrite (atomic upsert + capture + prune)', () => {
         usedBySignal: true,
       }),
     ]);
+  });
+
+  it('records TTL shadow freshness from the scanner path', () => {
+    const nowSec = 1_800_000_000;
+    recordTtlShadowSourceFreshness(db, nowSec, 600);
+
+    const row = db.prepare(
+      `SELECT source_name, last_success_at, stale_after_sec, used_by_signal
+         FROM source_freshness
+        WHERE source_name='poly-ttl-shadow'`,
+    ).get() as {
+      source_name: string;
+      last_success_at: number;
+      stale_after_sec: number;
+      used_by_signal: number;
+    } | undefined;
+
+    expect(row).toMatchObject({
+      source_name: 'poly-ttl-shadow',
+      last_success_at: nowSec,
+      stale_after_sec: 600,
+      used_by_signal: 0,
+    });
   });
 });

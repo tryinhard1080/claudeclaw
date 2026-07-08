@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   tokenizeSlug,
+  segmentNewsSummary,
   ensureTable,
   findIntersections,
   recordAndEmitAlerts,
@@ -94,6 +95,26 @@ describe('tokenizeSlug', () => {
   });
 });
 
+describe('segmentNewsSummary', () => {
+  it('uses RSS fallback bullet lines as individual match segments', () => {
+    expect(segmentNewsSummary([
+      'RSS fallback latest available headlines:',
+      '- Bitcoin rises after ETF inflows (CNBC, 1h old)',
+      '- Strait of Hormuz traffic returns to normal (CNBC, 2h old)',
+    ].join('\n'))).toEqual([
+      'Bitcoin rises after ETF inflows (CNBC, 1h old)',
+      'Strait of Hormuz traffic returns to normal (CNBC, 2h old)',
+    ]);
+  });
+
+  it('falls back to non-empty lines for non-bulleted summaries', () => {
+    expect(segmentNewsSummary('Fed holds rates.\n\nMarkets rally.')).toEqual([
+      'Fed holds rates.',
+      'Markets rally.',
+    ]);
+  });
+});
+
 describe('ensureTable', () => {
   it('creates the alerts table idempotently', () => {
     const db = freshDb();
@@ -127,6 +148,30 @@ describe('findIntersections', () => {
     expect(matches).toHaveLength(1);
     expect(matches[0]!.paper_trade_id).toBe(tradeId);
     expect(matches[0]!.matched_tokens.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('does not combine matched tokens across unrelated RSS fallback bullets', () => {
+    insertNews(db, [
+      'RSS fallback latest available headlines:',
+      '- Bitcoin holds steady after ETF flows.',
+      '- Analysts say prices could finish above prior expectations.',
+    ].join('\n'));
+    insertTrade(db, 'bitcoin-above-58k-on-june-30-2026');
+    const matches = findIntersections(db, { sinceSec: 0 });
+    expect(matches).toEqual([]);
+  });
+
+  it('returns the matching RSS bullet as the alert excerpt', () => {
+    insertNews(db, [
+      'RSS fallback latest available headlines:',
+      '- China currency-war op-ed leads the feed.',
+      '- Strait of Hormuz traffic returns to normal after shipping disruption.',
+    ].join('\n'));
+    insertTrade(db, 'strait-of-hormuz-traffic-returns-to-normal-by-end-of-june');
+    const matches = findIntersections(db, { sinceSec: 0 });
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.news_excerpt).toContain('Strait of Hormuz');
+    expect(matches[0]!.news_excerpt).not.toContain('China currency-war');
   });
 
   it('suppresses single-token matches', () => {
@@ -195,6 +240,7 @@ describe('recordAndEmitAlerts', () => {
       market_slug: 'foo-bar-baz', outcome_label: 'Yes',
       matched_tokens: ['foo', 'bar'],
       news_summary: 'foo bar appeared in news',
+      news_excerpt: 'foo bar appeared in news',
     };
     const r1 = await recordAndEmitAlerts(db, [m], sender);
     expect(r1.emitted).toBe(1);
@@ -216,6 +262,7 @@ describe('recordAndEmitAlerts', () => {
       market_slug: 'foo-bar', outcome_label: 'No',
       matched_tokens: ['foo', 'bar'],
       news_summary: 'x',
+      news_excerpt: 'x',
     };
     await recordAndEmitAlerts(db, [m], async () => {}, undefined, 1234567);
     const row = db.prepare(`SELECT * FROM poly_news_position_alerts`).get() as

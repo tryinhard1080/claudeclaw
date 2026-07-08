@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import {
   hashPrompt, extractSummary, isRefusalResponse, insertNewsItem, writeHeartbeat, readHeartbeat,
   runNewsSync, NEWS_SYNC_PROMPT, makePwmCliFetcher, parseRssItems, formatRssFallbackSummary,
-  isTradingRelevantRssItem, selectTradingRelevantRssItems,
+  isTradingRelevantRssItem, selectTradingRelevantRssItems, isToolErrorResponse,
   type PerplexityResponse, type PerplexityFetcher, type PwmRunner,
 } from './news-sync.js';
 
@@ -68,6 +68,7 @@ describe('isRefusalResponse', () => {
     expect(isRefusalResponse("I don't have real-time feeds in this moment")).toBe(true);
     expect(isRefusalResponse("I don't have access to real-time data")).toBe(true);
     expect(isRefusalResponse("I don\u2019t have live trading-news access in this chat")).toBe(true);
+    expect(isRefusalResponse("I can help, but I don\u2019t currently have live tool access to pull the very latest two-hour headlines.")).toBe(true);
     expect(isRefusalResponse("I can't pull the last 2 hours of headlines directly")).toBe(true);
     expect(isRefusalResponse("My training data only goes up to...")).toBe(true);
     expect(isRefusalResponse("I cannot provide real-time market updates")).toBe(true);
@@ -159,6 +160,14 @@ describe('RSS fallback helpers', () => {
     expect(summary).toContain('RSS fallback latest available headlines');
     expect(summary).toContain('SPY rises after macro data');
     expect(summary).toContain('1h old');
+  });
+});
+
+describe('isToolErrorResponse', () => {
+  it('detects parser/tool wrapper errors returned as text', () => {
+    expect(isToolErrorResponse("Error (ResponseParsingError): Failed to parse API response: Missing 'text' field in data")).toBe(true);
+    expect(isToolErrorResponse('Failed to parse API response')).toBe(true);
+    expect(isToolErrorResponse('SPY futures rise after Fed headline')).toBe(false);
   });
 });
 
@@ -287,6 +296,19 @@ describe('runNewsSync', () => {
     expect(readHeartbeat(db)).toBeNull();
   });
 
+  it('skips insert when live search returns a tool error and no fallback is configured', async () => {
+    const fetcher: PerplexityFetcher = async () => mockResponse(
+      "Error (ResponseParsingError): Failed to parse API response: Missing 'text' field in data",
+    );
+    const r = await runNewsSync(db, { apiKey: 'k', baseUrl: 'http://x', model: 'sonar', fetcher, nowSec: 2_000_000 });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/tool-error/);
+    expect(r.inserted).toBeUndefined();
+    const count = db.prepare(`SELECT COUNT(*) AS c FROM news_items`).get() as { c: number };
+    expect(count.c).toBe(0);
+    expect(readHeartbeat(db)).toBeNull();
+  });
+
   it('uses RSS fallback when the default live-search fetcher returns a refusal', async () => {
     const refusal = "I don't have live trading-news access right now.";
     const fetcher: PerplexityFetcher = async () => mockResponse(refusal, { model: 'sonar' });
@@ -307,6 +329,56 @@ describe('runNewsSync', () => {
     expect(r.ok).toBe(true);
     expect(r.inserted!.model).toBe('rss-fallback');
     expect(r.inserted!.summary).toContain('RSS fallback');
+    expect(readHeartbeat(db)).toBe(2_000_000);
+  });
+
+  it('uses RSS fallback when live search returns a live-tool-access refusal', async () => {
+    const refusal = "I can help, but I don\u2019t currently have live tool access to pull the very latest two-hour headlines.";
+    const fetcher: PerplexityFetcher = async () => mockResponse(refusal, { model: 'sonar' });
+    const fallbackFetcher: PerplexityFetcher = async () => mockResponse(
+      'RSS fallback latest available headlines:\n- SPY rises after Fed headline (CNBC, 1h old)',
+      { model: 'rss-fallback' },
+    );
+
+    const r = await runNewsSync(db, {
+      apiKey: 'k',
+      baseUrl: 'http://x',
+      model: 'sonar',
+      fetcher,
+      fallbackFetcher,
+      nowSec: 2_000_000,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(r.inserted!.model).toBe('rss-fallback');
+    expect(r.inserted!.summary).toContain('RSS fallback');
+    expect(r.inserted!.summary).not.toContain('live tool access');
+    expect(readHeartbeat(db)).toBe(2_000_000);
+  });
+
+  it('uses RSS fallback when live search returns a tool error', async () => {
+    const fetcher: PerplexityFetcher = async () => mockResponse(
+      "Error (ResponseParsingError): Failed to parse API response: Missing 'text' field in data",
+      { model: 'sonar' },
+    );
+    const fallbackFetcher: PerplexityFetcher = async () => mockResponse(
+      'RSS fallback latest available headlines:\n- Fed headline (CNBC, 1h old)',
+      { model: 'rss-fallback' },
+    );
+
+    const r = await runNewsSync(db, {
+      apiKey: 'k',
+      baseUrl: 'http://x',
+      model: 'sonar',
+      fetcher,
+      fallbackFetcher,
+      nowSec: 2_000_000,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(r.inserted!.model).toBe('rss-fallback');
+    expect(r.inserted!.summary).toContain('RSS fallback');
+    expect(r.inserted!.summary).not.toContain('ResponseParsingError');
     expect(readHeartbeat(db)).toBe(2_000_000);
   });
 

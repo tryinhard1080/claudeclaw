@@ -87,6 +87,8 @@ describe('operational evidence', () => {
     });
     expect(evidence.openPnlAttribution.worstOpenTradePnlPct).toBeCloseTo(-2 / 30, 6);
     expect(evidence.openTrades).toBe(3);
+    expect(evidence.openTradeSlotsAvailable).toBe(evidence.maxOpenTrades - 3);
+    expect(evidence.openTradeSlotUtilizationPct).toBeCloseTo(3 / evidence.maxOpenTrades, 6);
     expect(evidence.voidedTrades).toBe(1);
     expect(evidence.openExposureUsd).toBe(65);
     expect(evidence.potentialSettledTrades).toBe(5);
@@ -150,6 +152,39 @@ describe('operational evidence', () => {
     expect(evidence.freshCount).toBe(2);
     expect(evidence.allOpenFull).toBe(true);
     expect(evidence.maxAgeSec).toBe(60);
+    expect(evidence.instances.map(row => row.state)).toEqual(['fresh_open_full', 'fresh_open_full']);
+  });
+
+  it('summarizes live equity state sync from current last_regime runtime files', () => {
+    const evidence = collectEquitySyncEvidence(REGULAR_SESSION_NOW, {
+      instanceNames: ['spy-aggressive', 'spy-conservative'],
+      freshSec: 900,
+      readState: (instance) => ({
+        raw: JSON.stringify({
+          market_open: true,
+          equity: instance === 'spy-aggressive' ? 105267.96 : 100500,
+          cash: 89067.6,
+          last_regime: 'WEAK_BULL',
+          risk: { daily_dd_pct: 0, peak_dd_pct: 0.01, leverage: 1, circuit_breakers: {} },
+          positions: [],
+          recent_signals: [{
+            time: '2026-06-26T19:55:00.000Z',
+            symbol: 'SPY',
+            regime: 'WEAK_BULL',
+            confidence: 0.75,
+            vol_rank: 0.31,
+            target_allocation: 0.6,
+            approved_allocation: 0.15,
+          }],
+        }),
+        mtimeMs: (REGULAR_SESSION_NOW - (instance === 'spy-aggressive' ? 30 : 60)) * 1000,
+      }),
+    });
+
+    expect(evidence.status).toBe('pass');
+    expect(evidence.freshCount).toBe(2);
+    expect(evidence.allOpenFull).toBe(true);
+    expect(evidence.instances.every(row => row.hasRegime)).toBe(true);
     expect(evidence.instances.map(row => row.state)).toEqual(['fresh_open_full', 'fresh_open_full']);
   });
 
@@ -458,6 +493,7 @@ describe('operational evidence', () => {
     const mem = db();
     mem.exec(`
       CREATE TABLE poly_paper_trades (
+        id INTEGER PRIMARY KEY,
         created_at INTEGER NOT NULL,
         market_slug TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -466,6 +502,11 @@ describe('operational evidence', () => {
       );
       CREATE TABLE poly_markets (slug TEXT PRIMARY KEY, end_date INTEGER NOT NULL);
       CREATE TABLE poly_signals (created_at INTEGER NOT NULL, approved INTEGER NOT NULL);
+      CREATE TABLE poly_positions (
+        paper_trade_id INTEGER NOT NULL,
+        unrealized_pnl REAL NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
       CREATE TABLE regime_sharpe_snapshots (
         instance TEXT NOT NULL,
         snapshot_date TEXT NOT NULL,
@@ -496,10 +537,11 @@ describe('operational evidence', () => {
         market_count INTEGER,
         status TEXT NOT NULL
       );
-      INSERT INTO poly_paper_trades(created_at, market_slug, status, size_usd, realized_pnl) VALUES
-        (${NOW - 100}, 'open-soon', 'open', 50, NULL);
+      INSERT INTO poly_paper_trades(id, created_at, market_slug, status, size_usd, realized_pnl) VALUES
+        (1, ${NOW - 100}, 'open-soon', 'open', 50, NULL);
       INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 2 * 86400});
       INSERT INTO poly_signals(created_at, approved) VALUES (${NOW - 90}, 1);
+      INSERT INTO poly_positions(paper_trade_id, unrealized_pnl, updated_at) VALUES (1, 0, ${NOW - 30});
       INSERT INTO regime_sharpe_snapshots(instance, snapshot_date, equity, daily_return, n_days, rolling_sharpe_60d, created_at) VALUES
         ('spy-aggressive', '2026-05-30', 100000, NULL, 7, 1.1, ${NOW - 86400}),
         ('spy-aggressive', '2026-05-31', 104000, 0.04, 8, 1.2, ${NOW - 30});
@@ -572,6 +614,12 @@ describe('operational evidence', () => {
     expect(payload.metrics.find(metric => metric.key === 'equity_benchmark_edge')?.status).toBe('pass');
     expect(payload.equityBenchmark?.minExcessReturn).toBeCloseTo(0.03, 6);
     expect(payload.metrics.find(metric => metric.key === 'polymarket_mark_to_market')?.status).toBe('pass');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_pnl_heartbeat')).toMatchObject({
+      status: 'pass',
+      state: 'fresh',
+      current: 1,
+      target: 1,
+    });
     expect(payload.metrics.find(metric => metric.key === 'polymarket_open_book_quality')).toMatchObject({
       status: 'pass',
       state: 'all_inside_current_filters',
@@ -590,6 +638,81 @@ describe('operational evidence', () => {
     mem.close();
   });
 
+  it('keeps a full unsettled Box 2 pipeline in warning state', () => {
+    const mem = db();
+    const trades = Array.from({ length: 50 }, (_, index) => {
+      const id = index + 1;
+      return `(${id}, ${NOW - 3600}, 'open-${id}', 'open', 50, NULL)`;
+    }).join(',\n        ');
+    const markets = Array.from({ length: 50 }, (_, index) => {
+      const id = index + 1;
+      return `('open-${id}', ${NOW + 10 * 86400})`;
+    }).join(',\n        ');
+    const positions = Array.from({ length: 50 }, (_, index) => {
+      const id = index + 1;
+      return `(${id}, 0, ${NOW - 60})`;
+    }).join(',\n        ');
+
+    mem.exec(`
+      CREATE TABLE poly_paper_trades (
+        id INTEGER PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        market_slug TEXT NOT NULL,
+        status TEXT NOT NULL,
+        size_usd REAL,
+        realized_pnl REAL
+      );
+      CREATE TABLE poly_markets (
+        slug TEXT PRIMARY KEY,
+        end_date INTEGER NOT NULL
+      );
+      CREATE TABLE poly_signals (
+        created_at INTEGER NOT NULL,
+        approved INTEGER NOT NULL
+      );
+      CREATE TABLE poly_positions (
+        paper_trade_id INTEGER NOT NULL,
+        unrealized_pnl REAL NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      INSERT INTO poly_paper_trades(id, created_at, market_slug, status, size_usd, realized_pnl) VALUES
+        ${trades};
+      INSERT INTO poly_markets(slug, end_date) VALUES
+        ${markets};
+      INSERT INTO poly_positions(paper_trade_id, unrealized_pnl, updated_at) VALUES
+        ${positions};
+    `);
+
+    const payload = collectOperationalEvidence(mem, NOW);
+
+    expect(payload.polymarket.settledTrades).toBe(0);
+    expect(payload.polymarket.nearTermPotentialSettledTrades).toBe(50);
+    expect(payload.polymarket.nearTermVelocityState).toBe('activity_filled_waiting_for_settlements');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_box2_learning_velocity')).toMatchObject({
+      status: 'warn',
+      state: 'activity_filled_waiting_for_settlements',
+      current: 50,
+      target: 1,
+    });
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_box2_learning_velocity')?.detail)
+      .toContain('settled 0/50; realized P&L 0.00');
+    expect(payload.polymarket.openTradeSlotsAvailable).toBe(0);
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_paper_slot_pressure')).toMatchObject({
+      status: 'warn',
+      state: 'slots_full_waiting_for_settlements',
+      current: 50,
+    });
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_paper_slot_pressure')?.detail)
+      .toContain('0 available');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_pnl_heartbeat')).toMatchObject({
+      status: 'pass',
+      state: 'fresh',
+      current: 50,
+      target: 50,
+    });
+    mem.close();
+  });
+
   it('handles missing evidence tables as explicit incomplete states', () => {
     const mem = db();
 
@@ -603,6 +726,10 @@ describe('operational evidence', () => {
     expect(payload.ttlFilter.latestAt).toBeNull();
     expect(payload.metrics.find(metric => metric.key === 'polymarket_signal_flow')?.status).toBe('fail');
     expect(payload.metrics.find(metric => metric.key === 'polymarket_market_discovery')?.status).toBe('fail');
+    expect(payload.metrics.find(metric => metric.key === 'polymarket_pnl_heartbeat')).toMatchObject({
+      status: 'fail',
+      state: 'schema_issue',
+    });
     mem.close();
   });
 
@@ -610,6 +737,7 @@ describe('operational evidence', () => {
     const mem = db();
     mem.exec(`
       CREATE TABLE poly_paper_trades (
+        id INTEGER PRIMARY KEY,
         created_at INTEGER NOT NULL,
         market_slug TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -618,6 +746,11 @@ describe('operational evidence', () => {
       );
       CREATE TABLE poly_markets (slug TEXT PRIMARY KEY, end_date INTEGER NOT NULL);
       CREATE TABLE poly_signals (created_at INTEGER NOT NULL, approved INTEGER NOT NULL);
+      CREATE TABLE poly_positions (
+        paper_trade_id INTEGER NOT NULL,
+        unrealized_pnl REAL NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
       CREATE TABLE regime_sharpe_snapshots (
         instance TEXT NOT NULL,
         snapshot_date TEXT NOT NULL,
@@ -648,10 +781,11 @@ describe('operational evidence', () => {
         market_count INTEGER,
         status TEXT NOT NULL
       );
-      INSERT INTO poly_paper_trades(created_at, market_slug, status, size_usd, realized_pnl) VALUES
-        (${NOW - 100}, 'open-soon', 'open', 50, NULL);
+      INSERT INTO poly_paper_trades(id, created_at, market_slug, status, size_usd, realized_pnl) VALUES
+        (1, ${NOW - 100}, 'open-soon', 'open', 50, NULL);
       INSERT INTO poly_markets(slug, end_date) VALUES ('open-soon', ${NOW + 2 * 86400});
       INSERT INTO poly_signals(created_at, approved) VALUES (${NOW - 90}, 1);
+      INSERT INTO poly_positions(paper_trade_id, unrealized_pnl, updated_at) VALUES (1, 0, ${NOW - 30});
       INSERT INTO regime_sharpe_snapshots(instance, snapshot_date, equity, daily_return, n_days, rolling_sharpe_60d, created_at) VALUES
         ('spy-aggressive', '2026-05-30', 100000, NULL, 7, 1.1, ${NOW - 86400}),
         ('spy-aggressive', '2026-05-31', 104000, 0.04, 8, 1.2, ${NOW - 30});

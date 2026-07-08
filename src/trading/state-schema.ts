@@ -12,6 +12,26 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function latestSignalRegime(raw: { recent_signals?: unknown }): string | null {
+  const signals = raw.recent_signals;
+  if (!Array.isArray(signals)) return null;
+  for (let index = signals.length - 1; index >= 0; index -= 1) {
+    const signal = signals[index];
+    if (isRecord(signal) && isNonEmptyString(signal.regime)) return signal.regime;
+  }
+  return null;
+}
+
+function hasRegimeLabelSource(raw: Record<string, unknown>): boolean {
+  return isRecord(raw.regime)
+    || isNonEmptyString(raw.last_regime)
+    || latestSignalRegime(raw) !== null;
+}
+
 function requireField(record: Record<string, unknown>, key: string, predicate: (value: unknown) => boolean): string | null {
   return predicate(record[key]) ? null : `${key} is required`;
 }
@@ -35,7 +55,7 @@ export function parseInstanceState(raw: unknown): InstanceStateParseResult {
   }
 
   const openChecks = [
-    requireField(raw, 'regime', isRecord),
+    hasRegimeLabelSource(raw) ? null : 'regime label is required',
     requireField(raw, 'risk', isRecord),
     requireField(raw, 'positions', Array.isArray),
     requireField(raw, 'recent_signals', Array.isArray),
@@ -59,4 +79,19 @@ export function isFullRegimeState(state: InstanceState): state is FullRegimeInst
     Array.isArray(state.positions) &&
     Array.isArray(state.recent_signals),
   );
+}
+
+export function getRegimeLabel(state: InstanceState): string | null {
+  return state.regime?.label
+    ?? state.regime?.regime
+    ?? (isNonEmptyString(state.last_regime) ? state.last_regime : null)
+    ?? latestSignalRegime(state);
+}
+
+export function getRegimeTargetAllocation(state: InstanceState): number | null {
+  const latestSignal = state.recent_signals?.at(-1);
+  const value = state.regime?.target_allocation
+    ?? latestSignal?.approved_allocation
+    ?? latestSignal?.target_allocation;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }

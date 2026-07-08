@@ -61,7 +61,11 @@ Then run the operational status check:
 npm run trading:status
 ```
 
-Expected after OAuth: Financial Datasets MCP should move from `WARN needs_auth` to `PASS connected`.
+Expected without OAuth: Financial Datasets MCP stays visible as `PASS needs_auth`
+or `PASS missing` because it is advisory-only research context, not a trading
+execution blocker.
+
+Expected after OAuth: Financial Datasets MCP should report `PASS connected`.
 
 ## Allowed Influence
 

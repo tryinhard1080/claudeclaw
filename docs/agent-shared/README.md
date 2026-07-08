@@ -85,17 +85,21 @@ gate checkbox plus Richard's written operator sign-off.
 
 ## Current Live-Money Blockers
 
-As of the latest readiness baseline on 2026-06-01, system blockers are zero.
-The remaining blockers are evidence/operator gates:
+As of the latest readiness baseline on 2026-06-16, system blockers are zero.
+Box 1 is now accepted in `MISSION.md` as elapsed paper-clock evidence. Real
+money is still blocked by evidence and final sign-off:
 
-- Box 1: elapsed paper-clock evidence is ready, but the `MISSION.md` checkbox
-  still needs operator review.
-- Box 2: Polymarket paper trades are `0/50` settled, with `20/50` potential
-  after the current open book and `30` additional resolved trades still needed.
-  Near-term capacity is `14/50` due within 30 days, so `36` more near-term
-  resolved trades are still needed for a faster learning sample.
-- Box 3: regime-trader Sharpe evidence is `8/60` sample days.
-- Box 7: Richard's final written live-money sign-off is still pending.
+- Box 2: Polymarket paper trades are `0/50` settled with `$0.00` realized P&L,
+  `20` open, and `67` voided. The current open book can cover at most `20/50`
+  potential settled trades, so `30` additional resolved trade opportunities are
+  still needed after the current book.
+- Box 3: regime-trader Sharpe evidence is `19/60` sample days. Current Sharpe
+  is positive for both instances, but the 60-day gate is not complete.
+- Box 7: Richard's final written live-money sign-off is still pending. Earlier
+  A1/A2/A3 entries were interim operating decisions, not final Box 7 approval.
+
+Financial Datasets MCP remains advisory-only. Missing or needs-auth MCP state is
+visible in status output, but it is not a trading execution blocker.
 
 ## Required Checks
 

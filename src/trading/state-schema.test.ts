@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getRegimeLabel,
+  getRegimeTargetAllocation,
   isClosedUntilNextOpen,
   isFullRegimeState,
   parseInstanceState,
@@ -13,12 +15,10 @@ const fullOpenState = {
   cash: 99000,
   buying_power: 99000,
   regime: {
-    bar: 1,
-    date: '2026-05-11T13:35:00.000Z',
-    regime: 'STRONG_BULL',
+    label: 'STRONG_BULL',
     confidence: 0.82,
     vol_rank: 0.4,
-    target_allocation: 0.7,
+    stability: true,
   },
   risk: {
     daily_dd_pct: 0.01,
@@ -27,7 +27,16 @@ const fullOpenState = {
     circuit_breakers: { max_loss: false },
   },
   positions: [],
-  recent_signals: [],
+  recent_signals: [{
+    time: '2026-05-11T13:35:00.000Z',
+    symbol: 'SPY',
+    regime: 'STRONG_BULL',
+    confidence: 0.82,
+    vol_rank: 0.4,
+    target_allocation: 0.7,
+    action: 'modified',
+    approved_allocation: 0.15,
+  }],
 };
 
 describe('parseInstanceState', () => {
@@ -37,6 +46,8 @@ describe('parseInstanceState', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(isFullRegimeState(result.state)).toBe(true);
+      expect(getRegimeLabel(result.state)).toBe('STRONG_BULL');
+      expect(getRegimeTargetAllocation(result.state)).toBe(0.15);
     }
   });
 
@@ -52,6 +63,39 @@ describe('parseInstanceState', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(isFullRegimeState(result.state)).toBe(false);
+    }
+  });
+
+  it('accepts current open-market runtime state with last_regime as the label source', () => {
+    const result = parseInstanceState({
+      mode: 'paper',
+      market_open: true,
+      equity: 105267.96,
+      cash: 89067.6,
+      last_regime: 'WEAK_BULL',
+      risk: {
+        daily_dd_pct: 0,
+        peak_dd_pct: 0.01,
+        leverage: 1,
+        circuit_breakers: { max_loss: false },
+      },
+      positions: [],
+      recent_signals: [{
+        time: '2026-06-26T19:55:00.000Z',
+        symbol: 'SPY',
+        regime: 'WEAK_BULL',
+        confidence: 0.75,
+        vol_rank: 0.31,
+        target_allocation: 0.6,
+        approved_allocation: 0.15,
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(isFullRegimeState(result.state)).toBe(false);
+      expect(getRegimeLabel(result.state)).toBe('WEAK_BULL');
+      expect(getRegimeTargetAllocation(result.state)).toBe(0.15);
     }
   });
 

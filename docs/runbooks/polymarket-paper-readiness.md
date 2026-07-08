@@ -16,6 +16,7 @@ Run this before claiming the Polymarket paper bot is operational, after scanner/
 ```powershell
 npx tsx scripts/poly-qa-smoke.ts
 npm run poly:paper:status
+npm run poly:resolution:watch
 ```
 
 Optional paid evaluator check:
@@ -47,8 +48,9 @@ Do not design or enable live-capital work until all of these are true:
 - Halt/resume drill passes.
 - DB backup/restore drill passes.
 - `npm run poly:paper:status` has no FAIL rows.
+- `npm run poly:resolution:watch` has no FAIL rows.
 
-Warnings are allowed only when they are explicitly understood and logged. A zero-position warning is normal before the bot has found a qualified trade. A halt flag failure is blocking.
+Warnings are allowed only when they are explicitly understood and logged. A zero-position warning is normal before the bot has found a qualified trade. A halt flag failure is blocking. A resolution-watch failure is blocking because it means settled-P&L accounting may be stale.
 
 ## No-Go Rule
 

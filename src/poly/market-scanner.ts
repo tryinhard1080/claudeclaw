@@ -140,6 +140,7 @@ export class MarketScanner extends EventEmitter {
         const partition = partitionByTtl(shadowCandidates, band, tickSec);
         const tickStats = summarizeTick(partition, tickSec);
         recordTtlShadowTick(this.db, tickStats, band, tickSec);
+        recordTtlShadowSourceFreshness(this.db, tickSec, Math.ceil(this.intervalMs / 1000) * 2);
       } catch (e) {
         logger.warn({ err: String(e) }, 'recordTtlShadowTick failed');
       }
@@ -260,6 +261,20 @@ export function recordPolymarketSignalSourceFreshness(
     success: true,
     staleAfterSec,
     usedBySignal: true,
+  });
+}
+
+export function recordTtlShadowSourceFreshness(
+  db: Database.Database,
+  fetchedAt: number,
+  staleAfterSec: number,
+): void {
+  recordSourceFreshness(db, {
+    sourceName: 'poly-ttl-shadow',
+    fetchedAt,
+    success: true,
+    staleAfterSec,
+    usedBySignal: false,
   });
 }
 

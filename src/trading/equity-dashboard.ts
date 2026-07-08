@@ -32,6 +32,9 @@ interface RegimeSignal {
   action?: string;
   approved_allocation?: number;
   rejection_reason?: string;
+  reason?: string;
+  reject_reason?: string;
+  risk_rejection?: string;
 }
 
 interface RegimeState {
@@ -94,6 +97,8 @@ export interface EquityBrokerSnapshot {
   positions: EquityPosition[];
   recentOrders: EquityOrder[];
   source: 'alpaca';
+  paperTrading: boolean;
+  baseUrl: string;
   error?: string;
 }
 
@@ -101,11 +106,16 @@ export interface EquityInstanceSummary {
   id: InstanceName;
   label: string;
   role: 'active' | 'shadow';
+  mode: string | null;
   status: 'online' | 'stale' | 'missing';
   executionEnabled: boolean;
   marketOpen: boolean;
   updatedAt: string | null;
   ageSec: number | null;
+  latestSignalAt: string | null;
+  latestSignalAgeSec: number | null;
+  latestRejectionReason: string | null;
+  sessionTrades: number;
   equity: number;
   cash: number;
   buyingPower: number;
@@ -254,6 +264,13 @@ function latestSignal(state: RegimeState | null | undefined): RegimeSignal | nul
   return signals.length > 0 ? signals[signals.length - 1]! : null;
 }
 
+function firstNonEmptyString(values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  }
+  return null;
+}
+
 function summarizeInstance(
   id: InstanceName,
   state: RegimeState | null | undefined,
@@ -268,6 +285,17 @@ function summarizeInstance(
   const approvedAllocation = nullableNum(signal?.approved_allocation);
   const referenceAllocation = approvedAllocation ?? targetAllocation;
   const ageSec = stateMtime ? Math.max(0, Math.round((nowMs - stateMtime) / 1000)) : null;
+  const latestSignalAt = typeof signal?.time === 'string' ? signal.time : null;
+  const latestSignalMs = latestSignalAt ? Date.parse(latestSignalAt) : Number.NaN;
+  const latestSignalAgeSec = Number.isFinite(latestSignalMs)
+    ? Math.max(0, Math.round((nowMs - latestSignalMs) / 1000))
+    : null;
+  const latestRejectionReason = firstNonEmptyString([
+    signal?.rejection_reason,
+    signal?.reject_reason,
+    signal?.risk_rejection,
+    signal?.reason,
+  ]);
   const status: EquityInstanceSummary['status'] = !state
     ? 'missing'
     : ageSec !== null && ageSec > 30 * 60
@@ -278,11 +306,16 @@ function summarizeInstance(
     id,
     label: id === 'spy-aggressive' ? 'SPY Aggressive' : 'SPY Conservative',
     role: state?.execution_enabled === false ? 'shadow' : 'active',
+    mode: state?.mode ?? null,
     status,
     executionEnabled: state?.execution_enabled !== false,
     marketOpen: state?.market_open === true,
     updatedAt: state?.updated_at ?? null,
     ageSec,
+    latestSignalAt,
+    latestSignalAgeSec,
+    latestRejectionReason,
+    sessionTrades: num(state?.session_trades),
     equity,
     cash: num(state?.cash),
     buyingPower: num(state?.buying_power),
@@ -327,6 +360,8 @@ export function buildEquityDashboardPayload(args: BuildEquityDashboardPayloadArg
     : null;
   const status: OpsStatus = instances.some(instance => instance.status === 'missing')
     ? 'fail'
+    : broker && !broker.paperTrading
+      ? 'fail'
     : !broker
       ? 'warn'
       : instances.some(instance => instance.status === 'stale')
@@ -337,7 +372,7 @@ export function buildEquityDashboardPayload(args: BuildEquityDashboardPayloadArg
     generatedAt: args.generatedAt ?? Math.floor(nowMs / 1000),
     status,
     detail: broker
-      ? `${broker.status || 'unknown'}; ${position ? `${position.qty} ${position.symbol}` : 'no broker position'}`
+      ? `${broker.status || 'unknown'}; ${broker.paperTrading ? 'paper' : 'non-paper'} endpoint; ${position ? `${position.qty} ${position.symbol}` : 'no broker position'}`
       : 'broker snapshot unavailable; using regime-trader state files',
     strategy: {
       name: 'HMM volatility-regime SPY allocation',
@@ -397,7 +432,7 @@ export async function fetchAlpacaBrokerSnapshot(
   const secret = env.ALPACA_SECRET_KEY;
   if (!apiKey || !secret) return null;
 
-  const base = env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+  const base = env.ALPACA_BASE_URL || env.APCA_API_BASE_URL || 'https://paper-api.alpaca.markets';
   const headers = {
     'APCA-API-KEY-ID': apiKey,
     'APCA-API-SECRET-KEY': secret,
@@ -425,6 +460,8 @@ export async function fetchAlpacaBrokerSnapshot(
       positions,
       recentOrders,
       source: 'alpaca',
+      paperTrading: base.includes('paper-api'),
+      baseUrl: base,
     };
   } catch (error) {
     return {
@@ -436,6 +473,8 @@ export async function fetchAlpacaBrokerSnapshot(
       positions: [],
       recentOrders: [],
       source: 'alpaca',
+      paperTrading: base.includes('paper-api'),
+      baseUrl: base,
       error: String(error).slice(0, 160),
     };
   }
@@ -473,4 +512,3 @@ export async function collectEquityDashboardPayload(options: {
     broker,
   });
 }
-

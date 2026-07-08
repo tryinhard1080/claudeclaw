@@ -4,7 +4,7 @@ import { EventEmitter } from 'events';
 
 import { logger } from '../logger.js';
 import type { InstanceState } from './types.js';
-import { isClosedUntilNextOpen, parseInstanceState } from './state-schema.js';
+import { getRegimeLabel, isClosedUntilNextOpen, parseInstanceState } from './state-schema.js';
 
 const DEFAULT_STALENESS_MS = 60 * 60 * 1000; // 1 hour
 
@@ -101,18 +101,19 @@ export class StatePoller extends EventEmitter {
 
       // Detect regime change
       const prevRegime = this.previousRegimes.get(name);
-      if (state.regime && prevRegime !== undefined && prevRegime !== state.regime.regime) {
+      const currentRegime = getRegimeLabel(state);
+      if (currentRegime && prevRegime !== undefined && prevRegime !== currentRegime) {
         const event: RegimeChangeEvent = {
           instance: name,
           from: prevRegime,
-          to: state.regime.regime,
-          confidence: state.regime.confidence,
+          to: currentRegime,
+          confidence: state.regime?.confidence ?? 0,
         };
         this.emit('regime_change', event);
         logger.info(event, 'Regime change detected');
       }
-      if (state.regime) {
-        this.previousRegimes.set(name, state.regime.regime);
+      if (currentRegime) {
+        this.previousRegimes.set(name, currentRegime);
       }
 
       // Detect circuit breaker activations (only fire on NEW activations)

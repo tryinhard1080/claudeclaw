@@ -63,9 +63,16 @@ export function isRefusalResponse(text: string): boolean {
     "don't have access to real-time",
     "don't have live",
     "do not have live",
+    "don't currently have live",
+    "do not currently have live",
     "don't have access to live",
+    "don't currently have access to live",
+    "do not currently have access to live",
     "no access to real-time",
+    "no live tool access",
+    "live tool access to pull",
     "no live trading-news access",
+    "pull the very latest",
     "can't pull the last",
     "cannot pull the last",
     "can't provide real-time",
@@ -75,6 +82,21 @@ export function isRefusalResponse(text: string): boolean {
     "my training data",
     "i'm unable to access current",
     "unable to access real-time",
+  ];
+  return patterns.some((p) => lower.includes(p));
+}
+
+/**
+ * Detects tool or MCP wrapper failures that arrive as normal text answers.
+ * These are not news and must not refresh source-freshness evidence.
+ */
+export function isToolErrorResponse(text: string): boolean {
+  const lower = text.toLowerCase();
+  const patterns = [
+    'responseparsingerror',
+    'failed to parse api response',
+    "missing 'text' field",
+    'missing "text" field',
   ];
   return patterns.some((p) => lower.includes(p));
 }
@@ -463,22 +485,28 @@ export async function runNewsSync(
     return { ok: false, reason: `parse failed: ${String(err).slice(0, 200)}` };
   }
 
-  if (isRefusalResponse(summary)) {
+  const unusableReason = isRefusalResponse(summary)
+    ? 'sonar-refusal'
+    : isToolErrorResponse(summary)
+      ? 'tool-error'
+      : null;
+
+  if (unusableReason) {
     const fallbackFetcher = config.fallbackFetcher === undefined
       ? (config.fetcher ? null : rssFallbackFetcher)
       : config.fallbackFetcher;
     if (!fallbackFetcher) {
-      return { ok: false, reason: `sonar-refusal: model declined real-time search (not inserted)` };
+      return { ok: false, reason: `${unusableReason}: live-search output unusable (not inserted)` };
     }
 
     try {
       raw = await fallbackFetcher({ prompt, apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model });
       summary = extractSummary(raw);
-      if (isRefusalResponse(summary)) {
-        return { ok: false, reason: `sonar-refusal: fallback also declined real-time search (not inserted)` };
+      if (isRefusalResponse(summary) || isToolErrorResponse(summary)) {
+        return { ok: false, reason: `${unusableReason}: fallback also returned unusable output (not inserted)` };
       }
     } catch (err) {
-      return { ok: false, reason: `sonar-refusal: RSS fallback failed: ${String(err).slice(0, 160)}` };
+      return { ok: false, reason: `${unusableReason}: RSS fallback failed: ${String(err).slice(0, 160)}` };
     }
   }
 

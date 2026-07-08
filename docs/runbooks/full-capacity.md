@@ -28,6 +28,10 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
    npm run readiness:evidence
    npm run readiness:evidence:record
    npm run readiness:evidence:cron
+   npm run poly:resolution:watch
+   npm run poly:settlement:impact
+   npm run poly:open-mtm
+   npm run scheduler:status
    npm run gate:audit
    npm run capacity:status
    ```
@@ -80,8 +84,8 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   latest stored benchmark rows.
 - `npm run gate:status` reports real-money gate progress and source freshness rows.
   Box 1 should show either `clock_running`, `elapsed_review_ready`, or
-  `mission_checked`; `elapsed_review_ready` is evidence for review, not live
-  authorization.
+  `mission_checked`; `mission_checked` closes only the paper-clock evidence
+  gate, not final live-money authorization.
 - `npm run gate:audit` classifies every open real-money gate as operator action,
   sample/time blocker, or system blocker. `system_blocker` count must be `0`
   before any live-money review, and `Live-money ready` must stay `NO` until all
@@ -126,6 +130,23 @@ Run this when Richard asks whether ClaudeClaw is fully baked, at full capacity, 
   first-page cap of `100`; the `Market discovery depth` row should be PASS near
   the widened target. If it warns, check `src/poly/gamma-client.ts` and the
   latest `fetchActiveMarkets` live probe.
+- `npm run poly:resolution:watch` reports `PASS` or `WARN`, never `FAIL`,
+  before any live-money review. `FAIL` means an open paper trade is past the
+  resolution grace window or the resolution cache says a market is closed while
+  the trade is still open. Fix resolution fetch/reconcile before judging
+  Polymarket profitability.
+- `npm run poly:settlement:impact` reports how many open paper trades are due
+  inside the next 7 days, how far that can move Box 2 settled-trade sample
+  count, and the realized P&L range if the held outcomes all win or all lose.
+  This is read-only observability, not a settlement command.
+- `npm run poly:open-mtm` reports where open paper mark-to-market drag is
+  concentrated: maturity bucket, current-filter pass/exception bucket,
+  low-confidence high-edge bucket, and the worst open marks. This is read-only
+  observability, not an exit, settlement, or strategy-parameter command.
+- `npm run scheduler:status` reports `Main-agent overdue tasks: none` and
+  shows the active settlement, readiness, and overnight monitor task IDs with
+  full next-run and last-run timestamps. Non-main overdue tasks are tracking
+  noise unless they own a trading monitor.
 - `npm run typecheck` passes after edits.
 - `npm test` passes after code or config changes that can affect behavior.
 - Any WARN row has a named owner, next action, and gate impact.
@@ -140,15 +161,17 @@ Full capacity does not mean real money. It means:
 - Future agents see only trading-aligned instructions.
 - External architecture ideas are documented as blueprints, not imported as uncontrolled dependencies.
 
-## Current Known WARNs
+## Current Known WARNs And Advisory States
 
-- Financial Datasets MCP may be missing from the active tool list. This blocks some research context, not trading execution.
+- Financial Datasets MCP may be missing or need OAuth in the active tool list.
+  Status output should keep it visible as advisory research context, not as a
+  trading execution blocker.
 - News sync source freshness may be stale until the Perplexity or equivalent
   news feed is re-authorized. RSS fallback freshness is valid only when it
   inserts trading-relevant headlines; filler personal-finance headlines should
   not refresh the source or trigger position intersections.
-- Box 1 can be `elapsed_review_ready` after the 30-day paper clock target. It
-  still stays a live-money blocker until the `MISSION.md` checkbox is closed.
+- Box 1 is `mission_checked` after Richard accepted the elapsed paper-clock
+  evidence on 2026-06-16. It does not authorize live money.
 - Polymarket Box 2 remains structurally constrained until resolved trade count
   improves. Use `npm run readiness:evidence` and the dashboard Evidence Path
   card to track settled count, current open-book capacity, additional resolved
@@ -156,6 +179,11 @@ Full capacity does not mean real money. It means:
   candidate velocity falls again, first verify the `Market discovery` evidence
   row is still seeing the widened volume-sorted window rather than one capped
   page.
+- Polymarket resolution watch, settlement-impact preview, open MTM
+  diagnostics, and scheduler status are now part of `npm run capacity:status`.
+  A due-soon row is not a blocker. An overdue-beyond-grace, closed-cache, or
+  main-agent overdue scheduler row is a system issue because it can make
+  profitability look unresolved after the market has already settled.
 - Legacy open-book quality WARNs can persist after filters are tightened. Treat
   them as audit visibility, not as permission to close or alter paper trades.
   New trades should increasingly show as inside the active TTL and quality
@@ -167,8 +195,10 @@ Full capacity does not mean real money. It means:
   review.
 - Strategy mark-to-market WARNs should be diagnosed with open-book P&L
   attribution before strategy changes. Review the winners/losers/flat split,
-  gross open win/loss, and worst open trade in `npm run readiness:evidence` and
-  the dashboard Evidence Path before changing strategy parameters.
+  gross open win/loss, and worst open trade in `npm run readiness:evidence`,
+  then use `npm run poly:open-mtm` to check whether the drag is concentrated in
+  due-window positions, legacy filter exceptions, or low-confidence high-edge
+  approvals before changing strategy parameters.
 - Active Polymarket TTL filtering is enabled locally after Richard's 2026-06-01 approval. Keep the TTL shadow report running as the comparison and rollback evidence path.
 - Regime-trader Sharpe has only a small sample until the 60-day clock completes.
 - Equity benchmark snapshot can skip cleanly when the closed-market

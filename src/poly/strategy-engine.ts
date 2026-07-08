@@ -132,6 +132,7 @@ export interface SelectCandidatesOpts {
   minMarketTtlDays?: number;
   maxMarketTtlDays?: number;
   marketQualityFilterEnabled?: boolean;
+  excludePositionKeys?: ReadonlySet<string>;
 }
 
 export function selectPriceCaptureCandidates(
@@ -146,6 +147,7 @@ export function selectPriceCaptureCandidates(
       if (m.endDate < minEnd) return false;
       const yes = m.outcomes.find(o => o.label.toLowerCase() === 'yes');
       if (!yes) return false;
+      if (opts.excludePositionKeys?.has(positionKey(m.slug, yes.tokenId))) return false;
       if (yes.price < opts.minYesPrice || yes.price > opts.maxYesPrice) return false;
       const quality = evaluateMarketQuality(m, {
         nowSec: opts.nowSec,
@@ -338,7 +340,7 @@ export class StrategyEngine extends EventEmitter {
     }
     this.running = true;
     try {
-      const candidates = this.selectCandidates(payload.markets);
+      const candidates = this.selectCandidates(payload.markets, tickSnap.openPositionKeys);
       for (const market of candidates) {
         await this.processMarket(market).catch(err =>
           logger.warn({ err: String(err), slug: market.slug }, 'processMarket failed'));
@@ -348,7 +350,7 @@ export class StrategyEngine extends EventEmitter {
     }
   }
 
-  private selectCandidates(markets: Market[]): Market[] {
+  private selectCandidates(markets: Market[], excludePositionKeys?: ReadonlySet<string>): Market[] {
     return selectPriceCaptureCandidates(markets, {
       nowSec: Math.floor(this.now() / 1000),
       minVolumeUsd: this.minVolumeUsd,
@@ -360,6 +362,7 @@ export class StrategyEngine extends EventEmitter {
       minMarketTtlDays: this.minMarketTtlDays,
       maxMarketTtlDays: this.maxMarketTtlDays,
       marketQualityFilterEnabled: this.marketQualityFilterEnabled,
+      excludePositionKeys,
     });
   }
 

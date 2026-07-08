@@ -22,7 +22,10 @@ export interface MinimalRegimeState {
   equity?: number;
   cash?: number;
   regime?: unknown;
+  last_regime?: unknown;
+  recent_signals?: unknown;
   risk?: unknown;
+  positions?: unknown;
 }
 
 export interface PolyScanRunLike {
@@ -48,6 +51,21 @@ function normalizePath(value: string | undefined): string {
 
 function statusRank(status: OpsStatus): number {
   return status === 'fail' ? 2 : status === 'warn' ? 1 : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasRegimeLabel(state: MinimalRegimeState): boolean {
+  if (isRecord(state.regime)) return true;
+  if (isNonEmptyString(state.last_regime)) return true;
+  if (!Array.isArray(state.recent_signals)) return false;
+  return state.recent_signals.some(signal => isRecord(signal) && isNonEmptyString(signal.regime));
 }
 
 export function worstStatus(checks: readonly OpsCheck[]): OpsStatus {
@@ -130,9 +148,9 @@ export function summarizeFinancialDatasetsMcp(output: string): OpsCheck {
   if (lineIndex < 0) {
     return {
       name: 'Financial Datasets MCP',
-      status: 'warn',
+      status: 'pass',
       state: 'missing',
-      detail: 'financial-datasets MCP was not listed',
+      detail: 'financial-datasets MCP was not listed; advisory-only research context, not trading execution',
     };
   }
 
@@ -146,9 +164,9 @@ export function summarizeFinancialDatasetsMcp(output: string): OpsCheck {
   if (/needs authentication/i.test(detail)) {
     return {
       name: 'Financial Datasets MCP',
-      status: 'warn',
+      status: 'pass',
       state: 'needs_auth',
-      detail,
+      detail: `${detail}; advisory-only research context, not trading execution`,
     };
   }
 
@@ -252,12 +270,12 @@ export function summarizeRegimeState(
       };
     }
 
-    if (state.regime && state.risk) {
+    if (hasRegimeLabel(state) && state.risk) {
       return {
         name: 'Regime Trader state',
         status: 'pass',
         state: 'open_full',
-        detail: 'open-market state includes regime and risk',
+        detail: 'open-market state includes regime label and risk',
       };
     }
     return {

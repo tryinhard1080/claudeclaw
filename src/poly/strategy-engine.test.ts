@@ -393,23 +393,64 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(evalCalls).toBe(0);
   });
 
-  it('rejects duplicate position on same slug::tokenId', async () => {
+  it('skips duplicate open positions before spending another evaluation', async () => {
+    let evalCalls = 0;
     const engine = new StrategyEngine({
       db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
       topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
-      evaluate: async () => mkEst(0.7),
+      evaluate: async () => { evalCalls++; return mkEst(0.7); },
       fetchBook: async () => mkBook(0.4, 1000),
     });
     await engine.onScanComplete({ markets: [mkMarket()] });
-    // second pass — existing open position should trigger gate 1.
     await engine.onScanComplete({ markets: [mkMarket()] });
 
     const rows = db.prepare(`SELECT approved, rejection_reasons FROM poly_signals ORDER BY id`).all() as Array<{ approved: number; rejection_reasons: string | null }>;
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(rows[0]!.approved).toBe(1);
-    expect(rows[1]!.approved).toBe(0);
-    const r = JSON.parse(rows[1]!.rejection_reasons!) as Array<{ gate: string; reason: string }>;
-    expect(r.some(x => x.gate === 'position_limits' && x.reason.includes('already open'))).toBe(true);
+    expect(evalCalls).toBe(1);
+  });
+
+  it('rotates past already-open high-volume markets before topN slicing', async () => {
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status)
+      VALUES (?, 'already-open', 'tok-open', 'Yes', 'BUY', 0.5, 50, 100, 0.25, 'ai-probability', 'open')`)
+      .run(Math.floor(Date.now() / 1000));
+
+    const seen: string[] = [];
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 1, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async ({ market }) => { seen.push(market.slug); return mkEst(0.7); },
+      fetchBook: async () => mkBook(0.4, 1000),
+    });
+
+    await engine.onScanComplete({
+      markets: [
+        mkMarket({
+          slug: 'already-open',
+          volume24h: 1_000_000,
+          outcomes: [
+            { label: 'Yes', tokenId: 'tok-open', price: 0.4 },
+            { label: 'No', tokenId: 'tok-open-no', price: 0.6 },
+          ],
+        }),
+        mkMarket({
+          slug: 'fresh-candidate',
+          volume24h: 900_000,
+          outcomes: [
+            { label: 'Yes', tokenId: 'tok-fresh', price: 0.4 },
+            { label: 'No', tokenId: 'tok-fresh-no', price: 0.6 },
+          ],
+        }),
+      ],
+    });
+
+    expect(seen).toEqual(['fresh-candidate']);
+    const row = db.prepare(`SELECT market_slug, approved FROM poly_signals`).get() as {
+      market_slug: string; approved: number;
+    };
+    expect(row).toMatchObject({ market_slug: 'fresh-candidate', approved: 1 });
   });
 
   it('only evaluates the Yes outcome (Phase C)', async () => {

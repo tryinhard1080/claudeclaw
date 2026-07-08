@@ -78,9 +78,41 @@ describe('gate1PositionLimits', () => {
     expect(r.reason).toMatch(/open_position_count/);
   });
 
+  it('passes at 20 open positions when paper cap is 30', () => {
+    const r = gate1PositionLimits(
+      mkSignal(),
+      mkPortfolio({ openPositionCount: 20, deployedUsd: 938.8 }),
+      40,
+      { ...baseConfig(), maxOpenPositions: 30 },
+    );
+    expect(r.passed).toBe(true);
+  });
+
+  it('rejects at 30 open positions when paper cap is 30', () => {
+    const r = gate1PositionLimits(
+      mkSignal(),
+      mkPortfolio({ openPositionCount: 30 }),
+      40,
+      { ...baseConfig(), maxOpenPositions: 30 },
+    );
+    expect(r.passed).toBe(false);
+    expect(r.reason).toMatch(/open_position_count 30 >= max 30/);
+  });
+
   it('rejects when deployed + size > max_deployed_pct * capital', () => {
     // 0.5 * 5000 = 2500 cap. deployed=2490, size=20 -> 2510 > 2500.
     const r = gate1PositionLimits(mkSignal(), mkPortfolio({ deployedUsd: 2490 }), 20, baseConfig());
+    expect(r.passed).toBe(false);
+    expect(r.reason).toMatch(/deployed/);
+  });
+
+  it('still rejects on deployed cap even with 30 open-position slots', () => {
+    const r = gate1PositionLimits(
+      mkSignal(),
+      mkPortfolio({ openPositionCount: 20, deployedUsd: 2490 }),
+      20,
+      { ...baseConfig(), maxOpenPositions: 30 },
+    );
     expect(r.passed).toBe(false);
     expect(r.reason).toMatch(/deployed/);
   });

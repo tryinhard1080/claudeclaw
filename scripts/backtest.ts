@@ -54,12 +54,12 @@ function printSweep(reports: BacktestReport[]): void {
   console.log('');
   console.log('Min-edge sweep:');
   console.log('');
-  console.log('  edge |  approved | skip0 | resolved |  win% |    P&L    | deployed | ROI%  | Brier');
-  console.log('  -----+-----------+-------+----------+-------+-----------+----------+-------+------');
+  console.log('  edge |  approved | skip0 |   open | voided | settled |  win% |    P&L    | deployed | ROI%  | Brier');
+  console.log('  -----+-----------+-------+--------+--------+---------+-------+-----------+----------+-------+------');
   for (const r of reports) {
     const br = r.brierScore === null ? '  n/a' : fmt(r.brierScore, 3);
     console.log(
-      `  ${String(r.minEdgePct).padStart(3)}pp |  ${String(r.approvedCount).padStart(8)} | ${String(r.skippedForZeroSize).padStart(5)} | ${String(r.resolvedCount).padStart(8)} | ${fmt(r.winRate * 100, 1).padStart(5)} | ${signedUsd(r.totalPnl).padStart(9)} | ${fmt(r.totalDeployed, 0).padStart(7)} | ${fmt(r.roiPct, 1).padStart(5)} | ${br}`,
+      `  ${String(r.minEdgePct).padStart(3)}pp |  ${String(r.approvedCount).padStart(8)} | ${String(r.skippedForZeroSize).padStart(5)} | ${String(r.openCount).padStart(6)} | ${String(r.voidedCount).padStart(6)} | ${String(r.resolvedCount).padStart(7)} | ${fmt(r.winRate * 100, 1).padStart(5)} | ${signedUsd(r.totalPnl).padStart(9)} | ${fmt(r.totalDeployed, 0).padStart(7)} | ${fmt(r.roiPct, 1).padStart(5)} | ${br}`,
     );
   }
 }
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
   const resolutions = loadResolutions(db);
   db.close();
 
-  console.log(`Loaded ${signals.length} signals in window [${new Date(args.fromSec * 1000).toISOString().slice(0, 10)} → ${new Date(args.toSec * 1000).toISOString().slice(0, 10)}]`);
+  console.log(`Loaded ${signals.length} signals in window [${new Date(args.fromSec * 1000).toISOString().slice(0, 10)} -> ${new Date(args.toSec * 1000).toISOString().slice(0, 10)}]`);
   console.log(`Cached resolutions: ${resolutions.size} markets (${[...resolutions.values()].filter(r => r.closed).length} closed)`);
   console.log(`Params: kelly=${args.kellyFraction} maxTrade=$${args.maxTradeUsd} capital=$${args.paperCapital}`);
 
@@ -90,10 +90,10 @@ async function main(): Promise<void> {
 
   const best = reports.reduce((a, b) => (b.totalPnl > a.totalPnl ? b : a));
   console.log('');
-  console.log(`Best threshold by P&L: ${best.minEdgePct}pp → ${signedUsd(best.totalPnl)} (n=${best.resolvedCount}, win ${fmt(best.winRate * 100, 0)}%)`);
+  console.log(`Best threshold by P&L: ${best.minEdgePct}pp -> ${signedUsd(best.totalPnl)} (settled=${best.resolvedCount}, win ${fmt(best.winRate * 100, 0)}%)`);
   const current = reports.find(r => r.minEdgePct === 8);
   if (current) {
-    console.log(`Current production threshold (8pp) → ${signedUsd(current.totalPnl)} (n=${current.resolvedCount})`);
+    console.log(`Current production threshold (8pp) -> ${signedUsd(current.totalPnl)} (settled=${current.resolvedCount})`);
   }
 }
 

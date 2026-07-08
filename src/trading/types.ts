@@ -13,12 +13,16 @@ export type RegimeLabel =
   | 'EUPHORIA';
 
 export interface RegimeState {
-  bar: number;
-  date: string;
-  regime: RegimeLabel;
+  bar?: number;
+  date?: string;
+  regime?: RegimeLabel;
+  label?: RegimeLabel;
   confidence: number;
   vol_rank: number;
-  target_allocation: number;
+  target_allocation?: number;
+  stability?: boolean;
+  stability_bars?: number;
+  flicker_rate?: number;
 }
 
 export interface RegimeInfo {
@@ -31,10 +35,17 @@ export interface RegimeInfo {
 
 export interface PositionState {
   symbol: string;
-  qty: number;
-  entry_price: number;
+  qty?: number;
+  quantity?: number;
+  entry_price?: number;
+  avg_entry_price?: number;
   current_price: number;
-  unrealized_pnl: number;
+  unrealized_pnl?: number;
+  unrealized_pl?: number;
+  market_value?: number;
+  side?: string;
+  cost_basis?: number;
+  unrealized_plpc?: number;
 }
 
 export interface RiskState {
@@ -45,22 +56,34 @@ export interface RiskState {
 }
 
 export interface RecentSignal {
-  bar: number;
-  date: string;
+  bar?: number;
+  date?: string;
+  time?: string;
+  symbol?: string;
   regime: string;
   confidence: number;
   vol_rank: number;
   target_allocation: number;
+  should_rebalance?: boolean;
+  strategy?: string;
+  action?: string;
+  approved_allocation?: number;
+  rejection_reason?: string;
+  reason?: string;
+  reject_reason?: string;
+  risk_rejection?: string;
 }
 
 export interface InstanceState {
   mode: 'paper' | 'live' | 'backtest';
   market_open: boolean;
   next_open?: string;
+  execution_enabled?: boolean;
   equity: number;
   cash: number;
   buying_power?: number;
   regime?: RegimeState;
+  last_regime?: RegimeLabel | string;
   risk?: RiskState;
   positions?: PositionState[];
   regime_infos?: RegimeInfo[];

@@ -90,11 +90,20 @@ describe('isUsEquityRegularSession', () => {
 });
 
 describe('summarizeFinancialDatasetsMcp', () => {
-  it('returns needs_auth when Claude MCP reports authentication is required', () => {
+  it('keeps needs_auth advisory when Claude MCP reports authentication is required', () => {
     const result = summarizeFinancialDatasetsMcp('financial-datasets: https://mcp.financialdatasets.ai/ (HTTP) - Needs authentication');
 
-    expect(result.status).toBe('warn');
+    expect(result.status).toBe('pass');
     expect(result.state).toBe('needs_auth');
+    expect(result.detail).toContain('advisory-only');
+  });
+
+  it('keeps missing Financial Datasets advisory instead of a trading blocker', () => {
+    const result = summarizeFinancialDatasetsMcp('no configured mcp servers');
+
+    expect(result.status).toBe('pass');
+    expect(result.state).toBe('missing');
+    expect(result.detail).toContain('not trading execution');
   });
 
   it('returns connected from targeted Claude MCP get output', () => {
@@ -156,6 +165,26 @@ describe('summarizeRegimeState', () => {
 
     expect(result.status).toBe('pass');
     expect(result.state).toBe('closed_stale_open_state');
+  });
+
+  it('treats fresh open-market state with last_regime and risk as full', () => {
+    const result = summarizeRegimeState(
+      {
+        market_open: true,
+        equity: 100000,
+        cash: 85000,
+        last_regime: 'WEAK_BULL',
+        risk: { daily_dd_pct: 0, peak_dd_pct: 0, leverage: 1, circuit_breakers: {} },
+        positions: [],
+        recent_signals: [{ regime: 'WEAK_BULL' }],
+      },
+      MONDAY_REGULAR_SESSION,
+      { stateMtimeMs: MONDAY_REGULAR_SESSION - 60 * 1000 },
+    );
+
+    expect(result.status).toBe('pass');
+    expect(result.state).toBe('open_full');
+    expect(result.detail).toContain('regime label');
   });
 
   it('fails stale open-market state during regular session', () => {

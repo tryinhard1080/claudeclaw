@@ -219,6 +219,7 @@ export function getDashboardHtml(token: string, chatId: string): string {
     <div class="flex items-center gap-4 text-xs text-gray-500 border-t border-gray-800 pt-2 flex-wrap">
       <span>DB <span id="poly-dbsize">-</span></span>
       <span>WAL <span id="poly-walsize">-</span></span>
+      <span id="poly-cap-line">caps: -</span>
       <span id="poly-regime">regime: -</span>
       <span id="poly-backup-age">backup: -</span>
       <span id="poly-news-age">news: -</span>
@@ -325,10 +326,12 @@ export function getDashboardHtml(token: string, chatId: string): string {
       <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evidence Path</h3>
       <span id="evidence-status" class="pill">-</span>
     </div>
-    <div class="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2 mb-3">
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-12 gap-2 mb-3">
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-settled">-</div><div class="stat-label">Poly settled</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-pipeline">-</div><div class="stat-label">Box 2 pipe</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-poly-due">-</div><div class="stat-label">Box2 30d</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-open-mtm">-</div><div class="stat-label">Open MTM</div></div>
+      <div class="compact-stat"><div class="stat-val" id="evidence-due-drag">-</div><div class="stat-label">7d drag</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-book-quality">-</div><div class="stat-label">Quality</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-signal-quality">-</div><div class="stat-label">Signal qual</div></div>
       <div class="compact-stat"><div class="stat-val" id="evidence-market-discovery">-</div><div class="stat-label">Discovery</div></div>
@@ -2302,6 +2305,7 @@ function renderEvidencePath(evidence) {
   const bookQuality = poly.openBookQuality || {};
   const signalQuality = poly.approvedSignalQuality || {};
   const pnlAttribution = poly.openPnlAttribution || {};
+  const openMtm = evidence.openMtmDiagnostics || null;
 
   const settledEl = document.getElementById('evidence-poly-settled');
   if (settledEl) settledEl.textContent = (poly.settledTrades ?? 0) + '/' + (poly.targetSettledTrades ?? 50);
@@ -2322,6 +2326,18 @@ function renderEvidencePath(evidence) {
   if (discoveryEl) {
     discoveryEl.textContent = (discovery.marketCount ?? 0) + '/' + (discovery.targetMarketCount ?? 500);
     discoveryEl.style.color = discovery.status === 'pass' ? '#6ee7b7' : '#fbbf24';
+  }
+
+  const openMtmEl = document.getElementById('evidence-open-mtm');
+  if (openMtmEl) {
+    openMtmEl.textContent = openMtm ? fmtUsd(openMtm.unrealizedPnlUsd ?? 0) : fmtUsd(poly.unrealizedPnlUsd ?? 0);
+    openMtmEl.style.color = pnlColor(openMtm ? openMtm.unrealizedPnlUsd : poly.unrealizedPnlUsd);
+  }
+
+  const dueDragEl = document.getElementById('evidence-due-drag');
+  if (dueDragEl) {
+    dueDragEl.textContent = openMtm ? fmtUsd(openMtm.due7dPnlUsd ?? 0) : '-';
+    dueDragEl.style.color = openMtm ? pnlColor(openMtm.due7dPnlUsd) : '#9ca3af';
   }
 
   const qualityEl = document.getElementById('evidence-book-quality');
@@ -2402,6 +2418,13 @@ function renderEvidencePath(evidence) {
       (pnlAttribution.openFlatTrades ?? 0) +
       ' gross ' + fmtUsd(pnlAttribution.grossOpenProfitUsd ?? 0) + '/' +
       fmtUsd(pnlAttribution.grossOpenLossUsd ?? 0);
+    const openMtmText = openMtm
+      ? ' / mtm drag due7d ' + fmtUsd(openMtm.due7dPnlUsd ?? 0) +
+        ' / filter exceptions ' + (openMtm.currentFilterExceptionTrades ?? 0) +
+        ' ' + fmtUsd(openMtm.currentFilterExceptionPnlUsd ?? 0) +
+        ' / low-conf high-edge ' + (openMtm.lowConfidenceHighEdgeTrades ?? 0) +
+        ' ' + fmtUsd(openMtm.lowConfidenceHighEdgePnlUsd ?? 0)
+      : '';
     const worstOpenText = pnlAttribution.worstOpenTradeId === null || pnlAttribution.worstOpenTradeId === undefined
       ? ''
       : (() => {
@@ -2448,6 +2471,7 @@ function renderEvidencePath(evidence) {
       ' / equity ' + fmtUsd(poly.paperEquityUsd ?? 0) +
       ' / open exposure ' + fmtUsd(poly.openExposureUsd ?? 0) +
       openPnlText +
+      openMtmText +
       worstOpenText +
       ' / nearest end ' + nearest +
       box2Text +
@@ -2487,7 +2511,7 @@ async function loadEquity() {
     document.getElementById('equity-strategy-detail').textContent = strategy.description || '-';
     document.getElementById('equity-last-updated').textContent =
       'state ' + (active.ageSec === null || active.ageSec === undefined ? '-' : fmtAgo(active.ageSec)) +
-      (broker ? ' / broker ' + (broker.status || '-') : ' / broker unavailable');
+      (broker ? ' / broker ' + (broker.status || '-') + (broker.paperTrading ? ' / paper orders' : ' / live endpoint') : ' / broker unavailable');
 
     document.getElementById('equity-account').textContent = fmtUsd(aggregate.equity);
     document.getElementById('equity-cash').textContent = fmtUsd(aggregate.cash);
@@ -2515,9 +2539,14 @@ async function loadEquity() {
 
     const signalEl = document.getElementById('equity-active-signal');
     if (signalEl) {
+      const mode = String(active.mode || (broker && broker.paperTrading ? 'paper' : '-')).toUpperCase();
+      const rejectionLine = active.latestRejectionReason
+        ? '<div style="color:#f87171">last rejection <span class="text-white">' + escapeHtml(active.latestRejectionReason) + '</span></div>'
+        : '';
       signalEl.innerHTML =
         '<div class="flex flex-wrap items-center gap-2 mb-1">' +
           renderStatusChip(active.executionEnabled ? 'pass' : 'warn', active.executionEnabled ? 'EXECUTING' : 'SHADOW') +
+          renderStatusChip(mode === 'PAPER' ? 'pass' : 'warn', mode) +
           '<span class="text-gray-400">' + escapeHtml(active.id || '-') + '</span>' +
         '</div>' +
         '<div>Regime <span class="text-white">' + escapeHtml(active.regimeLabel || '-') + '</span>' +
@@ -2525,7 +2554,10 @@ async function loadEquity() {
         '<div>confidence <span class="text-white">' + fmtPct(active.confidence, 0) + '</span>' +
         ' / vol rank <span class="text-white">' + fmtPct(active.volRank, 0) + '</span></div>' +
         '<div>action <span class="text-white">' + escapeHtml(active.action || '-') + '</span>' +
-        ' / rebalance <span class="text-white">' + (active.shouldRebalance === null || active.shouldRebalance === undefined ? '-' : String(active.shouldRebalance)) + '</span></div>';
+        ' / rebalance <span class="text-white">' + (active.shouldRebalance === null || active.shouldRebalance === undefined ? '-' : String(active.shouldRebalance)) + '</span></div>' +
+        '<div>signal <span class="text-white">' + (active.latestSignalAgeSec === null || active.latestSignalAgeSec === undefined ? '-' : fmtAgo(active.latestSignalAgeSec)) + '</span>' +
+        ' / session trades <span class="text-white">' + (active.sessionTrades ?? 0) + '</span></div>' +
+        rejectionLine;
     }
 
     const riskEl = document.getElementById('equity-risk');
@@ -2553,6 +2585,8 @@ async function loadEquity() {
           const role = i.executionEnabled ? renderStatusChip('pass', 'ACTIVE') : renderStatusChip('warn', 'SHADOW');
           const pos = i.position ? fmtQty(i.position.qty) + ' ' + escapeHtml(i.position.symbol) : 'none';
           const action = i.action || '-';
+          const signalAge = i.latestSignalAgeSec === null || i.latestSignalAgeSec === undefined ? '-' : fmtAgo(i.latestSignalAgeSec);
+          const rejection = i.latestRejectionReason ? escapeHtml(i.latestRejectionReason) : '-';
           return '<tr>' +
             '<td>' + role + '</td>' +
             '<td class="text-gray-200">' + escapeHtml(i.label || i.id) + '</td>' +
@@ -2562,17 +2596,22 @@ async function loadEquity() {
             '<td class="text-right" style="color:' + (Math.abs(Number(i.allocationDrift || 0)) > 0.025 ? '#fbbf24' : '#9ca3af') + '">' + fmtSignedPct(i.allocationDrift) + '</td>' +
             '<td class="text-gray-300">' + pos + '</td>' +
             '<td class="text-gray-500">' + escapeHtml(action) + '</td>' +
+            '<td class="text-right text-gray-300">' + (i.sessionTrades ?? 0) + '</td>' +
+            '<td class="text-gray-500">' + signalAge + '</td>' +
+            '<td class="text-gray-500" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rejection + '</td>' +
           '</tr>';
         }).join('');
         instanceEl.innerHTML =
           '<table class="data-table"><thead><tr>' +
-          '<th>Role</th><th>Instance</th><th>Regime</th><th class="text-right">Current</th><th class="text-right">Target</th><th class="text-right">Drift</th><th>Position</th><th>Action</th>' +
+          '<th>Role</th><th>Instance</th><th>Regime</th><th class="text-right">Current</th><th class="text-right">Target</th><th class="text-right">Drift</th><th>Position</th><th>Action</th><th class="text-right">Trades</th><th>Signal</th><th>Reason</th>' +
           '</tr></thead><tbody>' + rows + '</tbody></table>';
       }
     }
 
     const orders = broker && broker.recentOrders ? broker.recentOrders : [];
-    document.getElementById('equity-order-summary').textContent = orders.length ? orders.length + ' recent' : 'none';
+    document.getElementById('equity-order-summary').textContent = orders.length
+      ? orders.length + ' recent' + (broker && broker.paperTrading ? ' paper' : '')
+      : 'none';
     const ordersEl = document.getElementById('equity-orders');
     if (ordersEl) {
       if (orders.length === 0) {
@@ -2769,7 +2808,12 @@ async function loadPoly() {
     // Overview pills
     document.getElementById('poly-signals-today').textContent = overview.signals.today ?? 0;
     document.getElementById('poly-approved-today').textContent = overview.signals.approvedToday ?? 0;
-    document.getElementById('poly-open').textContent = overview.trades.open ?? 0;
+    const openTrades = overview.trades.open ?? 0;
+    const limits = overview.limits || {};
+    const maxOpen = limits.maxOpenPositions;
+    const openEl = document.getElementById('poly-open');
+    openEl.textContent = maxOpen ? openTrades + '/' + maxOpen : openTrades;
+    openEl.style.color = maxOpen && openTrades >= maxOpen ? '#f87171' : (maxOpen && limits.openSlotsRemaining <= 3 ? '#fbbf24' : '#fff');
     document.getElementById('poly-exposure').textContent = fmtUsd(overview.openExposureUsd);
     const realized = overview.realizedPnlUsd;
     const relEl = document.getElementById('poly-realized');
@@ -2778,6 +2822,16 @@ async function loadPoly() {
     document.getElementById('poly-resolutions').textContent = overview.resolutions ?? 0;
     document.getElementById('poly-dbsize').textContent = fmtBytes(overview.dbSizeBytes);
     document.getElementById('poly-walsize').textContent = fmtBytes(overview.walSizeBytes);
+    const capEl = document.getElementById('poly-cap-line');
+    if (capEl) {
+      const deployed = Number(overview.openExposureUsd || 0);
+      const maxDeployed = limits.maxDeployedUsd;
+      capEl.textContent =
+        'caps: slots ' + (limits.openSlotsRemaining ?? '-') +
+        ' / deployed ' + fmtUsd(deployed) + (maxDeployed ? '/' + fmtUsd(maxDeployed) : '') +
+        ' / max trade ' + (limits.maxTradeUsd ? fmtUsd(limits.maxTradeUsd) : '-');
+      capEl.style.color = maxOpen && openTrades >= maxOpen ? '#f87171' : '#9ca3af';
+    }
 
     if (overview.lastScan) {
       const s = overview.lastScan;

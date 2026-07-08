@@ -1,42 +1,57 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { STORE_DIR } from '../src/config.js';
+import {
+  formatOverdueSummaryLines,
+  formatScheduledTaskLines,
+  type ScheduledTaskStatus,
+} from '../src/readiness/scheduler-status.js';
 
 const db = new Database(path.join(STORE_DIR, 'claudeclaw.db'), { readonly: true });
 const now = Math.floor(Date.now() / 1000);
+const summaryOnly = process.argv.includes('--summary');
 console.log('now =', new Date(now * 1000).toISOString());
 
 type Col = { name: string };
 const cols = db.prepare(`PRAGMA table_info(scheduled_tasks)`).all() as Col[];
-console.log('\nscheduled_tasks columns:', cols.map(c => c.name).join(', '));
+if (!summaryOnly) console.log('\nscheduled_tasks columns:', cols.map(c => c.name).join(', '));
 
 const tasks = db
   .prepare(`SELECT * FROM scheduled_tasks ORDER BY next_run ASC`)
-  .all() as Array<Record<string, unknown>>;
+  .all() as ScheduledTaskStatus[];
 console.log(`\n${tasks.length} scheduled tasks total:`);
-for (const t of tasks) {
-  const next = t.next_run as number | null;
-  const last = t.last_run as number | null;
-  const status = t.status as string | null;
-  const agent = t.agent_id as string | null;
-  const id = t.id as string;
-  const prompt = (t.prompt as string | null) ?? '';
-  const lastErr = t.last_result_text as string | null;
-  const nextAge = next ? Math.floor((now - next) / 60) : null;
-  const lastAge = last ? Math.floor((now - last) / 60) : null;
-  console.log(
-    `  id=${id.slice(0, 8)} agent=${agent} status=${status} overdue=${
-      nextAge !== null && nextAge > 0 ? `${nextAge}m` : 'no'
-    } lastRun=${lastAge !== null ? `${lastAge}m ago` : 'never'} schedule=${t.schedule} prompt="${prompt.slice(0, 50)}"`,
-  );
-  if (lastErr && lastErr.length > 0) {
-    console.log(`    lastResult="${lastErr.slice(0, 120)}"`);
+
+for (const line of formatOverdueSummaryLines(tasks, now)) console.log(line);
+
+const visibleTasks = summaryOnly
+  ? tasks.filter(t => t.agent_id === 'main')
+  : tasks;
+
+for (const t of visibleTasks) {
+  for (const line of formatScheduledTaskLines(t, now, { includeLastResult: !summaryOnly })) console.log(line);
+}
+
+if (summaryOnly) {
+  const hiddenNonMain = tasks.length - visibleTasks.length;
+  if (hiddenNonMain > 0) {
+    console.log(`  (${hiddenNonMain} non-main task detail row(s) hidden; run scheduler:status:full for all agents)`);
   }
+}
+
+if (summaryOnly) {
+  db.close();
+  process.exit(0);
 }
 
 const missionCols = db.prepare(`PRAGMA table_info(mission_tasks)`).all() as Col[];
 console.log('\nmission_tasks columns:', missionCols.map(c => c.name).join(', '));
-const missions = db.prepare(`SELECT id, agent_id, status, title, created_at FROM mission_tasks ORDER BY id DESC LIMIT 10`).all() as Array<Record<string, unknown>>;
+const missionColNames = new Set(missionCols.map(c => c.name));
+const missionAgentExpr = missionColNames.has('agent_id')
+  ? 'agent_id'
+  : missionColNames.has('assigned_agent')
+    ? 'assigned_agent AS agent_id'
+    : "'-' AS agent_id";
+const missions = db.prepare(`SELECT id, ${missionAgentExpr}, status, title, created_at FROM mission_tasks ORDER BY id DESC LIMIT 10`).all() as Array<Record<string, unknown>>;
 console.log(`\nLast 10 mission tasks:`);
 for (const m of missions) {
   const age = Math.floor((now - (m.created_at as number)) / 60);

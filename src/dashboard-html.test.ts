@@ -97,6 +97,17 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("grossOpenLossUsd");
   });
 
+  it('renders open MTM concentration in the evidence path', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("evidence-open-mtm");
+    expect(html).toContain("evidence-due-drag");
+    expect(html).toContain("evidence.openMtmDiagnostics");
+    expect(html).toContain("mtm drag due7d");
+    expect(html).toContain("currentFilterExceptionPnlUsd");
+    expect(html).toContain("lowConfidenceHighEdgePnlUsd");
+  });
+
   it('renders live equity sync evidence separately from daily Sharpe', () => {
     const html = getDashboardHtml('token', 'chat');
 
@@ -113,6 +124,17 @@ describe('dashboard readiness rendering', () => {
     expect(html).toContain("evidence.equityBenchmark");
     expect(html).toContain("equity edge");
     expect(html).toContain("equityBenchmarkMinExcessReturn");
+  });
+
+  it('renders paper activity limits and equity trade diagnostics', () => {
+    const html = getDashboardHtml('token', 'chat');
+
+    expect(html).toContain("poly-cap-line");
+    expect(html).toContain("limits.maxOpenPositions");
+    expect(html).toContain("openSlotsRemaining");
+    expect(html).toContain("session trades");
+    expect(html).toContain("latestRejectionReason");
+    expect(html).toContain("paper orders");
   });
 
   it('keeps chat quick actions trading scoped', () => {

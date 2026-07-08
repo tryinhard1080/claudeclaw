@@ -13,12 +13,10 @@ function mkState(regime = 'NEUTRAL', confidence = 0.8, breakers: Record<string, 
     equity: 100_000,
     cash: 50_000,
     regime: {
-      bar: 1,
-      date: new Date().toISOString(),
-      regime,
+      label: regime,
       confidence,
       vol_rank: 0.4,
-      target_allocation: 0.7,
+      stability: true,
     },
     risk: {
       daily_dd_pct: 0,
@@ -28,7 +26,16 @@ function mkState(regime = 'NEUTRAL', confidence = 0.8, breakers: Record<string, 
     },
     positions: [],
     regime_infos: [],
-    recent_signals: [],
+    recent_signals: [{
+      time: new Date().toISOString(),
+      symbol: 'SPY',
+      regime,
+      confidence,
+      vol_rank: 0.4,
+      target_allocation: 0.7,
+      action: 'modified',
+      approved_allocation: 0.15,
+    }],
   });
 }
 
@@ -39,6 +46,34 @@ function mkClosedMarketState(nextOpen: string) {
     next_open: nextOpen,
     equity: 100_000,
     cash: 50_000,
+  });
+}
+
+function mkLastRegimeState(regime = 'WEAK_BULL') {
+  return JSON.stringify({
+    instance: 'spy-aggressive',
+    timestamp: new Date().toISOString(),
+    mode: 'paper',
+    market_open: true,
+    equity: 105_000,
+    cash: 89_000,
+    last_regime: regime,
+    risk: {
+      daily_dd_pct: 0,
+      peak_dd_pct: 0,
+      leverage: 1,
+      circuit_breakers: {},
+    },
+    positions: [],
+    recent_signals: [{
+      time: new Date().toISOString(),
+      symbol: 'SPY',
+      regime,
+      confidence: 0.75,
+      vol_rank: 0.31,
+      target_allocation: 0.6,
+      approved_allocation: 0.15,
+    }],
   });
 }
 
@@ -96,6 +131,17 @@ describe('StatePoller', () => {
     await (poller as any).pollAll(); // third poll should NOT re-fire
     expect(events).toHaveLength(1);
     expect(events[0]?.instance).toBe('ghost');
+  });
+
+  it('does not emit instance_error for current last_regime runtime state', async () => {
+    await writeStateFile(base, 'spy', mkLastRegimeState());
+    const poller = new StatePoller(base, ['spy'], 99999);
+    const events: InstanceErrorEvent[] = [];
+    poller.on('instance_error', (e: InstanceErrorEvent) => events.push(e));
+
+    await (poller as any).pollAll();
+
+    expect(events).toHaveLength(0);
   });
 
   it('re-arms instance_error alert after file becomes readable then unreadable again', async () => {

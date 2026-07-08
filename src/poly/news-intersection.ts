@@ -31,6 +31,7 @@ const WEAK_INTERSECTION_TOKENS = new Set([
   'january', 'february', 'march', 'april', 'june', 'july', 'august',
   'september', 'october', 'november', 'december',
   'normal', 'returns', 'traffic', 'peace', 'deal', 'permanent', 'temporary',
+  'reach', 'reaches', 'above', 'below', 'price',
 ]);
 
 function hasDistinctiveMatch(tokens: string[]): boolean {
@@ -85,6 +86,20 @@ function wholeWordMatch(needle: string, lowercasedHaystack: string): boolean {
   return new RegExp(`\\b${escaped}\\b`).test(lowercasedHaystack);
 }
 
+export function segmentNewsSummary(summary: string): string[] {
+  const lines = summary
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const bulletLines = lines
+    .filter(line => /^[-*]\s+/.test(line))
+    .map(line => line.replace(/^[-*]\s+/, '').trim())
+    .filter(Boolean);
+  const segments = bulletLines.length > 0 ? bulletLines : lines;
+  if (segments.length === 0) return [summary.trim()].filter(Boolean);
+  return [...new Set(segments)];
+}
+
 export interface IntersectionMatch {
   news_item_id: number;
   paper_trade_id: number;
@@ -92,6 +107,7 @@ export interface IntersectionMatch {
   outcome_label: string;
   matched_tokens: string[];
   news_summary: string;
+  news_excerpt: string;
 }
 
 export interface FindOpts {
@@ -130,19 +146,28 @@ export function findIntersections(db: Database.Database, opts: FindOpts): Inters
 
   const out: IntersectionMatch[] = [];
   for (const n of news) {
-    const summaryLc = n.summary.toLowerCase();
+    const segments = segmentNewsSummary(n.summary);
     for (const t of trades) {
       const tokens = tokenizeSlug(t.market_slug);
       if (tokens.length < minMatches) continue;
-      const matched = tokens.filter(tok => wholeWordMatch(tok, summaryLc));
-      if (matched.length >= minMatches && hasDistinctiveMatch(matched)) {
+      const match = segments
+        .map(segment => ({
+          segment,
+          matched: tokens.filter(tok => wholeWordMatch(tok, segment.toLowerCase())),
+        }))
+        .find(candidate => (
+          candidate.matched.length >= minMatches
+          && hasDistinctiveMatch(candidate.matched)
+        ));
+      if (match) {
         out.push({
           news_item_id: n.id,
           paper_trade_id: t.id,
           market_slug: t.market_slug,
           outcome_label: t.outcome_label,
-          matched_tokens: matched,
+          matched_tokens: match.matched,
           news_summary: n.summary,
+          news_excerpt: match.segment,
         });
       }
     }
@@ -158,9 +183,9 @@ export interface RecordAndEmitResult {
 }
 
 export function defaultFormat(m: IntersectionMatch): string {
-  const preview = m.news_summary.length > 220
-    ? m.news_summary.slice(0, 217) + '...'
-    : m.news_summary;
+  const preview = m.news_excerpt.length > 220
+    ? m.news_excerpt.slice(0, 217) + '...'
+    : m.news_excerpt;
   return [
     `News intersection: ${m.market_slug} (${m.outcome_label})`,
     `Matched tokens: ${m.matched_tokens.join(', ')}`,

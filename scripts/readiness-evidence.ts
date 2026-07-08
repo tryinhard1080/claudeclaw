@@ -60,6 +60,11 @@ function fmtDate(at: number | null): string {
   return new Date(at * 1000).toISOString().slice(0, 10);
 }
 
+function fmtDateTime(at: number | null): string {
+  if (!at) return '-';
+  return new Date(at * 1000).toISOString();
+}
+
 function fmtDays(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '-';
   if (value < 0) return `${Math.ceil(Math.abs(value))}d overdue`;
@@ -107,7 +112,7 @@ function printHistory(history: OperationalEvidenceHistoryPoint[]): void {
 }
 
 function printEvidence(payload: OperationalEvidencePayload, history: OperationalEvidenceHistoryPoint[] = []): void {
-  const { polymarket, equitySync, equityBenchmark, regimeSharpe, ttlFilter, marketDiscovery } = payload;
+  const { polymarket, equitySync, equityBenchmark, regimeSharpe, ttlFilter, marketDiscovery, pnlHeartbeat } = payload;
 
   console.log('Operational Evidence');
   console.log('--------------------');
@@ -133,6 +138,7 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
   console.log(`Total paper P&L           ${fmtUsd(polymarket.totalPnlUsd)} (${fmtPct(polymarket.paperReturnPct)})`);
   console.log(`Paper equity              ${fmtUsd(polymarket.paperEquityUsd)}`);
   console.log(`Open / voided             ${polymarket.openTrades}/${polymarket.voidedTrades}`);
+  console.log(`Paper slot usage          ${polymarket.openTrades}/${polymarket.maxOpenTrades} (${polymarket.openTradeSlotsAvailable} available)`);
   console.log(`Open-book quality         ${polymarket.openBookQuality.passingTrades}/${polymarket.openBookQuality.openTrades} pass current filters`);
   if (polymarket.openBookQuality.reasons.length > 0) {
     const reasonText = polymarket.openBookQuality.reasons
@@ -177,6 +183,19 @@ function printEvidence(payload: OperationalEvidencePayload, history: Operational
       .map(reason => `${reason.code}=${reason.count}${reason.sampleSlug ? ` sample=${reason.sampleSlug}` : ''}`)
       .join('; ');
     console.log(`Signal quality warnings   ${reasonText}`);
+  }
+
+  console.log();
+  console.log('P&L Heartbeat Evidence');
+  console.log('----------------------');
+  console.log(`Status                   ${fmtStatus(pnlHeartbeat.status)} ${pnlHeartbeat.state}`);
+  console.log(`Position rows            ${pnlHeartbeat.positionRows}/${pnlHeartbeat.openTrades}`);
+  console.log(`Fresh <=${Math.round(pnlHeartbeat.maxAgeSec / 60)}m             ${pnlHeartbeat.freshPositionRows}/${pnlHeartbeat.openTrades}`);
+  console.log(`Stale / missing          ${pnlHeartbeat.stalePositionRows}/${pnlHeartbeat.missingPositionRows}`);
+  console.log(`Latest mark              ${fmtDateTime(pnlHeartbeat.newestPositionUpdatedAt)} (${fmtDuration(pnlHeartbeat.newestPositionAgeSec)} ago)`);
+  console.log(`Oldest mark              ${fmtDateTime(pnlHeartbeat.oldestPositionUpdatedAt)} (${fmtDuration(pnlHeartbeat.oldestPositionAgeSec)} ago)`);
+  if (pnlHeartbeat.schemaIssues.length > 0) {
+    console.log(`Schema warnings          ${pnlHeartbeat.schemaIssues.join('; ')}`);
   }
 
   console.log();

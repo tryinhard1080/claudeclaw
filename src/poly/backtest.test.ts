@@ -73,9 +73,9 @@ describe('simulateOutcome', () => {
     expect(out.realizedPnl).toBe(0);
   });
 
-  it('missing resolution → voided/delisted with pnl=0', () => {
+  it('missing cached resolution stays open in offline backtests', () => {
     const out = simulateOutcome(signal(), null, size);
-    expect(out.status).toBe('voided');
+    expect(out.status).toBe('open');
     expect(out.realizedPnl).toBe(0);
   });
 });
@@ -110,9 +110,29 @@ describe('runBacktest min-edge sweep', () => {
     ]);
     const r = runBacktest({ signals: sigs, resolutions, params });
     expect(r.resolvedCount).toBe(2);
+    expect(r.openCount).toBe(1);
     expect(r.winCount).toBe(1);  // 'a' Yes won
     expect(r.winRate).toBeCloseTo(0.5, 6);
     expect(r.brierScore).toBeCloseTo(((0.7-1)**2 + (0.5-0)**2)/2, 6);
+  });
+
+  it('does not count voided outcomes as resolved performance evidence', () => {
+    const sigs: HistoricalSignal[] = [
+      signal({ id: 1, marketSlug: 'voided', estimatedProb: 0.7, marketPrice: 0.4, edgePct: 30 }),
+      signal({ id: 2, marketSlug: 'open', estimatedProb: 0.7, marketPrice: 0.4, edgePct: 30 }),
+    ];
+    const resolutions = new Map<string, Resolution>([
+      ['voided', { slug: 'voided', closed: true, outcomes: [
+        { label: 'Yes', tokenId: yes, price: 0.5 },
+        { label: 'No', tokenId: no, price: 0.5 },
+      ] }],
+    ]);
+    const r = runBacktest({ signals: sigs, resolutions, params });
+    expect(r.resolvedCount).toBe(0);
+    expect(r.voidedCount).toBe(1);
+    expect(r.openCount).toBe(1);
+    expect(r.totalDeployed).toBe(0);
+    expect(r.brierScore).toBeNull();
   });
 
   it('aggregates total realized P&L across resolved trades', () => {
