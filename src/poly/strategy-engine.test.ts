@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { EventEmitter } from 'events';
 import type { ClobBook, Market, ProbabilityEstimate } from './types.js';
@@ -812,5 +812,28 @@ describe('selectPriceCaptureCandidates', () => {
       marketQualityFilterEnabled: true,
     });
     expect(out.map(m => m.slug)).toEqual(['normal-market']);
+  });
+});
+
+describe('StrategyEngine topN default', () => {
+  // Regression for 2026-06-29 paper-activity sprint: POLY_SCAN_TOP_N=40 was
+  // set in env but the constructor hardcoded `?? 20`, so live startup
+  // (which passes no topN) never widened the candidate set.
+  it('defaults topN from POLY_SCAN_TOP_N, not a hardcoded 20', async () => {
+    vi.resetModules();
+    process.env.POLY_SCAN_TOP_N = '37';
+    try {
+      const { StrategyEngine: FreshEngine } = await import('./strategy-engine.js');
+      const engine = new FreshEngine({
+        db: bootDb(),
+        scanner: new EventEmitter(),
+        evaluate: async () => mkEst(0.7),
+        fetchBook: async () => mkBook(0.4, 1000),
+      });
+      expect((engine as unknown as { topN: number }).topN).toBe(37);
+    } finally {
+      delete process.env.POLY_SCAN_TOP_N;
+      vi.resetModules();
+    }
   });
 });

@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import { logger } from '../logger.js';
 import {
   POLY_KELLY_FRACTION, POLY_MAX_TRADE_USD, POLY_MIN_VOLUME_USD,
-  POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL, GLM_MODEL,
+  POLY_MIN_TTR_HOURS, POLY_PAPER_CAPITAL, POLY_SCAN_TOP_N, GLM_MODEL,
   POLY_MIN_MARKET_PRICE, POLY_MAX_MARKET_PRICE,
   POLY_REFLECTION_ENABLED,
   POLY_KELLY_LOW_MULT, POLY_KELLY_MED_MULT, POLY_KELLY_HIGH_MULT,
@@ -281,7 +281,7 @@ export class StrategyEngine extends EventEmitter {
     this.paperCapital = opts.paperCapital ?? POLY_PAPER_CAPITAL;
     this.minVolumeUsd = opts.minVolumeUsd ?? POLY_MIN_VOLUME_USD;
     this.minTtrHours = opts.minTtrHours ?? POLY_MIN_TTR_HOURS;
-    this.topN = opts.topN ?? 20;
+    this.topN = opts.topN ?? POLY_SCAN_TOP_N;
     this.maxTradeUsd = opts.maxTradeUsd ?? POLY_MAX_TRADE_USD;
     this.kellyFraction = opts.kellyFraction ?? POLY_KELLY_FRACTION;
     this.minYesPrice = opts.minYesPrice ?? POLY_MIN_MARKET_PRICE;
