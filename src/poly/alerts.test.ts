@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import {
   formatSignalFilled, formatSignalRejected, formatPositionResolved,
-  registerPolyAlerts,
+  formatResolvedBatch, registerPolyAlerts,
 } from './alerts.js';
 import type { SignalFilledEvent, SignalRejectedEvent } from './strategy-engine.js';
 import type { PositionResolvedEvent } from './pnl-tracker.js';
@@ -63,10 +63,25 @@ describe('poly alert formatters', () => {
   it('formats a voided resolution with the reason', () => {
     expect(formatPositionResolved(resolvedVoid)).toContain('delisted');
   });
+
+  it('truncates a resolved batch beyond the line cap with a "more" tail', () => {
+    const events = Array.from({ length: 30 }, (_, i) => ({
+      ...resolvedWon, tradeId: i + 1, realizedPnl: 1,
+    }));
+    const txt = formatResolvedBatch(events);
+    expect(txt).toContain('Resolved 30 positions');
+    expect(txt).toContain('… and 5 more');
+    expect(txt.length).toBeLessThan(4096);  // Telegram message limit
+  });
 });
 
 describe('registerPolyAlerts', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('forwards signal_filled + position_resolved to sender by default', async () => {
+    vi.useFakeTimers();
     const se = new EventEmitter();
     const pt = new EventEmitter();
     const sent: string[] = [];
@@ -77,11 +92,47 @@ describe('registerPolyAlerts', () => {
     se.emit('signal_filled', filled);
     se.emit('signal_rejected', rejected);  // should be ignored by default
     pt.emit('position_resolved', resolvedWon);
-    // let microtasks flush
-    await new Promise(r => setImmediate(r));
+    await vi.advanceTimersByTimeAsync(2100);  // resolved alerts flush on the batch window
     expect(sent).toHaveLength(2);
     expect(sent[0]).toContain('Signal filled');
     expect(sent[1]).toContain('Resolved');
+  });
+
+  it('coalesces a burst of position_resolved events into one batch message', async () => {
+    vi.useFakeTimers();
+    const se = new EventEmitter();
+    const pt = new EventEmitter();
+    const sent: string[] = [];
+    registerPolyAlerts({
+      strategyEngine: se, pnlTracker: pt,
+      sender: async (t) => { sent.push(t); },
+    });
+    // Simulate a reconcile pass settling many positions in the same tick.
+    pt.emit('position_resolved', resolvedWon);
+    pt.emit('position_resolved', { ...resolvedWon, tradeId: 43, status: 'lost', realizedPnl: -21 });
+    pt.emit('position_resolved', resolvedVoid);
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('Resolved 3 positions');
+    expect(sent[0]).toContain('✅ 1');
+    expect(sent[0]).toContain('❌ 1');
+    expect(sent[0]).toContain('◻️ 1');
+    expect(sent[0]).toContain('+$8.00');  // 29 - 21 + 0
+  });
+
+  it('sends a lone resolution in the original single-line format after the window', async () => {
+    vi.useFakeTimers();
+    const se = new EventEmitter();
+    const pt = new EventEmitter();
+    const sent: string[] = [];
+    registerPolyAlerts({
+      strategyEngine: se, pnlTracker: pt,
+      sender: async (t) => { sent.push(t); },
+    });
+    pt.emit('position_resolved', resolvedWon);
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBe(formatPositionResolved(resolvedWon));
   });
 
   it('alerts on rejections when alertRejections=true', async () => {

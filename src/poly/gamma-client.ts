@@ -183,9 +183,16 @@ export async function fetchMarketById(id: string | number): Promise<Market | nul
  * "delisted" and no trade can ever settle.
  */
 export async function fetchMarketBySlug(slug: string): Promise<Market | null> {
+  const base = `${BASE}/markets?slug=${encodeURIComponent(slug)}&limit=1`;
+  let raw: unknown = null;
   try {
-    const base = `${BASE}/markets?slug=${encodeURIComponent(slug)}&limit=1`;
-    let raw = await getJson(base);
+    raw = await getJson(base);
+  } catch (err) {
+    // A transport failure here must not skip the closed=true retry: callers
+    // treat null as "delisted", which permanently voids open trades.
+    logger.warn({ slug, err: String(err) }, 'fetchMarketBySlug plain query failed; trying closed=true');
+  }
+  try {
     if (!Array.isArray(raw) || raw.length === 0) {
       raw = await getJson(`${base}&closed=true`);
     }

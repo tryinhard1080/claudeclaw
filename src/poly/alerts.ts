@@ -39,6 +39,26 @@ export function formatPositionResolved(e: PositionResolvedEvent): string {
   return `${icon} Resolved · #${e.tradeId} ${e.slug} (${e.outcomeLabel}) ${e.status}${tail}`;
 }
 
+/** Batch window for position_resolved alerts. One reconcile pass can settle
+ *  dozens of positions in the same tick; per-event sends would hit Telegram's
+ *  per-chat rate limit and get silently dropped by the catch below. */
+const RESOLVED_FLUSH_MS = 2000;
+const RESOLVED_BATCH_MAX_LINES = 25;
+
+export function formatResolvedBatch(events: PositionResolvedEvent[]): string {
+  const won = events.filter(e => e.status === 'won').length;
+  const lost = events.filter(e => e.status === 'lost').length;
+  const other = events.length - won - lost;
+  const net = events.reduce((s, e) => s + e.realizedPnl, 0);
+  const lines = events.slice(0, RESOLVED_BATCH_MAX_LINES).map(formatPositionResolved);
+  const more = events.length - RESOLVED_BATCH_MAX_LINES;
+  return [
+    `📊 Resolved ${events.length} positions · ✅ ${won} · ❌ ${lost} · ◻️ ${other} · net ${money(net)}`,
+    ...lines,
+    ...(more > 0 ? [`… and ${more} more`] : []),
+  ].join('\n');
+}
+
 export interface RegisterAlertsOpts {
   strategyEngine: EventEmitter;
   pnlTracker: EventEmitter;
@@ -58,6 +78,22 @@ export function registerPolyAlerts(opts: RegisterAlertsOpts): void {
     opts.strategyEngine.on('signal_rejected', (e: SignalRejectedEvent) =>
       send(formatSignalRejected(e)));
   }
-  opts.pnlTracker.on('position_resolved', (e: PositionResolvedEvent) =>
-    send(formatPositionResolved(e)));
+
+  let pendingResolved: PositionResolvedEvent[] = [];
+  let flushTimer: NodeJS.Timeout | null = null;
+  const flushResolved = (): void => {
+    flushTimer = null;
+    const events = pendingResolved;
+    pendingResolved = [];
+    if (events.length === 0) return;
+    if (events.length === 1) send(formatPositionResolved(events[0]!));
+    else send(formatResolvedBatch(events));
+  };
+  opts.pnlTracker.on('position_resolved', (e: PositionResolvedEvent) => {
+    pendingResolved.push(e);
+    if (flushTimer === null) {
+      flushTimer = setTimeout(flushResolved, RESOLVED_FLUSH_MS);
+      flushTimer.unref?.();
+    }
+  });
 }

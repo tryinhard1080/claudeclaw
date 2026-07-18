@@ -354,7 +354,10 @@ describe('fetchMarketBySlug (resolution path)', () => {
   };
 
   beforeEach(() => vi.restoreAllMocks());
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it('falls back to closed=true when the plain slug query returns empty (resolved market)', async () => {
     const urls: string[] = [];
@@ -411,5 +414,22 @@ describe('fetchMarketBySlug (resolution path)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(fetchMarketBySlug('flaky')).resolves.toBeNull();
+  });
+
+  it('still tries closed=true when the plain query throws (transport error must not read as delisted)', async () => {
+    // A transient 500 on the plain query previously skipped the fallback and
+    // returned null, which PnlTracker treats as "delisted" — permanently
+    // voiding an open trade on a market that actually resolved.
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const closed = new URL(String(input)).searchParams.get('closed');
+      if (closed === 'true') return new Response(JSON.stringify([resolvedRaw]), { status: 200 });
+      return new Response('boom', { status: 500 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const m = await fetchMarketBySlug('resolved-market');
+    expect(m).not.toBeNull();
+    expect(m!.closed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
