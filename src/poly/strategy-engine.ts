@@ -338,6 +338,15 @@ export class StrategyEngine extends EventEmitter {
       );
       return;
     }
+    // Book full: every candidate would be rejected by gate 1's position cap,
+    // so the per-candidate LLM evaluations are pure spend. Skip the tick.
+    if (tickSnap.openPositionCount >= this.gateConfig.maxOpenPositions) {
+      logger.info(
+        { openPositionCount: tickSnap.openPositionCount, maxOpenPositions: this.gateConfig.maxOpenPositions },
+        'strategy engine: book full, skipping evaluation tick',
+      );
+      return;
+    }
     this.running = true;
     try {
       const candidates = this.selectCandidates(payload.markets, tickSnap.openPositionKeys);

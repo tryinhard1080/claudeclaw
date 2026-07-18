@@ -99,6 +99,26 @@ describe('buildSlugPriorityQueue', () => {
     expect(q.length).toBe(2);
   });
 
+  it('excludes signal-backlog slugs whose cache row is already closed (Sprint R2)', () => {
+    // A closed=1 cache row is final; re-fetching costs 2 Gamma requests per
+    // run forever (plain slug query is always empty for closed markets).
+    insertSignal(db, 'settled-sig');
+    insertSignal(db, 'live-sig');
+    db.prepare(`INSERT INTO poly_resolutions (slug, closed, outcomes_json, fetched_at) VALUES ('settled-sig', 1, '[]', 0)`).run();
+    insertResolution(db, 'live-sig');  // closed=0 — still worth fetching
+    const q = buildSlugPriorityQueue(db);
+    expect(q).toContain('live-sig');
+    expect(q).not.toContain('settled-sig');
+  });
+
+  it('keeps open-trade slugs even when their cache row is closed (Sprint R2)', () => {
+    // Open trades are the settlement-critical set; never filter them.
+    insertTrade(db, 'open-settled', 'open');
+    db.prepare(`INSERT INTO poly_resolutions (slug, closed, outcomes_json, fetched_at) VALUES ('open-settled', 1, '[]', 0)`).run();
+    const q = buildSlugPriorityQueue(db);
+    expect(q).toContain('open-settled');
+  });
+
   it('excludes non-open trades from the priority slice', () => {
     insertTrade(db, 'won-x', 'won');
     insertTrade(db, 'lost-y', 'lost');

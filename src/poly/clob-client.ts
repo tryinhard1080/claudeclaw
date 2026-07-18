@@ -1,4 +1,5 @@
 import { ClobBookSchema, type ClobBook } from './types.js';
+import { fetchWithTimeout } from './http.js';
 import { logger } from '../logger.js';
 
 const BASE = 'https://clob.polymarket.com';
@@ -18,7 +19,7 @@ export function bestAskAndDepth(book: ClobBook): { bestAsk: number | null; askDe
 
 export async function fetchBook(tokenId: string): Promise<ClobBook | null> {
   try {
-    const res = await fetch(`${BASE}/book?token_id=${encodeURIComponent(tokenId)}`);
+    const res = await fetchWithTimeout(`${BASE}/book?token_id=${encodeURIComponent(tokenId)}`);
     if (!res.ok) return null;
     return parseBook(await res.json());
   } catch (err) {
@@ -29,7 +30,7 @@ export async function fetchBook(tokenId: string): Promise<ClobBook | null> {
 
 export async function fetchMidpoint(tokenId: string): Promise<number | null> {
   try {
-    const res = await fetch(`${BASE}/midpoint?token_id=${encodeURIComponent(tokenId)}`);
+    const res = await fetchWithTimeout(`${BASE}/midpoint?token_id=${encodeURIComponent(tokenId)}`);
     if (!res.ok) return null;
     const json = await res.json() as { mid?: unknown };
     const n = typeof json.mid === 'string' ? Number(json.mid) : typeof json.mid === 'number' ? json.mid : NaN;

@@ -1,4 +1,5 @@
 import { logger } from '../logger.js';
+import { fetchWithTimeout } from './http.js';
 import { GammaMarketSchema, type GammaMarket, type Market } from './types.js';
 
 const BASE = 'https://gamma-api.polymarket.com';
@@ -10,7 +11,7 @@ async function sleep(ms: number): Promise<void> {
 }
 
 async function getJson(url: string, attempt = 0): Promise<unknown> {
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (res.status === 429 && attempt < 4) {
     await sleep(1000 * 2 ** attempt);
     return getJson(url, attempt + 1);

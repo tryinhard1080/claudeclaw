@@ -242,6 +242,37 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(halt?.value).toBe('1');
   });
 
+  it('skips all evaluation when the book is full (Sprint R2 LLM-spend short-circuit)', async () => {
+    // With the position cap reached, gate 1 would reject every candidate, so
+    // per-candidate LLM evaluations are pure spend. The tick must return
+    // before evaluate() runs.
+    let evaluateCalls = 0;
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => { evaluateCalls++; return mkEst(0.7); },
+      fetchBook: async () => mkBook(0.4, 1000),
+      gateConfig: { ...(await import('./risk-gates.js')).defaultGateConfig(), maxOpenPositions: 2 },
+    });
+    db.prepare(`CREATE TABLE IF NOT EXISTS poly_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).run();
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status)
+      VALUES (?, 'full-a', 'tok-a', 'Yes', 'BUY', 0.5, 50, 100, 0.25, 'ai-probability', 'open')`)
+      .run(Math.floor(Date.now() / 1000));
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status)
+      VALUES (?, 'full-b', 'tok-b', 'Yes', 'BUY', 0.5, 50, 100, 0.25, 'ai-probability', 'open')`)
+      .run(Math.floor(Date.now() / 1000));
+
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    expect(evaluateCalls).toBe(0);
+    const signals = db.prepare(`SELECT COUNT(*) AS n FROM poly_signals`).get() as { n: number };
+    expect(signals.n).toBe(0);
+  });
+
   it('happy path: creates approved signal and executes paper trade', async () => {
     const engine = new StrategyEngine({
       db, scanner, paperCapital: 5000, minVolumeUsd: 10_000, minTtrHours: 24,

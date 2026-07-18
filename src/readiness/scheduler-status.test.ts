@@ -133,7 +133,6 @@ describe('scheduler status formatting', () => {
     expect(summary.tasks.map(row => row.key)).toEqual([
       'resolution_fetch',
       'resolution_watch',
-      'news_sync',
       'readiness_evidence',
       'overnight_agent',
       'regime_sharpe',

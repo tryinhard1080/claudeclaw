@@ -45,7 +45,6 @@ export interface FormatScheduledTaskOptions {
 export type SchedulerCadenceKey =
   | 'resolution_fetch'
   | 'resolution_watch'
-  | 'news_sync'
   | 'readiness_evidence'
   | 'overnight_agent'
   | 'regime_sharpe';
@@ -145,9 +144,6 @@ export function summarizeTradingSchedulerCadence(
     cadenceTask(mainActiveTasks, nowSec, 'resolution_watch', 'Resolution watch', [
       'poly-resolution-watch',
       'resolution watch',
-    ]),
-    cadenceTask(mainActiveTasks, nowSec, 'news_sync', 'Trading news sync', [
-      'trading-news sync',
     ]),
     cadenceTask(mainActiveTasks, nowSec, 'readiness_evidence', 'Readiness evidence snapshot', [
       'readiness-evidence',

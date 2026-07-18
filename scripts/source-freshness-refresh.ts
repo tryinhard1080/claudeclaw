@@ -4,7 +4,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { POLY_SCAN_INTERVAL_MIN, STORE_DIR } from '../src/config.js';
-import { isRefusalResponse, isToolErrorResponse } from '../src/poly/news-sync.js';
 import { recordSourceFreshness } from '../src/readiness/source-freshness.js';
 
 function tableExists(db: Database.Database, name: string): boolean {
@@ -90,44 +89,11 @@ function refreshTtlShadow(db: Database.Database, nowSec: number): void {
   });
 }
 
-export function refreshNewsSync(db: Database.Database, nowSec: number): void {
-  if (!tableExists(db, 'news_items')) {
-    recordSourceFreshness(db, {
-      sourceName: 'news-sync',
-      fetchedAt: nowSec,
-      success: false,
-      staleAfterSec: 3 * 60 * 60,
-      lastError: 'news_items table missing',
-      usedBySignal: false,
-    });
-    return;
-  }
-  const row = db.prepare(`
-    SELECT fetched_at, status, summary
-      FROM news_items
-     ORDER BY fetched_at DESC
-     LIMIT 1
-  `).get() as { fetched_at: number; status: string; summary: string } | undefined;
-  const unusableReason = row?.summary && isToolErrorResponse(row.summary)
-    ? 'tool-error'
-    : row?.summary && isRefusalResponse(row.summary)
-      ? 'refusal'
-      : null;
-  const success = row?.status === 'ok' && unusableReason === null;
-  recordSourceFreshness(db, {
-    sourceName: 'news-sync',
-    fetchedAt: row?.fetched_at ?? nowSec,
-    success,
-    staleAfterSec: 3 * 60 * 60,
-    lastError: !row
-      ? 'no news rows'
-      : unusableReason
-        ? `latest news row unusable=${unusableReason}`
-        : row.status === 'ok'
-          ? null
-          : `latest status=${row.status}`,
-    usedBySignal: false,
-  });
+/** news-sync retired 2026-07-18 (Sprint R2): the cron reported success while
+ *  writing nothing since 2026-06-28, and nothing on the trading path consumes
+ *  news_items. Drop its stale freshness row so gates stop warning on it. */
+export function retireNewsSyncRow(db: Database.Database): void {
+  db.prepare(`DELETE FROM source_freshness WHERE source_name = 'news-sync'`).run();
 }
 
 export function main(): number {
@@ -139,7 +105,7 @@ export function main(): number {
     refreshPolymarketScan(db, nowSec);
     refreshPriceHistory(db, nowSec);
     refreshTtlShadow(db, nowSec);
-    refreshNewsSync(db, nowSec);
+    retireNewsSyncRow(db);
     console.log('Source freshness refreshed.');
     return 0;
   } finally {

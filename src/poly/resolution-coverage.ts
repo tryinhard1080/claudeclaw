@@ -54,8 +54,16 @@ export function buildSlugPriorityQueue(db: Database.Database): string[] {
   const openRows = db.prepare(
     `SELECT DISTINCT market_slug FROM poly_paper_trades WHERE status = 'open'`,
   ).all() as SlugRow[];
+  // A slug whose cache row is already closed=1 has a final, immutable
+  // resolution; re-fetching it costs 2 Gamma requests (the plain slug query
+  // is always empty for closed markets) per cron run forever. Open-trade
+  // slugs above stay unconditional; only the signal backlog is filtered.
   const signalRows = db.prepare(
-    `SELECT DISTINCT market_slug FROM poly_signals`,
+    `SELECT DISTINCT s.market_slug FROM poly_signals s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM poly_resolutions r
+         WHERE r.slug = s.market_slug AND r.closed = 1
+      )`,
   ).all() as SlugRow[];
 
   const seen = new Set<string>();
