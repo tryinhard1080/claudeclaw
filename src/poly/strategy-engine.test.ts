@@ -273,6 +273,86 @@ describe('StrategyEngine.onScanComplete', () => {
     expect(signals.n).toBe(0);
   });
 
+  it('rejects on price drift between evaluation and execution (Sprint R3 re-validation)', async () => {
+    // Pre-R3 the gates received the same pre-eval snapshot the signal was
+    // built from, so the 3% drift guard compared the stale price to itself
+    // and could never fire. Now the book is re-fetched after evaluate().
+    let bookCalls = 0;
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.7),
+      fetchBook: async () => {
+        bookCalls++;
+        return mkBook(bookCalls === 1 ? 0.4 : 0.5, 1000);  // 25% jump during eval
+      },
+    });
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    expect(bookCalls).toBe(2);
+    const row = db.prepare(`SELECT approved, rejection_reasons FROM poly_signals`).get() as
+      { approved: number; rejection_reasons: string | null };
+    expect(row.approved).toBe(0);
+    expect(row.rejection_reasons).toContain('price_drift');
+    const trades = db.prepare(`SELECT COUNT(*) n FROM poly_paper_trades`).get() as { n: number };
+    expect(trades.n).toBe(0);
+  });
+
+  it('fills at the fresh post-evaluation price when drift is within limit (Sprint R3)', async () => {
+    let bookCalls = 0;
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 5000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.7),
+      fetchBook: async () => {
+        bookCalls++;
+        return mkBook(bookCalls === 1 ? 0.4 : 0.41, 1000);  // 2.5% drift — inside limit
+      },
+    });
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    const trade = db.prepare(`SELECT entry_price FROM poly_paper_trades`).get() as
+      { entry_price: number } | undefined;
+    expect(trade).toBeDefined();
+    expect(trade!.entry_price).toBe(0.41);  // fresh price, not the stale 0.4
+  });
+
+  it('anchors deployment cap and sizing to realized equity, not initial capital (Sprint R3)', async () => {
+    // paperCapital 1000, realized -500 => realized equity 500. With
+    // maxDeployedPct 0.5 the cap is 250, not the pre-R3 500. An existing 240
+    // deployed plus any new size must now breach the cap.
+    const engine = new StrategyEngine({
+      db, scanner, paperCapital: 1000, minVolumeUsd: 0, minTtrHours: 0,
+      topN: 10, maxTradeUsd: 50, kellyFraction: 0.25,
+      evaluate: async () => mkEst(0.7),
+      fetchBook: async () => mkBook(0.4, 1000),
+      gateConfig: {
+        ...(await import('./risk-gates.js')).defaultGateConfig(),
+        maxDeployedPct: 0.5, maxTradeUsd: 50,
+        haltDdPct: 0.9,  // keep the 50% drawdown from tripping the tick-level auto-halt
+      },
+    });
+    db.prepare(`CREATE TABLE IF NOT EXISTS poly_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).run();
+    const old = Math.floor(Date.now() / 1000) - 3 * 86400;
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status, resolved_at, realized_pnl)
+      VALUES (?, 'old-loss', 'tok-l', 'Yes', 'BUY', 0.5, 500, 1000, 0.25, 'ai-probability', 'lost', ?, -500)`)
+      .run(old, old);
+    db.prepare(`INSERT INTO poly_paper_trades
+      (created_at, market_slug, outcome_token_id, outcome_label, side, entry_price,
+       size_usd, shares, kelly_fraction, strategy, status)
+      VALUES (?, 'deployed-a', 'tok-d', 'Yes', 'BUY', 0.5, 240, 480, 0.25, 'ai-probability', 'open')`)
+      .run(old);
+
+    await engine.onScanComplete({ markets: [mkMarket()] });
+
+    const row = db.prepare(`SELECT approved, rejection_reasons FROM poly_signals`).get() as
+      { approved: number; rejection_reasons: string | null };
+    expect(row.approved).toBe(0);
+    expect(row.rejection_reasons).toContain('max_deployed 250');
+  });
+
   it('happy path: creates approved signal and executes paper trade', async () => {
     const engine = new StrategyEngine({
       db, scanner, paperCapital: 5000, minVolumeUsd: 10_000, minTtrHours: 24,

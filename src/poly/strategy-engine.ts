@@ -392,11 +392,23 @@ export class StrategyEngine extends EventEmitter {
     });
     if (!est) return;
 
+    // Sprint R3: re-fetch the book AFTER the LLM evaluation. The pre-eval
+    // snapshot is the estimate's basis (signal.marketPrice, edge below), but
+    // gates and the broker must measure drift/depth against the CURRENT book;
+    // handing them the pre-eval snapshot made the 3% drift guard compare the
+    // stale price to itself, so it could never reject.
+    const freshBook = await this.fetchBookFn(yesOutcome.tokenId);
+    if (!freshBook) return;
+    const fresh = bestAskAndDepth(freshBook);
+
     const edgePct = computeEdgePct(est.probability, bestAsk);
     const confMult = confidenceMultiplier(est.confidence, this.confidenceMults);
+    // Sprint R3: portfolio snapshot built before sizing so caps and Kelly both
+    // anchor to the same realized-equity figure (snapshot.paperCapital).
+    const portfolio = this.buildPortfolioSnapshot();
     const effectiveCapital = this.exposureAwareSizing
-      ? computeAvailableCapital(this.db, this.paperCapital, this.gateConfig.maxDeployedPct)
-      : this.paperCapital;
+      ? computeAvailableCapital(this.db, portfolio.paperCapital, this.gateConfig.maxDeployedPct)
+      : portfolio.paperCapital;
     const sizeUsd = computeKellySize({
       probability: est.probability, ask: bestAsk,
       kellyFraction: this.kellyFraction, paperCapital: effectiveCapital,
@@ -413,8 +425,7 @@ export class StrategyEngine extends EventEmitter {
       contrarian: est.contrarian,
     };
 
-    const portfolio = this.buildPortfolioSnapshot();
-    const orderbook: OrderbookSnapshot = { bestAsk, askDepthShares };
+    const orderbook: OrderbookSnapshot = { bestAsk: fresh.bestAsk, askDepthShares: fresh.askDepthShares };
     const gates = runAllGates({
       signal, market, portfolio, orderbook, sizeUsd, now: this.now(), config: this.gateConfig,
     });
@@ -446,7 +457,9 @@ export class StrategyEngine extends EventEmitter {
       ...signal, id: signalId, sizeUsd,
       kellyFraction: this.kellyFraction, strategy: STRATEGY,
     };
-    const res = execute(this.db, withId, bestAsk, askDepthShares);
+    // Fill against the fresh snapshot: the broker's own drift re-check and the
+    // recorded entry price both reflect the book as it stands post-evaluation.
+    const res = execute(this.db, withId, fresh.bestAsk, fresh.askDepthShares);
     if (res.status === 'filled' && res.tradeId !== undefined) {
       this.emit('signal_filled', {
         signalId, tradeId: res.tradeId, slug: market.slug,
@@ -586,12 +599,18 @@ export class StrategyEngine extends EventEmitter {
     const equity = this.paperCapital + totalRealized + unrealized;
     const totalDrawdownPct = Math.max(0, (this.paperCapital - equity) / this.paperCapital);
     const dailyRealizedPnl = getDailyRealizedPnl(this.db, this.now());
-    const freeCapital = this.paperCapital - deployedUsd;
+    // Sprint R3: caps, free capital, and Kelly sizing anchor to REALIZED
+    // equity — after losses the bot must bet a smaller book, not the original
+    // bankroll. Unrealized P&L is excluded (marks are estimates). Drawdown
+    // stays measured against the ORIGINAL capital: it answers "how much of
+    // the initial bankroll is gone", which is what the halt threshold means.
+    const realizedEquity = Math.max(0, this.paperCapital + totalRealized);
+    const freeCapital = realizedEquity - deployedUsd;
 
     return {
       openPositionCount: openRows.length,
       openPositionKeys, deployedUsd, dailyRealizedPnl,
-      totalDrawdownPct, freeCapital, paperCapital: this.paperCapital,
+      totalDrawdownPct, freeCapital, paperCapital: realizedEquity,
     };
   }
 }
