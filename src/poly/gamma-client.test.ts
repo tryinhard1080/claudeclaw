@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { normalizeMarket, fetchActiveMarkets } from './gamma-client.js';
+import { normalizeMarket, fetchActiveMarkets, fetchMarketBySlug } from './gamma-client.js';
 
 describe('normalizeMarket', () => {
   it('zips outcomes, tokenIds, and prices into structured array', () => {
@@ -329,5 +329,87 @@ describe('fetchActiveMarkets (parallel pagination)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(fetchActiveMarkets(10, 2)).rejects.toThrow(/Gamma 500/);
+  });
+});
+
+describe('fetchMarketBySlug (resolution path)', () => {
+  // Live Gamma behavior verified 2026-07-18: `/markets?slug=X` EXCLUDES closed
+  // markets by default. A resolved market returns an empty array (HTTP 200) on
+  // the plain query and is only visible with `closed=true`. Without the
+  // fallback, every resolved market reads as "delisted" and no trade can ever
+  // settle (poly_resolutions: 468 rows, 0 ever closed).
+  const resolvedRaw = {
+    conditionId: '0xres', slug: 'resolved-market', question: 'Did it happen?',
+    outcomes: '["Yes","No"]', outcomePrices: '["1","0"]',
+    clobTokenIds: '["t1","t2"]',
+    volume24hr: 0, liquidity: 0,
+    endDate: '2026-07-12T23:59:59Z', closed: true,
+  };
+  const openRaw = {
+    conditionId: '0xopen', slug: 'open-market', question: 'Will it happen?',
+    outcomes: '["Yes","No"]', outcomePrices: '["0.4","0.6"]',
+    clobTokenIds: '["t1","t2"]',
+    volume24hr: 100, liquidity: 50,
+    endDate: '2026-12-31T23:59:59Z', closed: false,
+  };
+
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('falls back to closed=true when the plain slug query returns empty (resolved market)', async () => {
+    const urls: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      urls.push(url);
+      const closed = new URL(url).searchParams.get('closed');
+      // Mirror live Gamma: resolved market invisible without closed=true.
+      const body = closed === 'true' ? [resolvedRaw] : [];
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const m = await fetchMarketBySlug('resolved-market');
+    expect(m).not.toBeNull();
+    expect(m!.closed).toBe(true);
+    expect(m!.outcomes.map(o => o.price)).toEqual([1, 0]);
+    expect(urls).toHaveLength(2);
+    expect(new URL(urls[0]!).searchParams.get('closed')).toBeNull();
+    expect(new URL(urls[1]!).searchParams.get('closed')).toBe('true');
+  });
+
+  it('does not issue the fallback query when the plain query finds the market (open market)', async () => {
+    const urls: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify([openRaw]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const m = await fetchMarketBySlug('open-market');
+    expect(m).not.toBeNull();
+    expect(m!.closed).toBe(false);
+    expect(urls).toHaveLength(1);
+    expect(new URL(urls[0]!).searchParams.get('closed')).toBeNull();
+  });
+
+  it('returns null when both plain and closed=true queries come back empty (true miss)', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const m = await fetchMarketBySlug('never-existed');
+    expect(m).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns null (not throw) when the fallback query fails', async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const closed = new URL(String(input)).searchParams.get('closed');
+      if (closed === 'true') return new Response('boom', { status: 500 });
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchMarketBySlug('flaky')).resolves.toBeNull();
   });
 });

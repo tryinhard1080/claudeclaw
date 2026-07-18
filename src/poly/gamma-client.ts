@@ -172,12 +172,23 @@ export async function fetchMarketById(id: string | number): Promise<Market | nul
 /**
  * Fetch a single market by slug via the list endpoint's `slug=` filter.
  * This is the resolution-safe lookup path used by the P&L tracker: it works
- * without a numeric market id cached locally, and it returns closed markets
- * too (we explicitly do NOT pass closed=false so resolved markets are visible).
+ * without a numeric market id cached locally.
+ *
+ * Live Gamma behavior (verified 2026-07-18): the plain `?slug=X` query
+ * EXCLUDES closed markets — a resolved market returns an empty array with
+ * HTTP 200. `?slug=X&closed=true` returns only closed markets (empty for
+ * still-open ones). So: query plain first (preserves open-market behavior),
+ * and on an empty result retry once with closed=true before concluding the
+ * market is delisted. Without the fallback every resolved market reads as
+ * "delisted" and no trade can ever settle.
  */
 export async function fetchMarketBySlug(slug: string): Promise<Market | null> {
   try {
-    const raw = await getJson(`${BASE}/markets?slug=${encodeURIComponent(slug)}&limit=1`);
+    const base = `${BASE}/markets?slug=${encodeURIComponent(slug)}&limit=1`;
+    let raw = await getJson(base);
+    if (!Array.isArray(raw) || raw.length === 0) {
+      raw = await getJson(`${base}&closed=true`);
+    }
     if (!Array.isArray(raw) || raw.length === 0) return null;
     // Resolution path: tolerate missing endDate so we don't conflate
     // "Gamma omitted endDate" with "market not found" / "delisted".
